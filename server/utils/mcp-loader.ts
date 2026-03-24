@@ -1,28 +1,24 @@
-import { readdir, readFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { useStorage } from 'nitro/storage'
 import { parse as parseYaml } from 'yaml'
 import type { McpConfig, McpEntry } from '../types/mcp'
-
-const mcpsDir = resolve(process.env.MCPS_DIR || join(process.cwd(), 'mcps'))
 
 let cache: McpEntry[] | null = null
 
 async function scanMcps(): Promise<McpEntry[]> {
   const entries: McpEntry[] = []
+  const storage = useStorage('assets/mcps')
 
-  let dirs: string[]
-  try {
-    dirs = await readdir(mcpsDir)
-  } catch {
-    return entries
-  }
+  const allKeys = await storage.getKeys()
+  const yamlKeys = allKeys.filter((k) => k.endsWith(':mcp.yaml') || k === 'mcp.yaml')
 
-  for (const dir of dirs) {
-    const yamlPath = join(mcpsDir, dir, 'mcp.yaml')
+  for (const key of yamlKeys) {
     try {
-      const text = await readFile(yamlPath, 'utf-8')
+      const id = key.replace(':mcp.yaml', '').replace('mcp.yaml', '')
+      if (!id) continue
+      const text = (await storage.getItem(key)) as string
+      if (!text) continue
       const data = parseYaml(text) as McpConfig
-      entries.push({ ...data, id: dir })
+      entries.push({ ...data, id })
     } catch {
       // skip invalid entries
     }

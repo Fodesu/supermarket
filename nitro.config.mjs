@@ -8,4 +8,8 @@ export default defineNitroConfig({
     deployConfig: true,
     nodeCompat: true,
   },
+  serverAssets: [
+    { baseName: "mcps", dir: "./mcps" },
+    { baseName: "skills", dir: "./skills" },
+  ],
 });

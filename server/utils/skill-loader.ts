@@ -1,52 +1,38 @@
-import { readdir, readFile, stat } from 'node:fs/promises'
-import { join, relative, resolve } from 'node:path'
+import { useStorage } from 'nitro/storage'
 import matter from 'gray-matter'
 import type { SkillConfig } from '../types/skill'
 
-const skillsDir = resolve(process.env.SKILLS_DIR || join(process.cwd(), 'skills'))
-
 let cache: SkillConfig[] | null = null
-
-async function listFilesRecursive(dir: string): Promise<string[]> {
-  const files: string[] = []
-  const entries = await readdir(dir, { withFileTypes: true })
-  for (const entry of entries) {
-    const full = join(dir, entry.name)
-    if (entry.isDirectory()) {
-      files.push(...(await listFilesRecursive(full)))
-    } else {
-      files.push(full)
-    }
-  }
-  return files
-}
 
 async function scanSkills(): Promise<SkillConfig[]> {
   const results: SkillConfig[] = []
+  const storage = useStorage('assets/skills')
 
-  let dirs: string[]
-  try {
-    dirs = await readdir(skillsDir)
-  } catch {
-    return results
+  const allKeys = await storage.getKeys()
+
+  const skillIds = new Set<string>()
+  for (const key of allKeys) {
+    const sep = key.indexOf(':')
+    if (sep > 0) {
+      skillIds.add(key.substring(0, sep))
+    }
   }
 
-  for (const dir of dirs) {
-    const skillDir = join(skillsDir, dir)
-    const skillMdPath = join(skillDir, 'SKILL.md')
+  for (const id of skillIds) {
     try {
-      const s = await stat(skillDir)
-      if (!s.isDirectory()) continue
+      const skillMdKey = `${id}:SKILL.md`
+      const text = (await storage.getItem(skillMdKey)) as string
+      if (!text) continue
 
-      const text = await readFile(skillMdPath, 'utf-8')
       const { data, content } = matter(text)
 
-      const allFiles = await listFilesRecursive(skillDir)
-      const relFiles = allFiles.map((f) => relative(skillDir, f))
+      const files = allKeys
+        .filter((k) => k.startsWith(`${id}:`))
+        .map((k) => k.substring(id.length + 1).replaceAll(':', '/'))
 
       results.push({
-        id: dir,
-        name: data.name ?? dir,
+        id,
+        name: data.name ?? id,
         description: data.description ?? '',
         metadata: {
           author: data.metadata?.author ?? '',
@@ -55,7 +41,7 @@ async function scanSkills(): Promise<SkillConfig[]> {
           homepage: data.metadata?.homepage,
         },
         content: content.trim(),
-        files: relFiles,
+        files,
       })
     } catch {
       // skip invalid entries
@@ -111,6 +97,20 @@ export async function getSkillById(id: string): Promise<SkillConfig | undefined>
   return all.find((s) => s.id === id)
 }
 
-export function getSkillsDir(): string {
-  return skillsDir
+export async function getSkillFiles(id: string): Promise<Record<string, string>> {
+  const storage = useStorage('assets/skills')
+  const allKeys = await storage.getKeys()
+  const prefix = `${id}:`
+  const files: Record<string, string> = {}
+
+  for (const key of allKeys) {
+    if (!key.startsWith(prefix)) continue
+    const relativePath = key.substring(prefix.length).replaceAll(':', '/')
+    const content = (await storage.getItem(key)) as string
+    if (content != null) {
+      files[relativePath] = content
+    }
+  }
+
+  return files
 }
