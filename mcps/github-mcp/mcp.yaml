@@ -1,0 +1,21 @@
+name: github-mcp
+description: GitHub MCP server providing repository management, issue tracking, pull request operations, and code search capabilities.
+author: GitHub
+author_email: support@github.com
+transport: stdio
+icon: https://github.githubassets.com/favicons/favicon.svg
+homepage: https://github.com/github/github-mcp-server
+tags:
+  - github
+  - git
+  - devtools
+
+command: npx
+args:
+  - "-y"
+  - "@github/mcp-server"
+
+env:
+  - key: GITHUB_TOKEN
+    description: GitHub personal access token with repo scope
+    defaultValue: ""

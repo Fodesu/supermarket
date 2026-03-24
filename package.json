@@ -1,0 +1,22 @@
+{
+  "name": "nitro-starter",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "imports": {
+    "#*": "./*"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.5",
+    "nitro": "latest",
+    "vite": "^8.0.2",
+    "vue": "^3.5.30"
+  },
+  "dependencies": {
+    "gray-matter": "^4.0.3",
+    "yaml": "^2.8.3"
+  }
+}
