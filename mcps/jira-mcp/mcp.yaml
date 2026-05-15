@@ -4,6 +4,7 @@ author:
   name: aashari
   email: ""
 transport: stdio
+icon: icon.svg
 homepage: https://github.com/aashari/mcp-server-atlassian-jira
 tags:
   - jira

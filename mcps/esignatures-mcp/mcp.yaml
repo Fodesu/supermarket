@@ -4,6 +4,7 @@ author:
   name: eSignatures.com
   email: support@esignatures.com
 transport: stdio
+icon: icon.png
 homepage: https://github.com/esignaturescom/mcp-server-esignatures
 tags:
   - esignatures
