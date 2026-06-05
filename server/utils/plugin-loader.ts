@@ -39,6 +39,18 @@ function pluginMcpKeyFromMcpID(id: string): string {
 
 function mcpToPluginResource(mcp: McpEntry): PluginMcpResource {
   const { id: _id, icon: _icon, homepage: _homepage, tags: _tags, author: _author, description: _description, ...config } = mcp
+  if (config.transport === 'http' || config.transport === 'sse') {
+    return {
+      key: pluginMcpKeyFromMcpID(mcp.id),
+      name: config.name,
+      description: mcp.description,
+      transport: config.transport,
+      url: config.url,
+      headers: config.headers,
+      visibility: 'hidden',
+      capabilities: mcp.tags,
+    } as PluginMcpResource
+  }
   return {
     ...config,
     key: pluginMcpKeyFromMcpID(mcp.id),
@@ -253,4 +265,3 @@ export async function getPluginFiles(id: string): Promise<Record<string, Uint8Ar
 
   return files
 }
-
