@@ -21,6 +21,10 @@ export interface PluginConfigVar {
   defaultValue?: string
   required?: boolean
   secret?: boolean
+  options?: Array<{
+    label?: string
+    value: string
+  }>
 }
 
 export interface PluginMcpResourceBase {

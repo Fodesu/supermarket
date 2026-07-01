@@ -31,10 +31,15 @@ variables:
     required: true
     secret: true
   - key: LARK_DOMAIN
-    description: Lark OpenAPI domain. Use https://open.feishu.cn for Feishu tenants.
+    description: OpenAPI domain for the tenant region.
     defaultValue: https://open.larksuite.com
     required: false
     secret: false
+    options:
+      - label: Lark
+        value: https://open.larksuite.com
+      - label: Feishu
+        value: https://open.feishu.cn
 auth_requirements:
   - key: lark_app_credentials
     type: user_secret

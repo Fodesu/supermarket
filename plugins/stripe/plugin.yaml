@@ -2,7 +2,7 @@ schema_version: "1"
 id: stripe
 name: Stripe
 version: 0.1.0
-description: Official Stripe MCP server configured for read-only finance, billing, customer, invoice, subscription, product, and payment analysis.
+description: Official Stripe MCP server for finance, billing, customer, invoice, subscription, product, and payment analysis. Use a read-only restricted API key to limit access.
 author:
   name: Stripe
   email: support@stripe.com
@@ -15,7 +15,7 @@ tags:
   - payments
   - billing
   - finance
-  - read-only
+  - restricted-key
 capabilities:
   - customers
   - invoices
@@ -36,8 +36,8 @@ auth_requirements:
       - STRIPE_RESTRICTED_KEY
 mcps:
   - key: stripe
-    display_name: Stripe MCP (read-only)
-    description: Official Stripe remote MCP resource filtered to read-only tools. Use a Stripe restricted API key with read-only permissions as an additional boundary.
+    display_name: Stripe MCP
+    description: Official Stripe remote MCP resource. The server exposes both read and write tools; use a read-only restricted API key as the security boundary.
     transport: http
     url: https://mcp.stripe.com
     headers:

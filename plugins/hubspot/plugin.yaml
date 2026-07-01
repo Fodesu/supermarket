@@ -2,7 +2,7 @@ schema_version: "1"
 id: hubspot
 name: HubSpot
 version: 0.1.0
-description: Official remote HubSpot MCP server for CRM object search and account-scoped HubSpot workflows.
+description: Official remote HubSpot MCP server for account-scoped HubSpot CRM workflows. Tool access is governed by the connected HubSpot MCP auth app.
 author:
   name: HubSpot
   email: support@hubspot.com
