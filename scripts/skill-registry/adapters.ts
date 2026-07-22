@@ -124,6 +124,7 @@ async function directorySkills(
   sourceRoot: string,
   packageFilter?: string,
   skillFilter?: string,
+  allowMissingScope = false,
 ): Promise<SkillAdapterResult> {
   const skills: SkillCandidate[] = []
   const entries = await readdir(sourceRoot, { withFileTypes: true })
@@ -144,7 +145,7 @@ async function directorySkills(
       root: await resolveRealInside(sourceRoot, id), allowedRoot: sourceRoot,
     }))
   }
-  if ((packageFilter || skillFilter) && skills.length === 0) {
+  if ((packageFilter || skillFilter) && skills.length === 0 && !allowMissingScope) {
     throw new Error(`${definition.id}: skill "${skillFilter ?? packageFilter}" not found`)
   }
   return { skills, diagnostics: [] }
@@ -214,11 +215,15 @@ async function codexMarketplaceSkills(
   ensurePaths: (paths: string[]) => Promise<void>,
   packageFilter?: string,
   skillFilter?: string,
+  allowMissingScope = false,
 ): Promise<SkillAdapterResult> {
   const catalogPath = await resolveRealInside(sourceRoot, definition.catalog_path!)
   const entries = parseMarketplace(JSON.parse(await readFile(catalogPath, 'utf8')))
     .filter((entry) => !packageFilter || entry.name === packageFilter)
-  if (packageFilter && !entries.length) throw new Error(`${definition.id}: package "${packageFilter}" not found`)
+  if (packageFilter && !entries.length) {
+    if (allowMissingScope) return { skills: [], diagnostics: [] }
+    throw new Error(`${definition.id}: package "${packageFilter}" not found`)
+  }
   const packages = entries.map((entry) => {
     const packagePath = localPackagePath(entry.source)
     if (!packagePath) throw new Error(`${definition.id}: package "${entry.name}" uses an unsupported source`)
@@ -269,7 +274,9 @@ async function codexMarketplaceSkills(
       }
     }
   }
-  if (skillFilter && !skills.length) throw new Error(`${definition.id}/${packageFilter}: skill "${skillFilter}" not found`)
+  if (skillFilter && !skills.length && !allowMissingScope) {
+    throw new Error(`${definition.id}/${packageFilter}: skill "${skillFilter}" not found`)
+  }
   return { skills, diagnostics }
 }
 
@@ -279,14 +286,15 @@ export function buildSkillCandidates(input: {
   ensurePaths?: (paths: string[]) => Promise<void>
   packageFilter?: string
   skillFilter?: string
+  allowMissingScope?: boolean
 }) {
-  const { definition, sourceRoot, packageFilter, skillFilter, ensurePaths = async () => {} } = input
+  const { definition, sourceRoot, packageFilter, skillFilter, allowMissingScope = false, ensurePaths = async () => {} } = input
   if (skillFilter && !packageFilter) throw new Error('--skill requires --package')
   if (definition.adapter === 'skill_directory') {
-    return directorySkills(definition, sourceRoot, packageFilter, skillFilter)
+    return directorySkills(definition, sourceRoot, packageFilter, skillFilter, allowMissingScope)
   }
   if (definition.adapter === 'codex_marketplace_skills') {
-    return codexMarketplaceSkills(definition, sourceRoot, ensurePaths, packageFilter, skillFilter)
+    return codexMarketplaceSkills(definition, sourceRoot, ensurePaths, packageFilter, skillFilter, allowMissingScope)
   }
   throw new Error(`${definition.id}: unsupported adapter ${definition.adapter}`)
 }
