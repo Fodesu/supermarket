@@ -15,6 +15,8 @@ export interface BlobBackend {
   get(key: string): Promise<Uint8Array | null>
   put(key: string, value: Uint8Array): Promise<void>
   list(prefix: string): Promise<string[]>
+  listPrefixes?(prefix: string): Promise<string[]>
+  getStream?(key: string): Promise<{ body: ReadableStream<Uint8Array>; size?: number } | null>
 }
 
 export interface SkillRegistryStore {
@@ -27,6 +29,10 @@ export interface SkillRegistryStore {
   putStatus(status: SkillRegistryStatus): Promise<void>
   putArtifact(descriptor: SkillArtifactDescriptor, bytes: Uint8Array): Promise<void>
   getArtifact(digest: string): Promise<{ descriptor: SkillArtifactBlob; bytes: Uint8Array } | null>
+  getArtifactStream?(digest: string): Promise<{
+    descriptor: SkillArtifactBlob
+    body: ReadableStream<Uint8Array> | Uint8Array
+  } | null>
 }
 
 function assertDigest(value: string): string {
@@ -36,6 +42,14 @@ function assertDigest(value: string): string {
 
 function jsonBytes(value: unknown): Uint8Array {
   return encoder.encode(`${JSON.stringify(value, null, 2)}\n`)
+}
+
+function validateArtifactBlob(descriptor: SkillArtifactBlob, digest: string) {
+  if (descriptor.format !== 'memoh_skill_v1' || descriptor.content_type !== 'application/gzip'
+    || descriptor.digest !== digest || !Number.isSafeInteger(descriptor.size) || descriptor.size < 0
+    || descriptor.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) {
+    throw new Error(`Invalid stored Artifact metadata: ${digest}`)
+  }
 }
 
 async function readJSON<T>(backend: BlobBackend, key: string): Promise<T | null> {
@@ -53,6 +67,13 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
   constructor(private readonly backend: BlobBackend) {}
 
   async listRegistryIDs(): Promise<string[]> {
+    if (this.backend.listPrefixes) {
+      const prefixes = await this.backend.listPrefixes('skill-registries/')
+      return [...new Set(prefixes.flatMap((prefix): string[] => {
+        const match = prefix.match(/^skill-registries\/([^/]+)\/$/)
+        return match?.[1] ? [match[1]] : []
+      }))].sort()
+    }
     const keys = await this.backend.list('skill-registries/')
     return [...new Set(keys.flatMap((key): string[] => {
       const match = key.match(/^skill-registries\/([^/]+)\/(?:definition|current|status)\.json$/)
@@ -142,18 +163,45 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
       readJSON<SkillArtifactBlob>(this.backend, `skill-artifacts/${digest}.json`),
       this.backend.get(`skill-artifacts/${digest}.tar.gz`),
     ])
-    return descriptor && bytes ? { descriptor, bytes } : null
+    if (!descriptor || !bytes) return null
+    validateArtifactBlob(descriptor, digest)
+    if (bytes.length !== descriptor.size || await sha256(bytes) !== digest) {
+      throw new Error(`Stored Artifact content is corrupt: ${digest}`)
+    }
+    return { descriptor, bytes }
+  }
+
+  async getArtifactStream(digest: string) {
+    assertDigest(digest)
+    const descriptor = await readJSON<SkillArtifactBlob>(this.backend, `skill-artifacts/${digest}.json`)
+    if (!descriptor) return null
+    validateArtifactBlob(descriptor, digest)
+    if (this.backend.getStream) {
+      const streamed = await this.backend.getStream(`skill-artifacts/${digest}.tar.gz`)
+      if (!streamed) return null
+      if (streamed.size != null && streamed.size !== descriptor.size) {
+        throw new Error(`Stored Artifact size is corrupt: ${digest}`)
+      }
+      return { descriptor, body: streamed.body }
+    }
+    const artifact = await this.getArtifact(digest)
+    return artifact ? { descriptor: artifact.descriptor, body: artifact.bytes } : null
   }
 }
 
-interface R2ObjectLike { arrayBuffer(): Promise<ArrayBuffer> }
+interface R2ObjectLike {
+  arrayBuffer(): Promise<ArrayBuffer>
+  body?: ReadableStream<Uint8Array>
+  size?: number
+}
 interface R2BucketLike {
   get(key: string): Promise<R2ObjectLike | null>
   put(key: string, value: Uint8Array): Promise<unknown>
-  list(options?: { prefix?: string; cursor?: string }): Promise<{
+  list(options?: { prefix?: string; cursor?: string; delimiter?: string }): Promise<{
     objects: Array<{ key: string }>
     truncated: boolean
     cursor?: string
+    delimitedPrefixes?: string[]
   }>
 }
 
@@ -164,6 +212,13 @@ export class R2BlobBackend implements BlobBackend {
     return object ? new Uint8Array(await object.arrayBuffer()) : null
   }
   async put(key: string, value: Uint8Array) { await this.bucket.put(key, value) }
+  async getStream(key: string) {
+    const object = await this.bucket.get(key)
+    if (!object) return null
+    if (object.body) return { body: object.body, size: object.size }
+    const bytes = new Uint8Array(await object.arrayBuffer())
+    return { body: new Blob([bytes]).stream(), size: bytes.length }
+  }
   async list(prefix: string) {
     const keys: string[] = []
     let cursor: string | undefined
@@ -173,5 +228,15 @@ export class R2BlobBackend implements BlobBackend {
       cursor = page.truncated ? page.cursor : undefined
     } while (cursor)
     return keys.sort()
+  }
+  async listPrefixes(prefix: string) {
+    const prefixes: string[] = []
+    let cursor: string | undefined
+    do {
+      const page = await this.bucket.list({ prefix, cursor, delimiter: '/' })
+      prefixes.push(...(page.delimitedPrefixes ?? []))
+      cursor = page.truncated ? page.cursor : undefined
+    } while (cursor)
+    return [...new Set(prefixes)].sort()
   }
 }

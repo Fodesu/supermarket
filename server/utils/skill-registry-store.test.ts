@@ -48,6 +48,7 @@ async function exerciseStore(store: LocalSkillRegistryStore | BlobSkillRegistryS
   await expect(store.putArtifact({ ...descriptor, size: bytes.length + 1 }, bytes)).rejects.toThrow('size')
   await expect(store.putArtifact({ ...descriptor, size: MAX_SKILL_ARTIFACT_COMPRESSED_BYTES + 1 }, bytes))
     .rejects.toThrow('compressed size limit')
+  return digest
 }
 
 describe('SkillRegistryStore contract', () => {
@@ -55,9 +56,11 @@ describe('SkillRegistryStore contract', () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'skill-registry-store-'))
     roots.push(root)
     const store = new LocalSkillRegistryStore(root)
-    await exerciseStore(store)
+    const digest = await exerciseStore(store)
     const pointer = JSON.parse(await readFile(path.join(root, 'skill-registries/example/current.json'), 'utf8'))
     expect(pointer.revision).toBe('a'.repeat(64))
+    await Bun.write(path.join(root, `skill-artifacts/${digest}.tar.gz`), 'corrupt')
+    await expect(store.getArtifact(digest)).rejects.toThrow('corrupt')
   })
 
   test('R2 backend handles paginated object listings', async () => {
@@ -68,13 +71,27 @@ describe('SkillRegistryStore contract', () => {
         return value ? { arrayBuffer: async () => value.slice().buffer } : null
       },
       async put(key: string, value: Uint8Array) { objects.set(key, value.slice()) },
-      async list({ prefix = '', cursor }: { prefix?: string; cursor?: string } = {}) {
+      async list({ prefix = '', cursor, delimiter }: { prefix?: string; cursor?: string; delimiter?: string } = {}) {
         const keys = [...objects.keys()].filter((key) => key.startsWith(prefix)).sort()
+        if (delimiter) {
+          const delimitedPrefixes = [...new Set(keys.flatMap((key) => {
+            const remainder = key.slice(prefix.length)
+            const separator = remainder.indexOf(delimiter)
+            return separator >= 0 ? [`${prefix}${remainder.slice(0, separator + 1)}`] : []
+          }))]
+          return { objects: [], delimitedPrefixes, truncated: false, cursor: undefined }
+        }
         const offset = cursor ? Number(cursor) : 0
         const page = keys.slice(offset, offset + 1)
         return { objects: page.map((key) => ({ key })), truncated: offset + page.length < keys.length, cursor: String(offset + page.length) }
       },
     }
-    await exerciseStore(new BlobSkillRegistryStore(new R2BlobBackend(bucket)))
+    const store = new BlobSkillRegistryStore(new R2BlobBackend(bucket))
+    const digest = await exerciseStore(store)
+    const streamed = await store.getArtifactStream(digest)
+    expect(streamed?.body).toBeInstanceOf(ReadableStream)
+    if (!(streamed?.body instanceof ReadableStream)) throw new Error('Expected an R2 Artifact stream')
+    expect(new Uint8Array(await new Response(streamed.body).arrayBuffer()))
+      .toEqual(new TextEncoder().encode('artifact'))
   })
 })

@@ -29,6 +29,16 @@ class S3BlobBackend implements BlobBackend {
     } while (continuationToken)
     return keys.sort()
   }
+  async listPrefixes(prefix: string) {
+    const prefixes: string[] = []
+    let continuationToken: string | undefined
+    do {
+      const result = await this.client.list({ prefix, delimiter: '/', continuationToken })
+      prefixes.push(...(result.commonPrefixes ?? []).map((item: any) => item.prefix))
+      continuationToken = result.isTruncated ? result.nextContinuationToken : undefined
+    } while (continuationToken)
+    return [...new Set(prefixes)].sort()
+  }
 }
 
 export function createSkillRegistryStore(projectRoot = path.resolve(import.meta.dirname, '../..')): SkillRegistryStore {

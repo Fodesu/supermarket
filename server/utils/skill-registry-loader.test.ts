@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import type { SkillRegistryCatalog, SkillRegistryDefinition } from '../types/skill-registry'
 import { LocalSkillRegistryStore } from './local-skill-registry-store'
-import { getEnabledSkillRegistryCatalogs } from './skill-registry-loader'
+import { getEnabledSkillRegistryCatalogs, getRuntimeSkillRegistryStore } from './skill-registry-loader'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
@@ -15,6 +15,11 @@ const definition: SkillRegistryDefinition = {
 }
 
 describe('Skill Registry loader', () => {
+  test('fails explicitly when a Cloudflare runtime has no R2 binding', async () => {
+    await expect(getRuntimeSkillRegistryStore({ req: { runtime: { cloudflare: { env: {} } } } }))
+      .rejects.toThrow('SKILL_REGISTRY_BUCKET')
+  })
+
   test('stops serving a previous Catalog when its Registry is disabled', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'skill-registry-loader-'))
     roots.push(root)
