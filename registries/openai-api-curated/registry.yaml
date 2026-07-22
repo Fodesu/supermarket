@@ -21,6 +21,12 @@ package_overrides:
     runtime_requirements:
       os:
         - darwin
+skill_overrides:
+  nvidia/omniverse-cad-to-simready:
+    runtime_requirements:
+      os:
+        - darwin
+        - linux
 taxonomy:
   mappings:
     Developer Tools: developer-tools

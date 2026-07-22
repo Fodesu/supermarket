@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import type { SkillRegistryDefinition } from '../../server/types/skill-registry'
 import { buildSkillCandidates } from './adapters'
+import { readDirectoryFiles } from './files'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
@@ -28,6 +29,8 @@ describe('Skill Registry adapters', () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'standalone-skills-'))
     roots.push(root)
     await writeSkill(root, 'alpha', 'Alpha', 'reference')
+    await writeFile(path.join(root, 'alpha/run.sh'), '#!/bin/sh\n')
+    await chmod(path.join(root, 'alpha/run.sh'), 0o755)
     await mkdir(path.join(root, 'notes'))
     const result = await buildSkillCandidates({ definition: definition('skill_directory'), sourceRoot: root })
     expect(result.diagnostics).toEqual([])
@@ -36,7 +39,8 @@ describe('Skill Registry adapters', () => {
       package_id: 'alpha', skill_id: 'alpha', install_id: 'example+alpha+alpha',
       name: 'Alpha', description: 'Alpha description', tags: ['test'],
     })
-    expect(Object.keys(result.skills[0]!.files).sort()).toEqual(['SKILL.md', 'reference.md'])
+    expect(Object.keys(result.skills[0]!.files).sort()).toEqual(['SKILL.md', 'reference.md', 'run.sh'])
+    expect(result.skills[0]!.files['run.sh']?.mode).toBe(0o755)
   })
 
   test('flattens Codex package skills and skips packages with runtime components', async () => {
@@ -87,5 +91,30 @@ describe('Skill Registry adapters', () => {
     await expect(buildSkillCandidates({
       definition: definition('codex_marketplace_skills'), sourceRoot: root,
     })).rejects.toThrow('duplicate package ID')
+  })
+
+  test('rejects skill roots that escape through symlinks', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'skill-symlink-source-'))
+    const outside = await mkdtemp(path.join(os.tmpdir(), 'skill-symlink-outside-'))
+    roots.push(root, outside)
+    await writeSkill(outside, '.', 'Outside')
+    await symlink(outside, path.join(root, 'escaped'))
+    await expect(buildSkillCandidates({ definition: definition('skill_directory'), sourceRoot: root }))
+      .resolves.toEqual({ skills: [], diagnostics: [] })
+
+    await mkdir(path.join(root, 'package'), { recursive: true })
+    await symlink(outside, path.join(root, 'package/escaped'))
+    await expect(readDirectoryFiles(path.join(root, 'package/escaped'), root)).rejects.toThrow('escapes source')
+  })
+
+  test('normalizes scalar author and tag metadata', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'skill-scalar-metadata-'))
+    roots.push(root)
+    await mkdir(path.join(root, 'demo'), { recursive: true })
+    await writeFile(path.join(root, 'demo/SKILL.md'), `---\nname: Demo\ndescription: Demo\nmetadata:\n  author: Demo Team <demo@example.com>\n  tags: docs, reports\n---\n`)
+    const result = await buildSkillCandidates({ definition: definition('skill_directory'), sourceRoot: root })
+    expect(result.skills[0]).toMatchObject({
+      author: { name: 'Demo Team', email: 'demo@example.com' }, tags: ['docs', 'reports'],
+    })
   })
 })

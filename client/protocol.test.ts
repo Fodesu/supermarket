@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { resolveArtifactDownloadURL } from './protocol'
+import { readBoundedResponse, resolveArtifactDownloadURL } from './protocol'
 
 describe('Skill Registry client protocol', () => {
   test('accepts Supermarket Artifact paths and rejects cross-origin downloads', () => {
@@ -9,5 +9,16 @@ describe('Skill Registry client protocol', () => {
       .toBe('https://supermarket.memoh.ai/api/artifacts/abc/download')
     expect(() => resolveArtifactDownloadURL('https://github.com/example/archive.tar.gz', 'https://supermarket.memoh.ai'))
       .toThrow('Supermarket origin')
+  })
+
+  test('bounds response bodies even without Content-Length', async () => {
+    const response = new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(8))
+        controller.enqueue(new Uint8Array(8))
+        controller.close()
+      },
+    }))
+    await expect(readBoundedResponse(response, 10, 'Test response')).rejects.toThrow('size limit')
   })
 })

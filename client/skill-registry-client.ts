@@ -1,7 +1,13 @@
 import path from 'node:path'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../server/types/skill-registry'
 import { extractSkillArchive, gunzip, parseTarArchive, validateSkillArchive } from './archive'
-import { resolveArtifactDownloadURL } from './protocol'
+import {
+  MAX_REGISTRY_JSON_BYTES,
+  readBoundedResponse,
+  REGISTRY_REQUEST_TIMEOUT_MS,
+  resolveArtifactDownloadURL,
+  responseError,
+} from './protocol'
 
 function option(name: string) {
   const index = process.argv.indexOf(name)
@@ -9,37 +15,20 @@ function option(name: string) {
 }
 
 async function json(url: string) {
-  const response = await fetch(url, { headers: { accept: 'application/json' } })
-  if (!response.ok) throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`)
-  return response.json()
+  const response = await fetch(url, {
+    headers: { accept: 'application/json' }, redirect: 'error',
+    signal: AbortSignal.timeout(REGISTRY_REQUEST_TIMEOUT_MS),
+  })
+  if (!response.ok) throw await responseError(response)
+  return JSON.parse(new TextDecoder().decode(await readBoundedResponse(response, MAX_REGISTRY_JSON_BYTES, 'Registry response')))
 }
 
 async function download(url: string) {
-  const response = await fetch(url, { redirect: 'error' })
-  if (!response.ok) throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`)
-  const declared = Number(response.headers.get('content-length'))
-  if (Number.isFinite(declared) && declared > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) throw new Error('Artifact exceeds compressed size limit')
-  const reader = response.body?.getReader()
-  if (!reader) throw new Error('Artifact response has no body')
-  const chunks: Uint8Array[] = []
-  let total = 0
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.length
-    if (total > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) {
-      await reader.cancel()
-      throw new Error('Artifact exceeds compressed size limit')
-    }
-    chunks.push(value)
-  }
-  const bytes = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset)
-    offset += chunk.length
-  }
-  return bytes
+  const response = await fetch(url, {
+    redirect: 'error', signal: AbortSignal.timeout(REGISTRY_REQUEST_TIMEOUT_MS),
+  })
+  if (!response.ok) throw await responseError(response)
+  return readBoundedResponse(response, MAX_SKILL_ARTIFACT_COMPRESSED_BYTES, 'Artifact')
 }
 
 async function digest(bytes: Uint8Array) {
