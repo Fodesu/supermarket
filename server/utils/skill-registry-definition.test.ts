@@ -4,9 +4,10 @@ import { parseSkillRegistryDefinition, resolveSkillRuntimeRequirements, safeRela
 describe('Skill Registry definitions', () => {
   test('parses sources and applies skill, package, declared and default OS precedence', () => {
     const definition = parseSkillRegistryDefinition({
-      id: 'example', name: 'Example', adapter: 'codex_marketplace_skills',
+      schema_version: '1', id: 'example', name: 'Example', adapter: 'codex_marketplace_skills',
       source: { type: 'git', url: 'https://example.test/skills.git' }, catalog_path: 'marketplace.json',
       refresh_interval: '12h',
+      taxonomy: { mappings: { Engineering: 'developer-tools' } },
       defaults: { runtime_requirements: { os: ['linux', 'darwin'] } },
       package_overrides: { mac: { runtime_requirements: { os: ['darwin'] } } },
       skill_overrides: { 'mac/cross': { runtime_requirements: { os: ['win32'] } } },
@@ -16,20 +17,31 @@ describe('Skill Registry definitions', () => {
     expect(resolveSkillRuntimeRequirements(definition, 'other', 'declared', { os: ['linux'] })).toEqual({ os: ['linux'] })
     expect(resolveSkillRuntimeRequirements(definition, 'other', 'default')).toEqual({ os: ['darwin', 'linux'] })
     expect(definition.refresh_interval_seconds).toBe(43_200)
+    expect(definition.taxonomy).toEqual({ mappings: { Engineering: 'developer-tools' } })
   })
 
   test('rejects unknown adapters, unsafe paths and malformed overrides', () => {
     expect(() => safeRelativePath('../private')).toThrow('escapes its source')
     expect(() => parseSkillRegistryDefinition({
-      id: 'bad', name: 'Bad', adapter: 'plugin_yaml', source: { type: 'local', path: 'skills' },
+      schema_version: '1', id: 'bad', name: 'Bad', adapter: 'plugin_yaml', source: { type: 'local', path: 'skills' },
+      refresh_interval: '12h',
     })).toThrow('unsupported adapter')
     expect(() => parseSkillRegistryDefinition({
-      id: 'bad', name: 'Bad', adapter: 'skill_directory', source: { type: 'local', path: 'skills' },
+      schema_version: '1', id: 'bad', name: 'Bad', adapter: 'skill_directory', source: { type: 'local', path: 'skills' },
       refresh_interval: '12h',
       skill_overrides: { malformed: { runtime_requirements: { os: ['linux'] } } },
     })).toThrow('invalid skill override id')
     expect(() => parseSkillRegistryDefinition({
-      id: 'bad', name: 'Bad', adapter: 'skill_directory', source: { type: 'local', path: 'skills' },
+      schema_version: '1', id: 'bad', name: 'Bad', adapter: 'skill_directory', source: { type: 'local', path: 'skills' },
     })).toThrow('refresh_interval')
+    expect(() => parseSkillRegistryDefinition({
+      schema_version: '2', id: 'bad', name: 'Bad', adapter: 'skill_directory',
+      source: { type: 'local', path: 'skills' }, refresh_interval: '12h',
+    })).toThrow('unsupported schema_version')
+    expect(() => parseSkillRegistryDefinition({
+      schema_version: '1', id: 'bad', name: 'Bad', adapter: 'skill_directory',
+      source: { type: 'local', path: 'skills' }, refresh_interval: '12h',
+      taxonomy: { mappings: { Engineering: 'Developer Tools' } },
+    })).toThrow('invalid taxonomy mapping')
   })
 })

@@ -58,7 +58,10 @@ function parseSkill(files: Record<string, Uint8Array>, fallbackID: string) {
   const text = new TextDecoder().decode(manifest)
   const frontmatter = text.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)
   if (!frontmatter) throw new Error(`Skill ${fallbackID} is missing YAML frontmatter`)
-  const data = parseYaml(frontmatter[1]!) as Record<string, any>
+  const data = parseYaml(frontmatter[1]!)
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error(`Skill ${fallbackID} YAML frontmatter must be an object`)
+  }
   return { data, metadata: data.metadata && typeof data.metadata === 'object' ? data.metadata : {} }
 }
 
@@ -69,7 +72,7 @@ function hasComponent(value: unknown) {
 }
 
 function installID(registryID: string, packageID: string, skillID: string) {
-  return `${registryID}--${packageID}--${skillID}`
+  return `${registryID}+${packageID}+${skillID}`
 }
 
 async function candidate(input: {
@@ -120,6 +123,12 @@ async function directorySkills(
   entries.sort((a, b) => a.name.localeCompare(b.name))
   for (const entry of entries) {
     if (!entry.isDirectory()) continue
+    try {
+      await readFile(path.join(sourceRoot, entry.name, 'SKILL.md'))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+      throw error
+    }
     const id = assertRegistryID(entry.name, 'skill ID')
     if (packageFilter && id !== packageFilter) continue
     if (skillFilter && id !== skillFilter) continue
@@ -139,9 +148,13 @@ function parseMarketplace(raw: unknown): MarketplaceEntry[] {
   if (!raw || typeof raw !== 'object' || !Array.isArray((raw as any).plugins)) {
     throw new Error('Codex Marketplace must contain a plugins array')
   }
+  const names = new Set<string>()
   return (raw as any).plugins.map((item: any, index: number) => {
     if (!item || typeof item !== 'object') throw new Error(`Marketplace package ${index} must be an object`)
-    return { name: assertRegistryID(String(item.name ?? '').trim(), `package ${index} ID`), category: item.category ? String(item.category) : undefined, source: item.source }
+    const name = assertRegistryID(String(item.name ?? '').trim(), `package ${index} ID`)
+    if (names.has(name)) throw new Error(`Marketplace contains duplicate package ID: ${name}`)
+    names.add(name)
+    return { name, category: item.category ? String(item.category) : undefined, source: item.source }
   })
 }
 
