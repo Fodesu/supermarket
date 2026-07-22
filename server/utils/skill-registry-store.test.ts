@@ -26,6 +26,7 @@ async function exerciseStore(store: LocalSkillRegistryStore | BlobSkillRegistryS
   expect((await store.getDefinition('example'))?.name).toBe('Example')
   const revision = 'a'.repeat(64)
   await store.publishCatalog(catalog(revision))
+  await expect(store.publishCatalog({ ...catalog(revision), synced_at: '2026-01-02T00:00:00.000Z' })).resolves.toBeUndefined()
   expect((await store.getCatalog('example'))?.revision).toBe(revision)
   expect(await store.listRegistryIDs()).toEqual(['example'])
 

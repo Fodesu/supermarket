@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { BlobSkillRegistryStore, type BlobBackend } from './skill-registry-store'
 
@@ -25,7 +25,14 @@ export class LocalBlobBackend implements BlobBackend {
   async put(key: string, value: Uint8Array) {
     const target = this.resolve(key)
     await mkdir(path.dirname(target), { recursive: true })
-    await writeFile(target, value)
+    const temporary = `${target}.tmp-${crypto.randomUUID()}`
+    try {
+      await writeFile(temporary, value)
+      await rename(temporary, target)
+    } catch (error) {
+      await rm(temporary, { force: true })
+      throw error
+    }
   }
 
   async list(prefix: string) {

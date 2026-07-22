@@ -103,7 +103,8 @@ export class SkillRegistryRefresher {
           category: candidate.category, category_name: candidate.category_name, source_category: candidate.source_category,
           runtime_requirements: candidate.runtime_requirements,
           source: {
-            type: definition.source.type, revision: source.revision, path: candidate.source_path,
+            type: definition.source.type, revision: source.revision,
+            path: [definition.source.path, candidate.source_path].filter(Boolean).join('/'),
             repository: definition.source.type === 'git' ? definition.source.url : undefined,
           },
           files: Object.keys(candidate.files).sort(), artifact: descriptor,

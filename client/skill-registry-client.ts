@@ -76,7 +76,14 @@ switch (command) {
       break
     }
     const artifact = skill.artifact
+    if (
+      artifact.registry_id !== registryID || artifact.package_id !== packageID || artifact.skill_id !== skillID
+      || artifact.format !== 'memoh_skill_v1'
+    ) {
+      throw new Error('Artifact descriptor does not match the requested Skill')
+    }
     const bytes = await download(new URL(artifact.download_url, base).toString())
+    if (bytes.length !== artifact.size) throw new Error(`Artifact size mismatch: expected ${artifact.size}, got ${bytes.length}`)
     const actualDigest = await digest(bytes)
     if (actualDigest !== artifact.digest) throw new Error(`SHA-256 mismatch: expected ${artifact.digest}, got ${actualDigest}`)
     const files = parseTarArchive(await gunzip(bytes))
