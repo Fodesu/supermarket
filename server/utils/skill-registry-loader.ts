@@ -12,7 +12,7 @@ let localStore: Promise<SkillRegistryStore> | undefined
 const r2Stores = new WeakMap<object, SkillRegistryStore>()
 
 export async function getRuntimeSkillRegistryStore(event?: any): Promise<SkillRegistryStore> {
-  const bucket = event?.context?.cloudflare?.env?.SKILL_REGISTRY_BUCKET ?? event?.context?.env?.SKILL_REGISTRY_BUCKET
+  const bucket = event?.req?.runtime?.cloudflare?.env?.SKILL_REGISTRY_BUCKET
   if (bucket && typeof bucket === 'object') {
     let store = r2Stores.get(bucket)
     if (!store) {
@@ -61,6 +61,10 @@ export async function getSkillRegistrySummaries(event: any): Promise<SkillRegist
     ])
     const registry = definition ?? catalog?.registry
     if (!registry) return null
+    const lastSuccess = status?.last_success_at ? Date.parse(status.last_success_at) : Number.NaN
+    const nextRefreshAt = Number.isFinite(lastSuccess)
+      ? new Date(lastSuccess + registry.refresh_interval_seconds * 1000).toISOString()
+      : undefined
     return {
       id: registry.id, name: registry.name, enabled: registry.enabled, priority: registry.priority,
       adapter: registry.adapter, revision: catalog?.revision, synced_at: catalog?.synced_at,
@@ -68,6 +72,7 @@ export async function getSkillRegistrySummaries(event: any): Promise<SkillRegist
       package_count: new Set(catalog?.skills.map((skill) => skill.package_id) ?? []).size,
       category_count: summarizeSkillCategories(catalog?.skills ?? []).length,
       skipped_package_count: new Set(catalog?.diagnostics.map((item) => item.package_id).filter(Boolean) ?? []).size,
+      refresh_interval_seconds: registry.refresh_interval_seconds, next_refresh_at: nextRefreshAt,
       status: status?.state ?? (catalog?.skills.length ? 'ready' : 'empty'), last_error: status?.last_error,
     }
   }))

@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { loadSkillRegistryDefinitions, SkillRegistryRefresher } from './skill-registry/refresher'
+import { isSkillRegistryRefreshDue, loadSkillRegistryDefinitions, SkillRegistryRefresher } from './skill-registry/refresher'
 import { createSkillRegistryStore } from './skill-registry/store'
 
 function option(name: string) {
@@ -17,8 +17,16 @@ if ((packageID || skillID) && !registryID) throw new Error('--package and --skil
 const definitions = await loadSkillRegistryDefinitions(projectRoot)
 const selected = registryID ? definitions.filter((definition) => definition.id === registryID) : definitions
 if (registryID && selected.length === 0) throw new Error(`Registry not found: ${registryID}`)
-const refresher = new SkillRegistryRefresher(createSkillRegistryStore(projectRoot), projectRoot)
+const store = createSkillRegistryStore(projectRoot)
+const refresher = new SkillRegistryRefresher(store, projectRoot)
 for (const definition of selected) {
+  if (process.argv.includes('--due') && !process.argv.includes('--force')) {
+    const status = await store.getStatus(definition.id)
+    if (!isSkillRegistryRefreshDue(definition, status)) {
+      console.log({ registry: definition.id, skipped: 'not_due' })
+      continue
+    }
+  }
   console.log(await refresher.refresh(definition, {
     package: packageID, skill: skillID, force: process.argv.includes('--force'),
   }))
