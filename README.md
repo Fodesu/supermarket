@@ -113,6 +113,14 @@ An external scheduler should invoke `registry:refresh -- --due` at a wake-up cad
 
 Configure the Bun Refresher with `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET`. The Cloudflare Worker uses the `SKILL_REGISTRY_BUCKET` binding for the same bucket. A refresh writes every immutable Artifact and Catalog revision before updating the Registry's `current.json` pointer; failures preserve the last-known-good Catalog.
 
+Storage selection depends on the runtime:
+
+- `bun run registry:refresh` without R2 environment variables writes to `.data/registries`, and `bun run dev` reads the same directory. `REGISTRY_DATA_DIR` can override this location.
+- A deployed Cloudflare Worker reads the `SKILL_REGISTRY_BUCKET` R2 binding. The production Refresher must use credentials for that same bucket.
+- `wrangler dev` supplies a Miniflare R2 binding, so it reads Miniflare's local R2 state instead of `.data/registries`. That isolated preview store must be seeded separately before testing Registry APIs through Wrangler.
+
+R2 is therefore not required for normal local development. It is the shared production Store and the Cloudflare-compatible local preview Store.
+
 ### Protocol Client
 
 ```bash
