@@ -6,7 +6,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "bun test",
-    "registry:refresh": "bun scripts/skill-registry-refresh.ts"
+    "registry:refresh": "bun scripts/skill-registry-refresh.ts",
+    "registry:client": "bun client/skill-registry-client.ts"
   },
   "imports": {
     "#*": "./*"
