@@ -13,20 +13,32 @@ function createHeader(filename: string, size: number): Uint8Array {
     header.set(bytes.subarray(0, len), offset)
   }
 
-  writeStr(filename, 0, 100)
+  let name = filename
+  let prefix = ''
+  if (encoder.encode(name).length > 100) {
+    const separators = [...filename.matchAll(/\//g)].map((match) => match.index).reverse()
+    const split = separators.find((index) =>
+      encoder.encode(filename.slice(0, index)).length <= 155 && encoder.encode(filename.slice(index + 1)).length <= 100,
+    )
+    if (split == null) throw new Error(`Tar path is too long: ${filename}`)
+    prefix = filename.slice(0, split)
+    name = filename.slice(split + 1)
+  }
+  writeStr(name, 0, 100)
   writeStr(encodeOctal(0o644, 8), 100, 8)    // mode
   writeStr(encodeOctal(0, 8), 108, 8)        // uid
   writeStr(encodeOctal(0, 8), 116, 8)        // gid
   writeStr(encodeOctal(size, 12), 124, 12)   // size
-  writeStr(encodeOctal(Math.floor(Date.now() / 1000), 12), 136, 12) // mtime
+  writeStr(encodeOctal(0, 12), 136, 12)        // deterministic mtime
   writeStr('        ', 148, 8)               // checksum placeholder (spaces)
   header[156] = 0x30                         // '0' = regular file
   writeStr('ustar\0', 257, 6)               // magic
   writeStr('00', 263, 2)                     // version
+  writeStr(prefix, 345, 155)                 // ustar path prefix
 
   let checksum = 0
   for (let i = 0; i < BLOCK_SIZE; i++) {
-    checksum += header[i]
+    checksum += header[i] ?? 0
   }
   writeStr(encodeOctal(checksum, 7) + ' ', 148, 8)
 
@@ -36,9 +48,13 @@ function createHeader(filename: string, size: number): Uint8Array {
 export function createTar(files: Record<string, Uint8Array>, prefix: string): Uint8Array {
   const parts: Uint8Array[] = []
 
-  for (const [name, data] of Object.entries(files)) {
-    const path = prefix ? `${prefix}/${name}` : name
-    parts.push(createHeader(path, data.length))
+  for (const [name, data] of Object.entries(files).sort(([a], [b]) => a.localeCompare(b))) {
+    const normalized = name.replaceAll('\\', '/')
+    if (!normalized || normalized.startsWith('/') || normalized.split('/').includes('..')) {
+      throw new Error(`Unsafe tar path: ${name}`)
+    }
+    const archivePath = prefix ? `${prefix}/${normalized}` : normalized
+    parts.push(createHeader(archivePath, data.length))
     parts.push(data)
 
     const remainder = data.length % BLOCK_SIZE
@@ -61,26 +77,8 @@ export function createTar(files: Record<string, Uint8Array>, prefix: string): Ui
 }
 
 export async function gzip(data: Uint8Array): Promise<Uint8Array> {
-  const cs = new CompressionStream('gzip')
-  const writer = cs.writable.getWriter()
-  writer.write(data)
-  writer.close()
-
-  const reader = cs.readable.getReader()
-  const chunks: Uint8Array[] = []
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    chunks.push(value)
-  }
-
-  let totalLen = 0
-  for (const c of chunks) totalLen += c.length
-  const result = new Uint8Array(totalLen)
-  let offset = 0
-  for (const c of chunks) {
-    result.set(c, offset)
-    offset += c.length
-  }
-  return result
+  const input = new Uint8Array(data.length)
+  input.set(data)
+  const stream = new Blob([input]).stream().pipeThrough(new CompressionStream('gzip'))
+  return new Uint8Array(await new Response(stream).arrayBuffer())
 }

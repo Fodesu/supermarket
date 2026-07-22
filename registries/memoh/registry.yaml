@@ -1,0 +1,16 @@
+schema_version: "1"
+id: memoh
+name: Memoh Skills
+enabled: true
+priority: 1000
+adapter: skill_directory
+source:
+  type: local
+  path: skills
+refresh_interval: 12h
+defaults:
+  runtime_requirements:
+    os:
+      - darwin
+      - linux
+      - win32
