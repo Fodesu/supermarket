@@ -21,6 +21,7 @@ describe('Skill Registry definitions', () => {
   })
 
   test('rejects unknown adapters, unsafe paths and malformed overrides', () => {
+    expect(safeRelativePath('./skills/')).toBe('skills')
     expect(() => safeRelativePath('../private')).toThrow('escapes its source')
     expect(() => parseSkillRegistryDefinition({
       schema_version: '1', id: 'bad', name: 'Bad', adapter: 'plugin_yaml', source: { type: 'local', path: 'skills' },

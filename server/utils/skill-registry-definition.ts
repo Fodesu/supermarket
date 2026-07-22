@@ -18,7 +18,7 @@ export function assertRegistryID(value: string, label = 'ID'): string {
 }
 
 export function safeRelativePath(value: string, label = 'path'): string {
-  const normalized = path.posix.normalize(value.replaceAll('\\', '/')).replace(/^\.\//, '')
+  const normalized = path.posix.normalize(value.replaceAll('\\', '/')).replace(/^\.\//, '').replace(/\/$/, '')
   if (!normalized || normalized === '..' || normalized.startsWith('../') || path.posix.isAbsolute(normalized)) {
     throw new Error(`${label} escapes its source: ${value}`)
   }
