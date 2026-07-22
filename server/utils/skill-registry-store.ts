@@ -83,11 +83,16 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     const key = `skill-registries/${id}/catalogs/${revision}.json`
     const bytes = jsonBytes(catalog)
     const existing = await this.backend.get(key)
-    if (existing && decoder.decode(existing) !== decoder.decode(bytes)) {
-      throw new Error(`Catalog revision ${revision} is immutable`)
+    let syncedAt = catalog.synced_at
+    if (existing) {
+      const stored = JSON.parse(decoder.decode(existing)) as SkillRegistryCatalog
+      if (stored.revision !== revision || stored.content_revision !== catalog.content_revision || stored.registry.id !== id) {
+        throw new Error(`Catalog revision ${revision} is immutable`)
+      }
+      syncedAt = stored.synced_at
     }
     if (!existing) await this.backend.put(key, bytes)
-    await this.backend.put(`skill-registries/${id}/current.json`, jsonBytes({ revision, synced_at: catalog.synced_at }))
+    await this.backend.put(`skill-registries/${id}/current.json`, jsonBytes({ revision, synced_at: syncedAt }))
   }
 
   getStatus(registryID: string) {
