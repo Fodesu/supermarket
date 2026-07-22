@@ -16,18 +16,42 @@ import { buildSkillCandidates } from './adapters'
 import { packageSkill } from './files'
 import { materializeSkillRegistrySource } from './source'
 
-export async function loadSkillRegistryDefinitions(projectRoot: string) {
+export interface SkillRegistryDefinitionFailure {
+  registry: string
+  path: string
+  error: unknown
+}
+
+export async function loadSkillRegistryDefinitionResults(projectRoot: string) {
   const root = path.join(projectRoot, 'registries')
   const definitions: SkillRegistryDefinition[] = []
+  const failures: SkillRegistryDefinitionFailure[] = []
   const ids = new Set<string>()
   for await (const relativePath of new Bun.Glob('*/registry.yaml').scan({ cwd: root })) {
-    const definition = parseSkillRegistryDefinition(parseYaml(await readFile(path.join(root, relativePath), 'utf8')))
-    if (ids.has(definition.id)) throw new Error(`Duplicate registry ID: ${definition.id}`)
-    if (path.dirname(relativePath) !== definition.id) throw new Error(`${relativePath}: directory must match Registry ID`)
-    ids.add(definition.id)
-    definitions.push(definition)
+    try {
+      const definition = parseSkillRegistryDefinition(parseYaml(await readFile(path.join(root, relativePath), 'utf8')))
+      if (ids.has(definition.id)) throw new Error(`Duplicate registry ID: ${definition.id}`)
+      if (path.dirname(relativePath) !== definition.id) throw new Error(`${relativePath}: directory must match Registry ID`)
+      ids.add(definition.id)
+      definitions.push(definition)
+    } catch (error) {
+      failures.push({ registry: path.dirname(relativePath), path: relativePath, error })
+    }
   }
-  return definitions.sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id))
+  definitions.sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id))
+  failures.sort((a, b) => a.path.localeCompare(b.path))
+  return { definitions, failures }
+}
+
+export async function loadSkillRegistryDefinitions(projectRoot: string) {
+  const result = await loadSkillRegistryDefinitionResults(projectRoot)
+  if (result.failures.length) {
+    throw new AggregateError(
+      result.failures.map((failure) => failure.error),
+      result.failures.map((failure) => `${failure.path}: ${failure.error instanceof Error ? failure.error.message : String(failure.error)}`).join('\n'),
+    )
+  }
+  return result.definitions
 }
 
 export function isSkillRegistryRefreshDue(
@@ -103,9 +127,9 @@ export class SkillRegistryRefresher {
     if (options.package && current && !sameDefinition(current.registry, definition)) {
       throw new Error(`${definition.id}: scoped refresh requires an unchanged Registry definition; run a full refresh`)
     }
-    await this.store.putDefinition(definition)
     const lastSuccessAt = previousStatus?.last_success_at ?? current?.synced_at
     if (!definition.enabled) {
+      await this.store.putDefinition(definition)
       await this.store.putStatus({
         registry_id: definition.id, state: 'disabled', current_revision: current?.revision,
         last_attempt_at: attemptedAt, last_success_at: lastSuccessAt,
@@ -195,6 +219,7 @@ export class SkillRegistryRefresher {
           revision: current.revision, state: skills.length ? 'ready' : 'empty', succeededAt,
           result: { registry: definition.id, revision: current.revision, skills: skills.length, skipped: 'unchanged' },
         }
+        await this.store.putDefinition(definition)
         await this.store.putStatus({
           registry_id: definition.id, state: completed.state, current_revision: current.revision,
           last_attempt_at: attemptedAt, last_success_at: succeededAt,
@@ -213,6 +238,7 @@ export class SkillRegistryRefresher {
         result: { registry: definition.id, revision, skills: skills.length, diagnostics: diagnostics.length },
       }
       await this.store.publishCatalog(catalog)
+      await this.store.putDefinition(definition)
       await this.store.putStatus({
         registry_id: definition.id, state: completed.state, current_revision: revision,
         last_attempt_at: attemptedAt, last_success_at: succeededAt,
@@ -222,6 +248,7 @@ export class SkillRegistryRefresher {
       if (completed) {
         const live = await this.store.getCatalog(definition.id)
         if (live?.revision === completed.revision) {
+          await this.store.putDefinition(definition)
           await this.store.putStatus({
             registry_id: definition.id, state: completed.state, current_revision: completed.revision,
             last_attempt_at: attemptedAt, last_success_at: completed.succeededAt,

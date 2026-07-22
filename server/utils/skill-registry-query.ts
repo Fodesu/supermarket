@@ -37,10 +37,10 @@ export function parseSkillRegistryQuery(query: Record<string, unknown>, registry
   const category = scalar(query, 'category')
   const os = scalar(query, 'os')
   const sortValue = scalar(query, 'sort')
-  if (sortValue && !['relevance', 'name', 'registry', 'package'].includes(sortValue)) {
+  if (sortValue != null && !['relevance', 'name', 'registry', 'package'].includes(sortValue)) {
     badRequest(`Unsupported sort: ${sortValue}`)
   }
-  if (os && !supportedSkillRuntimeOS.includes(os.toLowerCase() as any)) badRequest(`Unsupported os: ${os}`)
+  if (os != null && !supportedSkillRuntimeOS.includes(os.toLowerCase() as any)) badRequest(`Unsupported os: ${os}`)
   return {
     registry: registryValue != null ? requireSkillRegistryID(registryValue, 'registry ID') : undefined,
     q: scalar(query, 'q'),

@@ -94,15 +94,20 @@ export async function materializeSkillRegistrySource(
     ? [sourceBase, definition.catalog_path].filter(Boolean).join('/')
     : sourceBase
   const checkout = await checkoutGit(definition.source.url, definition.source.ref, initialPath ? [initialPath] : [])
-  const selectedPaths = new Set(initialPath ? [initialPath] : [])
-  return {
-    root: await resolveRealInside(checkout.repository, sourceBase),
-    revision: checkout.revision,
-    definition,
-    ensurePaths: async (paths) => {
-      for (const item of paths) selectedPaths.add([sourceBase, item].filter(Boolean).join('/'))
-      await exec('git', ['-C', checkout.repository, 'sparse-checkout', 'set', ...selectedPaths])
-    },
-    cleanup: () => rm(checkout.temporaryRoot, { recursive: true, force: true }),
+  try {
+    const selectedPaths = new Set(initialPath ? [initialPath] : [])
+    return {
+      root: await resolveRealInside(checkout.repository, sourceBase),
+      revision: checkout.revision,
+      definition,
+      ensurePaths: async (paths) => {
+        for (const item of paths) selectedPaths.add([sourceBase, item].filter(Boolean).join('/'))
+        await exec('git', ['-C', checkout.repository, 'sparse-checkout', 'set', ...selectedPaths])
+      },
+      cleanup: () => rm(checkout.temporaryRoot, { recursive: true, force: true }),
+    }
+  } catch (error) {
+    await rm(checkout.temporaryRoot, { recursive: true, force: true })
+    throw error
   }
 }

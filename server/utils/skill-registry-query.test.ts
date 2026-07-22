@@ -17,6 +17,7 @@ describe('Skill Registry query parsing', () => {
     expect(() => parseSkillRegistryQuery({ tag: ['one', 'two'] })).toThrow('specified once')
     expect(() => parseSkillRegistryQuery({ os: 'android' })).toThrow('Unsupported os')
     expect(() => parseSkillRegistryQuery({ sort: 'recent' })).toThrow('Unsupported sort')
+    expect(() => parseSkillRegistryQuery({ sort: '' })).toThrow('Unsupported sort')
     expect(() => parseSkillRegistryQuery({ page: 'abc' })).toThrow('positive integer')
     expect(() => parseSkillRegistryQuery({ limit: '101' })).toThrow('out of range')
     expect(() => requireSkillRegistryID('../escape', 'registry ID')).toThrow('Invalid registry ID')

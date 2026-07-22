@@ -221,6 +221,9 @@ async function codexMarketplaceSkills(
   const entries = parseMarketplace(JSON.parse(await readFile(catalogPath, 'utf8')))
     .filter((entry) => !packageFilter || entry.name === packageFilter)
   if (packageFilter && !entries.length) {
+    if (allowMissingScope && skillFilter) {
+      throw new Error(`${definition.id}/${packageFilter}: package is missing; refresh the whole package`)
+    }
     if (allowMissingScope) return { skills: [], diagnostics: [] }
     throw new Error(`${definition.id}: package "${packageFilter}" not found`)
   }

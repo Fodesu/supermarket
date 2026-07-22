@@ -111,7 +111,7 @@ bun run registry:refresh -- --force
 
 An external scheduler should invoke `registry:refresh -- --due` at a wake-up cadence no longer than the smallest configured Registry interval. The command reads each Registry's last successful refresh and skips entries that are not due. This keeps refresh policy in `registry.yaml` instead of a fixed workflow cron.
 
-The Refresher is a single-writer service. Production scheduling must allow at most one `registry:refresh` invocation at a time; one invocation processes Registries sequentially and continues after an individual Registry failure. Definition changes bypass the due-time skip so enable/disable and catalog-affecting configuration are reconciled immediately.
+The Refresher is a single-writer service. Production scheduling must allow at most one `registry:refresh` invocation at a time; one invocation processes Registries sequentially and continues after an individual Registry failure. The CLI also uses a heartbeat lock at `.data/registry-refresh.lock`. Set `REGISTRY_REFRESH_LOCK_DIR` to a shared filesystem location when multiple scheduler hosts can access the same R2 bucket, and tune stale recovery with `REGISTRY_REFRESH_LOCK_STALE_MS` when required. Definition changes bypass the due-time skip so enable/disable and catalog-affecting configuration are reconciled immediately.
 
 Configure the Bun Refresher with `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET`. The Cloudflare Worker uses the `SKILL_REGISTRY_BUCKET` binding for the same bucket. A refresh writes every immutable Artifact and Catalog revision before updating the Registry's `current.json` pointer; failures preserve the last-known-good Catalog.
 

@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, open, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import {
   MAX_SKILL_ARTIFACT_FILES,
@@ -14,7 +14,7 @@ export interface ArchiveFile {
 }
 
 function stringField(header: Uint8Array, offset: number, length: number) {
-  return decoder.decode(header.subarray(offset, offset + length)).replace(/\0.*$/, '').trim()
+  return decoder.decode(header.subarray(offset, offset + length)).replace(/\0.*$/, '')
 }
 
 function octalField(header: Uint8Array, offset: number, length: number) {
@@ -111,42 +111,33 @@ export async function extractSkillArchive(files: Map<string, ArchiveFile>, desti
   validateSkillArchive(files, installID)
   const root = path.resolve(destination, installID)
   await mkdir(path.dirname(root), { recursive: true })
-  const lockPath = `${root}.install-lock`
-  let lock
   try {
-    lock = await open(lockPath, 'wx')
+    await lstat(root)
+    throw new Error(`Install destination already exists: ${root}`)
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-      throw new Error(`Install destination is locked: ${root}`)
-    }
-    throw error
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
+  const temporary = `${root}.tmp-${crypto.randomUUID()}`
+  const prefix = `${installID}/`
+  let claimedRoot = false
   try {
-    try {
-      await lstat(root)
-      throw new Error(`Install destination already exists: ${root}`)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    for (const [name, file] of files) {
+      const relative = name.slice(prefix.length)
+      const target = path.resolve(temporary, relative)
+      if (!target.startsWith(`${temporary}${path.sep}`)) throw new Error(`Archive path escapes destination: ${name}`)
+      await mkdir(path.dirname(target), { recursive: true })
+      await writeFile(target, file.bytes, { flag: 'wx', mode: file.mode })
+      await chmod(target, file.mode)
     }
-    const temporary = `${root}.tmp-${crypto.randomUUID()}`
-    const prefix = `${installID}/`
-    try {
-      for (const [name, file] of files) {
-        const relative = name.slice(prefix.length)
-        const target = path.resolve(temporary, relative)
-        if (!target.startsWith(`${temporary}${path.sep}`)) throw new Error(`Archive path escapes destination: ${name}`)
-        await mkdir(path.dirname(target), { recursive: true })
-        await writeFile(target, file.bytes, { flag: 'wx', mode: file.mode })
-        await chmod(target, file.mode)
-      }
-      await rename(temporary, root)
-      return root
-    } catch (error) {
-      await rm(temporary, { recursive: true, force: true })
-      throw error
+    if (process.platform !== 'win32') {
+      await mkdir(root)
+      claimedRoot = true
     }
-  } finally {
-    await lock.close()
-    await rm(lockPath, { force: true })
+    await rename(temporary, root)
+    return root
+  } catch (error) {
+    await rm(temporary, { recursive: true, force: true })
+    if (claimedRoot) await rm(root, { recursive: true, force: true })
+    throw error
   }
 }

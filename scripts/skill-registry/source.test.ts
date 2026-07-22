@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import type { SkillRegistryDefinition } from '../../server/types/skill-registry'
@@ -51,5 +51,13 @@ describe('Skill Registry Git sources', () => {
     } finally {
       await source.cleanup()
     }
+
+    const before = new Set((await readdir(os.tmpdir())).filter((name) => name.startsWith('supermarket-skills-git-')))
+    await expect(materializeSkillRegistrySource({
+      ...definition, source: { ...definition.source, path: 'missing' },
+    }, projectRoot)).rejects.toThrow()
+    const after = (await readdir(os.tmpdir()))
+      .filter((name) => name.startsWith('supermarket-skills-git-'))
+    expect(after.filter((name) => !before.has(name))).toEqual([])
   })
 })
