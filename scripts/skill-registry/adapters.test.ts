@@ -82,6 +82,16 @@ describe('Skill Registry adapters', () => {
     })).toThrow('--skill requires --package')
   })
 
+  test('requires package scope when a Marketplace package was removed', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'codex-removed-package-'))
+    roots.push(root)
+    await writeFile(path.join(root, 'marketplace.json'), JSON.stringify({ plugins: [] }))
+    await expect(buildSkillCandidates({
+      definition: definition('codex_marketplace_skills'), sourceRoot: root,
+      packageFilter: 'removed', skillFilter: 'skill', allowMissingScope: true,
+    })).rejects.toThrow('refresh the whole package')
+  })
+
   test('rejects duplicate Marketplace package identities', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'codex-duplicate-packages-'))
     roots.push(root)

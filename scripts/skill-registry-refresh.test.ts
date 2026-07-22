@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import type { SkillRegistryDefinition, SkillRegistryStatus } from '../server/types/skill-registry'
+import { loadSkillRegistryDefinitionResults } from './skill-registry/refresher'
 import { runSkillRegistryRefreshes } from './skill-registry-refresh'
 
 function definition(id: string, enabled = true): SkillRegistryDefinition {
@@ -47,5 +51,21 @@ describe('Skill Registry refresh runner', () => {
       refresher: { refresh: async () => { throw new Error('must not refresh') } },
     })
     expect(outcome).toEqual({ results: [{ registry: item.id, skipped: 'disabled' }], failures: [] })
+  })
+
+  test('loads valid Registry definitions alongside a malformed file', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'registry-definition-results-'))
+    try {
+      await mkdir(path.join(root, 'registries/valid'), { recursive: true })
+      await mkdir(path.join(root, 'registries/broken'), { recursive: true })
+      await writeFile(path.join(root, 'registries/valid/registry.yaml'), `schema_version: "1"\nid: valid\nname: Valid\nadapter: skill_directory\nsource:\n  type: local\n  path: skills\nrefresh_interval: 12h\n`)
+      await writeFile(path.join(root, 'registries/broken/registry.yaml'), 'schema_version: [')
+      const result = await loadSkillRegistryDefinitionResults(root)
+      expect(result.definitions.map((item) => item.id)).toEqual(['valid'])
+      expect(result.failures).toHaveLength(1)
+      expect(result.failures[0]?.registry).toBe('broken')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 })

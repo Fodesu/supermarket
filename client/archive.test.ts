@@ -15,6 +15,7 @@ describe('Skill Registry client archives', () => {
     const compressed = await gzip(createTar({
       'SKILL.md': new TextEncoder().encode('---\nname: pdf\n---\n'),
       [longPath]: new TextEncoder().encode('guide'),
+      'references/note ': new TextEncoder().encode('spacing'),
       'scripts/run.sh': { bytes: new TextEncoder().encode('#!/bin/sh\n'), mode: 0o755 },
     }, installID))
     const files = parseTarArchive(await gunzip(compressed))
@@ -23,6 +24,7 @@ describe('Skill Registry client archives', () => {
     roots.push(root)
     const installed = await extractSkillArchive(files, root, installID)
     expect(await readFile(path.join(installed, longPath), 'utf8')).toBe('guide')
+    expect(await readFile(path.join(installed, 'references/note '), 'utf8')).toBe('spacing')
     expect((await stat(path.join(installed, 'scripts/run.sh'))).mode & 0o777).toBe(0o755)
   })
 

@@ -1,7 +1,8 @@
 import path from 'node:path'
 import type { SkillRegistryDefinition } from '../server/types/skill-registry'
 import type { SkillRegistryStore } from '../server/utils/skill-registry-store'
-import { isSkillRegistryRefreshDue, loadSkillRegistryDefinitions, SkillRegistryRefresher } from './skill-registry/refresher'
+import { isSkillRegistryRefreshDue, loadSkillRegistryDefinitionResults, SkillRegistryRefresher } from './skill-registry/refresher'
+import { acquireProcessLock } from './skill-registry/process-lock'
 import { createSkillRegistryStore } from './skill-registry/store'
 
 interface RefreshRunner {
@@ -58,21 +59,34 @@ if (import.meta.main) {
   if (skillID && !packageID) throw new Error('--skill requires --package')
   if ((packageID || skillID) && !registryID) throw new Error('--package and --skill require --registry')
 
-  const definitions = await loadSkillRegistryDefinitions(projectRoot)
-  const selected = registryID ? definitions.filter((definition) => definition.id === registryID) : definitions
-  if (registryID && selected.length === 0) throw new Error(`Registry not found: ${registryID}`)
-  const store = createSkillRegistryStore(projectRoot)
-  const outcome = await runSkillRegistryRefreshes({
-    definitions: selected, store, refresher: new SkillRegistryRefresher(store, projectRoot),
-    due: process.argv.includes('--due'), force: process.argv.includes('--force'),
-    package: packageID, skill: skillID,
-  })
-  for (const result of outcome.results) console.log(result)
-  for (const failure of outcome.failures) {
-    console.error({
-      registry: failure.registry,
-      error: failure.error instanceof Error ? failure.error.message : String(failure.error),
+  const lockPath = process.env.REGISTRY_REFRESH_LOCK_DIR || path.join(projectRoot, '.data/registry-refresh.lock')
+  const releaseLock = await acquireProcessLock(lockPath)
+  try {
+    const loaded = await loadSkillRegistryDefinitionResults(projectRoot)
+    const selected = registryID ? loaded.definitions.filter((definition) => definition.id === registryID) : loaded.definitions
+    const definitionFailures = registryID
+      ? loaded.failures.filter((failure) => failure.registry === registryID)
+      : loaded.failures
+    if (registryID && selected.length === 0 && definitionFailures.length === 0) throw new Error(`Registry not found: ${registryID}`)
+    const store = createSkillRegistryStore(projectRoot)
+    const outcome = await runSkillRegistryRefreshes({
+      definitions: selected, store, refresher: new SkillRegistryRefresher(store, projectRoot),
+      due: process.argv.includes('--due'), force: process.argv.includes('--force'),
+      package: packageID, skill: skillID,
     })
+    for (const result of outcome.results) console.log(result)
+    const failures = [
+      ...definitionFailures.map((failure) => ({ registry: failure.registry, error: failure.error })),
+      ...outcome.failures,
+    ]
+    for (const failure of failures) {
+      console.error({
+        registry: failure.registry,
+        error: failure.error instanceof Error ? failure.error.message : String(failure.error),
+      })
+    }
+    if (failures.length) process.exitCode = 1
+  } finally {
+    await releaseLock()
   }
-  if (outcome.failures.length) process.exitCode = 1
 }

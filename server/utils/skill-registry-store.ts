@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type {
   SkillArtifactDescriptor,
   SkillArtifactBlob,
@@ -50,6 +51,24 @@ function validateArtifactBlob(descriptor: SkillArtifactBlob, digest: string) {
     || descriptor.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) {
     throw new Error(`Invalid stored Artifact metadata: ${digest}`)
   }
+}
+
+function verifiedArtifactStream(body: ReadableStream<Uint8Array>, descriptor: SkillArtifactBlob) {
+  const hash = createHash('sha256')
+  let size = 0
+  return body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      size += chunk.length
+      if (size > descriptor.size) throw new Error(`Stored Artifact size is corrupt: ${descriptor.digest}`)
+      hash.update(chunk)
+      controller.enqueue(chunk)
+    },
+    flush() {
+      if (size !== descriptor.size || hash.digest('hex') !== descriptor.digest) {
+        throw new Error(`Stored Artifact content is corrupt: ${descriptor.digest}`)
+      }
+    },
+  }))
 }
 
 async function readJSON<T>(backend: BlobBackend, key: string): Promise<T | null> {
@@ -182,7 +201,7 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
       if (streamed.size != null && streamed.size !== descriptor.size) {
         throw new Error(`Stored Artifact size is corrupt: ${digest}`)
       }
-      return { descriptor, body: streamed.body }
+      return { descriptor, body: verifiedArtifactStream(streamed.body, descriptor) }
     }
     const artifact = await this.getArtifact(digest)
     return artifact ? { descriptor: artifact.descriptor, body: artifact.bytes } : null

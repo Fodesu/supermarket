@@ -81,6 +81,8 @@ describe('SkillRegistryRefresher', () => {
     await writeFile(path.join(projectRoot, 'skills/alpha/SKILL.md'), '# invalid')
     const beforeFailure = await store.getCatalog('memoh')
     const lastSuccessAt = (await store.getStatus('memoh'))?.last_success_at
+    await expect(refresher.refresh({ ...definition, priority: 101 })).rejects.toThrow('frontmatter')
+    expect((await store.getDefinition('memoh'))?.priority).toBe(100)
     await expect(refresher.refresh(definition, { package: 'alpha' })).rejects.toThrow('frontmatter')
     expect((await store.getCatalog('memoh'))?.revision).toBe(beforeFailure?.revision)
     expect((await store.getStatus('memoh'))?.state).toBe('stale')
