@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../server/types/skill-registry'
 import { extractSkillArchive, gunzip, parseTarArchive, validateSkillArchive } from './archive'
+import { resolveArtifactDownloadURL } from './protocol'
 
 function option(name: string) {
   const index = process.argv.indexOf(name)
@@ -14,7 +15,7 @@ async function json(url: string) {
 }
 
 async function download(url: string) {
-  const response = await fetch(url)
+  const response = await fetch(url, { redirect: 'error' })
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`)
   const declared = Number(response.headers.get('content-length'))
   if (Number.isFinite(declared) && declared > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) throw new Error('Artifact exceeds compressed size limit')
@@ -78,10 +79,11 @@ switch (command) {
     if (
       artifact.registry_id !== registryID || artifact.package_id !== packageID || artifact.skill_id !== skillID
       || artifact.format !== 'memoh_skill_v1'
+      || typeof artifact.digest !== 'string' || !/^[a-f0-9]{64}$/.test(artifact.digest)
     ) {
       throw new Error('Artifact descriptor does not match the requested Skill')
     }
-    const bytes = await download(new URL(artifact.download_url, base).toString())
+    const bytes = await download(resolveArtifactDownloadURL(artifact.download_url, base))
     if (bytes.length !== artifact.size) throw new Error(`Artifact size mismatch: expected ${artifact.size}, got ${bytes.length}`)
     const actualDigest = await digest(bytes)
     if (actualDigest !== artifact.digest) throw new Error(`SHA-256 mismatch: expected ${artifact.digest}, got ${actualDigest}`)
