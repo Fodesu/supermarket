@@ -1,7 +1,6 @@
 import path from 'node:path'
+import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../server/types/skill-registry'
 import { extractSkillArchive, gunzip, parseTarArchive, validateSkillArchive } from './archive'
-
-const maxCompressedBytes = 25 * 1024 * 1024
 
 function option(name: string) {
   const index = process.argv.indexOf(name)
@@ -18,7 +17,7 @@ async function download(url: string) {
   const response = await fetch(url)
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`)
   const declared = Number(response.headers.get('content-length'))
-  if (Number.isFinite(declared) && declared > maxCompressedBytes) throw new Error('Artifact exceeds compressed size limit')
+  if (Number.isFinite(declared) && declared > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) throw new Error('Artifact exceeds compressed size limit')
   const reader = response.body?.getReader()
   if (!reader) throw new Error('Artifact response has no body')
   const chunks: Uint8Array[] = []
@@ -27,7 +26,7 @@ async function download(url: string) {
     const { done, value } = await reader.read()
     if (done) break
     total += value.length
-    if (total > maxCompressedBytes) {
+    if (total > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) {
       await reader.cancel()
       throw new Error('Artifact exceeds compressed size limit')
     }

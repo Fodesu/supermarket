@@ -28,11 +28,12 @@ describe('Skill Registry adapters', () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'standalone-skills-'))
     roots.push(root)
     await writeSkill(root, 'alpha', 'Alpha', 'reference')
+    await mkdir(path.join(root, 'notes'))
     const result = await buildSkillCandidates({ definition: definition('skill_directory'), sourceRoot: root })
     expect(result.diagnostics).toEqual([])
     expect(result.skills).toHaveLength(1)
     expect(result.skills[0]).toMatchObject({
-      package_id: 'alpha', skill_id: 'alpha', install_id: 'example--alpha--alpha',
+      package_id: 'alpha', skill_id: 'alpha', install_id: 'example+alpha+alpha',
       name: 'Alpha', description: 'Alpha description', tags: ['test'],
     })
     expect(Object.keys(result.skills[0]!.files).sort()).toEqual(['SKILL.md', 'reference.md'])
@@ -74,5 +75,17 @@ describe('Skill Registry adapters', () => {
     expect(() => buildSkillCandidates({
       definition: definition('skill_directory'), sourceRoot: '.', skillFilter: 'demo',
     })).toThrow('--skill requires --package')
+  })
+
+  test('rejects duplicate Marketplace package identities', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'codex-duplicate-packages-'))
+    roots.push(root)
+    await writeFile(path.join(root, 'marketplace.json'), JSON.stringify({ plugins: [
+      { name: 'duplicate', source: 'packages/one' },
+      { name: 'duplicate', source: 'packages/two' },
+    ] }))
+    await expect(buildSkillCandidates({
+      definition: definition('codex_marketplace_skills'), sourceRoot: root,
+    })).rejects.toThrow('duplicate package ID')
   })
 })

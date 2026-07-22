@@ -1,5 +1,6 @@
 import { lstat, readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
+import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../../server/types/skill-registry'
 import { createTar, gzip } from '../../server/utils/tar'
 import { sha256 } from '../../server/utils/skill-registry-store'
 
@@ -45,5 +46,8 @@ export async function readDirectoryFiles(root: string): Promise<Record<string, U
 
 export async function packageSkill(files: Record<string, Uint8Array>, installID: string) {
   const bytes = await gzip(createTar(files, installID))
+  if (bytes.length > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) {
+    throw new Error(`Compressed Skill Artifact exceeds ${MAX_SKILL_ARTIFACT_COMPRESSED_BYTES} bytes`)
+  }
   return { bytes, digest: await sha256(bytes) }
 }

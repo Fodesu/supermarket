@@ -5,6 +5,7 @@ import type {
   SkillRegistryDefinition,
   SkillRegistryStatus,
 } from '../types/skill-registry'
+import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../types/skill-registry'
 import { assertRegistryID } from './skill-registry-definition'
 
 const encoder = new TextEncoder()
@@ -111,6 +112,7 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     assertRegistryID(descriptor.skill_id, 'skill ID')
     assertDigest(descriptor.digest)
     if (descriptor.format !== 'memoh_skill_v1') throw new Error(`Unsupported artifact format: ${descriptor.format}`)
+    if (descriptor.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) throw new Error('Artifact exceeds compressed size limit')
     if (descriptor.size !== bytes.length) throw new Error('Artifact size does not match its content')
     if (descriptor.digest !== await sha256(bytes)) throw new Error('Artifact digest does not match its content')
     const blob: SkillArtifactBlob = {

@@ -67,6 +67,28 @@ function parseOverrides(raw: unknown, registryID: string, kind: 'package' | 'ski
   return Object.keys(overrides).length ? overrides : undefined
 }
 
+function parseTaxonomy(raw: unknown, registryID: string): SkillRegistryDefinition['taxonomy'] {
+  if (raw == null) return undefined
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`${registryID}.taxonomy must be an object`)
+  }
+  const mappingsRaw = (raw as Record<string, unknown>).mappings
+  if (mappingsRaw == null) return undefined
+  if (!mappingsRaw || typeof mappingsRaw !== 'object' || Array.isArray(mappingsRaw)) {
+    throw new Error(`${registryID}.taxonomy.mappings must be an object`)
+  }
+  const mappings: Record<string, string> = {}
+  for (const [source, target] of Object.entries(mappingsRaw as Record<string, unknown>)) {
+    const sourceName = source.trim()
+    const categoryID = typeof target === 'string' ? target.trim() : ''
+    if (!sourceName || !safeIDPattern.test(categoryID)) {
+      throw new Error(`${registryID}: invalid taxonomy mapping ${source}: ${String(target)}`)
+    }
+    mappings[sourceName] = categoryID
+  }
+  return Object.keys(mappings).length ? { mappings } : undefined
+}
+
 export function resolveSkillRuntimeRequirements(
   definition: SkillRegistryDefinition,
   packageID: string,
@@ -84,6 +106,7 @@ export function parseSkillRegistryDefinition(raw: unknown): SkillRegistryDefinit
   if (!raw || typeof raw !== 'object') throw new Error('Registry definition must be an object')
   const data = raw as Record<string, any>
   const id = assertRegistryID(String(data.id ?? '').trim(), 'registry ID')
+  if (data.schema_version !== '1') throw new Error(`${id}: unsupported schema_version ${String(data.schema_version)}`)
   const name = String(data.name ?? '').trim()
   const adapter = String(data.adapter ?? '') as SkillRegistryAdapter
   if (!name) throw new Error(`${id}: name is required`)
@@ -122,7 +145,7 @@ export function parseSkillRegistryDefinition(raw: unknown): SkillRegistryDefinit
     priority: Number.isFinite(Number(data.priority)) ? Number(data.priority) : 0,
     adapter, source, catalog_path: catalogPath,
     refresh_interval_seconds: parseRefreshInterval(data.refresh_interval, `${id}.refresh_interval`),
-    taxonomy: data.taxonomy && typeof data.taxonomy === 'object' ? data.taxonomy : undefined,
+    taxonomy: parseTaxonomy(data.taxonomy, id),
     defaults: defaultRequirements ? { runtime_requirements: defaultRequirements } : undefined,
     package_overrides: parseOverrides(data.package_overrides, id, 'package'),
     skill_overrides: parseOverrides(data.skill_overrides, id, 'skill'),

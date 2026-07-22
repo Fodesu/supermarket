@@ -1,5 +1,7 @@
 import type { SkillAuthor } from './skill'
 
+export const MAX_SKILL_ARTIFACT_COMPRESSED_BYTES = 25 * 1024 * 1024
+
 export type SkillRegistryAdapter = 'skill_directory' | 'codex_marketplace_skills'
 export type SkillRuntimeOS = 'darwin' | 'linux' | 'win32'
 
