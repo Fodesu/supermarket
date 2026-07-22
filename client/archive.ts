@@ -1,10 +1,17 @@
-import { lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import {
+  MAX_SKILL_ARTIFACT_FILES,
+  MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
+} from '../server/types/skill-registry'
 
 const decoder = new TextDecoder()
 const blockSize = 512
-const maxFiles = 10_000
-const maxArchiveBytes = 100 * 1024 * 1024
+
+export interface ArchiveFile {
+  bytes: Uint8Array
+  mode: 0o644 | 0o755
+}
 
 function stringField(header: Uint8Array, offset: number, length: number) {
   return decoder.decode(header.subarray(offset, offset + length)).replace(/\0.*$/, '').trim()
@@ -17,7 +24,8 @@ function octalField(header: Uint8Array, offset: number, length: number) {
 }
 
 function safeArchivePath(name: string) {
-  const normalized = name.replaceAll('\\', '/')
+  if (name.includes('\\')) throw new Error(`Unsafe archive path: ${name}`)
+  const normalized = name
   const segments = normalized.split('/')
   if (!normalized || normalized.startsWith('/') || segments.includes('..') || segments.includes('') || /^[a-z]:/i.test(normalized)) {
     throw new Error(`Unsafe archive path: ${name}`)
@@ -34,8 +42,8 @@ function verifyChecksum(header: Uint8Array) {
   if (expected !== actual) throw new Error('Invalid tar header checksum')
 }
 
-export function parseTarArchive(bytes: Uint8Array): Map<string, Uint8Array> {
-  const files = new Map<string, Uint8Array>()
+export function parseTarArchive(bytes: Uint8Array): Map<string, ArchiveFile> {
+  const files = new Map<string, ArchiveFile>()
   let offset = 0
   let totalBytes = 0
   while (offset + blockSize <= bytes.length) {
@@ -43,6 +51,7 @@ export function parseTarArchive(bytes: Uint8Array): Map<string, Uint8Array> {
     if (header.every((value) => value === 0)) break
     verifyChecksum(header)
     const name = safeArchivePath([stringField(header, 345, 155), stringField(header, 0, 100)].filter(Boolean).join('/'))
+    const rawMode = octalField(header, 100, 8)
     const size = octalField(header, 124, 12)
     const type = header[156]
     offset += blockSize
@@ -50,8 +59,10 @@ export function parseTarArchive(bytes: Uint8Array): Map<string, Uint8Array> {
     if (type !== 0 && type !== 0x30) throw new Error(`Unsupported archive entry type for ${name}`)
     if (files.has(name)) throw new Error(`Duplicate archive entry: ${name}`)
     totalBytes += size
-    if (files.size >= maxFiles || totalBytes > maxArchiveBytes) throw new Error('Archive exceeds extraction limits')
-    files.set(name, bytes.slice(offset, offset + size))
+    if (files.size >= MAX_SKILL_ARTIFACT_FILES || totalBytes > MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES) {
+      throw new Error('Archive exceeds extraction limits')
+    }
+    files.set(name, { bytes: bytes.slice(offset, offset + size), mode: rawMode & 0o111 ? 0o755 : 0o644 })
     offset += Math.ceil(size / blockSize) * blockSize
   }
   if (!files.size) throw new Error('Archive contains no files')
@@ -64,7 +75,7 @@ export function parseTarArchive(bytes: Uint8Array): Map<string, Uint8Array> {
   return files
 }
 
-export async function gunzip(bytes: Uint8Array, limit = maxArchiveBytes) {
+export async function gunzip(bytes: Uint8Array, limit = MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES) {
   const stream = new Blob([bytes.slice().buffer as ArrayBuffer]).stream().pipeThrough(new DecompressionStream('gzip'))
   const reader = stream.getReader()
   const chunks: Uint8Array[] = []
@@ -88,7 +99,7 @@ export async function gunzip(bytes: Uint8Array, limit = maxArchiveBytes) {
   return output
 }
 
-export function validateSkillArchive(files: Map<string, Uint8Array>, installID: string) {
+export function validateSkillArchive(files: Map<string, ArchiveFile>, installID: string) {
   const prefix = `${installID}/`
   if (!files.has(`${prefix}SKILL.md`)) throw new Error('Skill archive does not contain SKILL.md at its root')
   for (const name of files.keys()) {
@@ -96,7 +107,7 @@ export function validateSkillArchive(files: Map<string, Uint8Array>, installID: 
   }
 }
 
-export async function extractSkillArchive(files: Map<string, Uint8Array>, destination: string, installID: string) {
+export async function extractSkillArchive(files: Map<string, ArchiveFile>, destination: string, installID: string) {
   validateSkillArchive(files, installID)
   const root = path.resolve(destination, installID)
   try {
@@ -108,12 +119,13 @@ export async function extractSkillArchive(files: Map<string, Uint8Array>, destin
   const temporary = `${root}.tmp-${crypto.randomUUID()}`
   const prefix = `${installID}/`
   try {
-    for (const [name, bytes] of files) {
+    for (const [name, file] of files) {
       const relative = name.slice(prefix.length)
       const target = path.resolve(temporary, relative)
       if (!target.startsWith(`${temporary}${path.sep}`)) throw new Error(`Archive path escapes destination: ${name}`)
       await mkdir(path.dirname(target), { recursive: true })
-      await writeFile(target, bytes, { flag: 'wx' })
+      await writeFile(target, file.bytes, { flag: 'wx', mode: file.mode })
+      await chmod(target, file.mode)
     }
     await mkdir(path.dirname(root), { recursive: true })
     await rename(temporary, root)

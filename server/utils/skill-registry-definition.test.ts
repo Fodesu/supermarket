@@ -34,6 +34,14 @@ describe('Skill Registry definitions', () => {
     })).toThrow('invalid skill override id')
     expect(() => parseSkillRegistryDefinition({
       schema_version: '1', id: 'bad', name: 'Bad', adapter: 'skill_directory', source: { type: 'local', path: 'skills' },
+      refresh_interval: '12h', package_overrides: { mac: { os: ['darwin'] } },
+    })).toThrow('must contain only runtime_requirements')
+    expect(() => parseSkillRegistryDefinition({
+      schema_version: '1', id: 'bad', name: 'Bad', adapter: 'skill_directory', source: { type: 'local' },
+      refresh_interval: '12h',
+    })).toThrow('local source.path is required')
+    expect(() => parseSkillRegistryDefinition({
+      schema_version: '1', id: 'bad', name: 'Bad', adapter: 'skill_directory', source: { type: 'local', path: 'skills' },
     })).toThrow('refresh_interval')
     expect(() => parseSkillRegistryDefinition({
       schema_version: '2', id: 'bad', name: 'Bad', adapter: 'skill_directory',

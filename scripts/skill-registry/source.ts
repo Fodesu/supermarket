@@ -1,9 +1,13 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { createReadStream } from 'node:fs'
+import { lstat, mkdtemp, readdir, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import type { SkillRegistryDefinition } from '../../server/types/skill-registry'
-import { sha256 } from '../../server/utils/skill-registry-store'
-import { readDirectoryFiles, resolveInside } from './files'
+import { resolveRealInside } from './files'
+
+const maxRegistryRevisionFiles = 100_000
+const maxRegistryRevisionBytes = 10 * 1024 * 1024 * 1024
 
 async function exec(command: string, args: string[]) {
   const child = Bun.spawn([command, ...args], { stdout: 'pipe', stderr: 'pipe' })
@@ -15,20 +19,45 @@ async function exec(command: string, args: string[]) {
 }
 
 async function directoryRevision(root: string) {
-  const files = await readDirectoryFiles(root)
-  const parts: string[] = []
-  for (const [name, bytes] of Object.entries(files).sort(([a], [b]) => a.localeCompare(b))) {
-    parts.push(name, await sha256(bytes))
+  const physicalRoot = await resolveRealInside(root)
+  const hash = createHash('sha256')
+  let fileCount = 0
+  let totalBytes = 0
+  const visit = async (directory: string) => {
+    const entries = await readdir(directory, { withFileTypes: true })
+    entries.sort((a, b) => a.name.localeCompare(b.name))
+    for (const entry of entries) {
+      if (entry.name === '.git' || entry.name === 'node_modules') continue
+      const target = path.join(directory, entry.name)
+      const stats = await lstat(target)
+      if (stats.isSymbolicLink()) throw new Error(`Registry sources cannot contain symlinks: ${target}`)
+      if (stats.isDirectory()) {
+        await visit(target)
+        continue
+      }
+      if (!stats.isFile()) continue
+      fileCount++
+      totalBytes += stats.size
+      if (fileCount > maxRegistryRevisionFiles || totalBytes > maxRegistryRevisionBytes) {
+        throw new Error('Registry source exceeds revision hashing limits')
+      }
+      hash.update(path.relative(physicalRoot, target).replaceAll(path.sep, '/'))
+      hash.update(`\0${stats.mode & 0o777}\0${stats.size}\0`)
+      for await (const chunk of createReadStream(target)) hash.update(chunk)
+      hash.update('\0')
+    }
   }
-  return sha256(parts.join('\n'))
+  await visit(physicalRoot)
+  return hash.digest('hex')
 }
 
 async function checkoutGit(url: string, ref?: string, sparsePaths: string[] = []) {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'supermarket-skills-git-'))
   const repository = path.join(temporaryRoot, 'repository')
   try {
-    await exec('git', ['clone', '--filter=blob:none', '--no-checkout', url, repository])
-    await exec('git', ['-C', repository, 'fetch', '--depth', '1', 'origin', ref || 'HEAD'])
+    await exec('git', ['init', repository])
+    await exec('git', ['-C', repository, 'remote', 'add', 'origin', url])
+    await exec('git', ['-C', repository, 'fetch', '--depth', '1', '--filter=blob:none', 'origin', ref || 'HEAD'])
     if (sparsePaths.length) {
       await exec('git', ['-C', repository, 'sparse-checkout', 'init', '--no-cone'])
       await exec('git', ['-C', repository, 'sparse-checkout', 'set', ...sparsePaths])
@@ -54,7 +83,7 @@ export async function materializeSkillRegistrySource(
   projectRoot: string,
 ): Promise<MaterializedSkillRegistrySource> {
   if (definition.source.type === 'local') {
-    const root = resolveInside(projectRoot, definition.source.path)
+    const root = await resolveRealInside(projectRoot, definition.source.path)
     return {
       root, revision: await directoryRevision(root), definition,
       ensurePaths: async () => {}, cleanup: async () => {},
@@ -67,7 +96,7 @@ export async function materializeSkillRegistrySource(
   const checkout = await checkoutGit(definition.source.url, definition.source.ref, initialPath ? [initialPath] : [])
   const selectedPaths = new Set(initialPath ? [initialPath] : [])
   return {
-    root: resolveInside(checkout.repository, sourceBase),
+    root: await resolveRealInside(checkout.repository, sourceBase),
     revision: checkout.revision,
     definition,
     ensurePaths: async (paths) => {

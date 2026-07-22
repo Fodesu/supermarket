@@ -57,6 +57,11 @@ function parseOverrides(raw: unknown, registryID: string, kind: 'package' | 'ski
     if (parts.length !== (kind === 'skill' ? 2 : 1) || parts.some((part) => !safeIDPattern.test(part))) {
       throw new Error(`${registryID}: invalid ${kind} override id: ${key}`)
     }
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || !Object.hasOwn(value, 'runtime_requirements')
+      || Object.keys(value).some((field) => field !== 'runtime_requirements')) {
+      throw new Error(`${registryID}.${kind}_overrides.${key} must contain only runtime_requirements`)
+    }
     overrides[key] = {
       runtime_requirements: parseRuntimeRequirements(
         value?.runtime_requirements,
@@ -116,7 +121,11 @@ export function parseSkillRegistryDefinition(raw: unknown): SkillRegistryDefinit
   if (!sourceData || typeof sourceData !== 'object') throw new Error(`${id}: source is required`)
   let source: SkillRegistrySource
   if (sourceData.type === 'local') {
-    source = { type: 'local', path: safeRelativePath(String(sourceData.path ?? ''), 'local source path') }
+    if (typeof sourceData.path !== 'string' || !sourceData.path.trim()) {
+      throw new Error(`${id}: local source.path is required`)
+    }
+    const localPath = sourceData.path.trim()
+    source = { type: 'local', path: localPath === '.' ? '' : safeRelativePath(localPath, 'local source path') }
   } else if (sourceData.type === 'git') {
     const url = String(sourceData.url ?? '').trim()
     if (!/^https:\/\//.test(url) && !/^ssh:\/\//.test(url) && !/^git@/.test(url)) {

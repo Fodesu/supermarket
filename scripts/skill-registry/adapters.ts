@@ -9,7 +9,7 @@ import type {
 import type { SkillAuthor } from '../../server/types/skill'
 import { normalizeSkillCategory } from '../../server/utils/skill-catalog-search'
 import { assertRegistryID, resolveSkillRuntimeRequirements, safeRelativePath } from '../../server/utils/skill-registry-definition'
-import { readDirectoryFiles, resolveInside } from './files'
+import { readDirectoryFiles, resolveRealInside, type SkillSourceFile } from './files'
 
 export interface SkillCandidate {
   package_id: string
@@ -25,7 +25,7 @@ export interface SkillCandidate {
   source_category?: string
   runtime_requirements: SkillRuntimeRequirements
   source_path: string
-  files: Record<string, Uint8Array>
+  files: Record<string, SkillSourceFile>
 }
 
 export interface SkillAdapterResult {
@@ -36,8 +36,8 @@ export interface SkillAdapterResult {
 function uniqueStrings(...values: unknown[]) {
   const output = new Set<string>()
   for (const value of values) {
-    if (!Array.isArray(value)) continue
-    for (const item of value) {
+    const items = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : []
+    for (const item of items) {
       const text = String(item).trim()
       if (text) output.add(text)
     }
@@ -46,16 +46,22 @@ function uniqueStrings(...values: unknown[]) {
 }
 
 function normalizeAuthor(value: unknown, fallback?: SkillAuthor): SkillAuthor {
-  if (typeof value === 'string') return { name: value, email: '' }
+  if (typeof value === 'string') {
+    const text = value.trim()
+    const match = text.match(/^(.*?)\s*<([^<>\s]+@[^<>\s]+)>$/)
+    return { name: match?.[1]?.trim() || text || fallback?.name || '', email: match?.[2] || fallback?.email || '' }
+  }
   if (!value || typeof value !== 'object') return fallback ?? { name: '', email: '' }
   const author = value as Record<string, unknown>
-  return { name: String(author.name ?? fallback?.name ?? ''), email: String(author.email ?? fallback?.email ?? '') }
+  const name = String(author.name ?? '').trim() || fallback?.name || ''
+  const email = String(author.email ?? '').trim() || fallback?.email || ''
+  return { name, email }
 }
 
-function parseSkill(files: Record<string, Uint8Array>, fallbackID: string) {
+function parseSkill(files: Record<string, SkillSourceFile>, fallbackID: string) {
   const manifest = files['SKILL.md']
   if (!manifest) throw new Error(`Skill ${fallbackID} is missing SKILL.md`)
-  const text = new TextDecoder().decode(manifest)
+  const text = new TextDecoder().decode(manifest.bytes)
   const frontmatter = text.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)
   if (!frontmatter) throw new Error(`Skill ${fallbackID} is missing YAML frontmatter`)
   const data = parseYaml(frontmatter[1]!)
@@ -81,11 +87,12 @@ async function candidate(input: {
   skillID: string
   sourcePath: string
   root: string
+  allowedRoot: string
   packageManifest?: Record<string, any>
   sourceCategory?: string
 }): Promise<SkillCandidate> {
-  const { definition, packageID, skillID, sourcePath, root, packageManifest = {}, sourceCategory } = input
-  const files = await readDirectoryFiles(root)
+  const { definition, packageID, skillID, sourcePath, root, allowedRoot, packageManifest = {}, sourceCategory } = input
+  const files = await readDirectoryFiles(root, allowedRoot)
   const { data, metadata } = parseSkill(files, skillID)
   const packageAuthor = normalizeAuthor(packageManifest.author)
   const category = normalizeSkillCategory(
@@ -133,7 +140,8 @@ async function directorySkills(
     if (packageFilter && id !== packageFilter) continue
     if (skillFilter && id !== skillFilter) continue
     skills.push(await candidate({
-      definition, packageID: id, skillID: id, sourcePath: id, root: resolveInside(sourceRoot, id),
+      definition, packageID: id, skillID: id, sourcePath: id,
+      root: await resolveRealInside(sourceRoot, id), allowedRoot: sourceRoot,
     }))
   }
   if ((packageFilter || skillFilter) && skills.length === 0) {
@@ -177,7 +185,7 @@ function codexSkillPaths(value: unknown) {
 }
 
 async function discoverSkillRoots(packageRoot: string, declaredPath: string) {
-  const declaredRoot = resolveInside(packageRoot, declaredPath)
+  const declaredRoot = await resolveRealInside(packageRoot, declaredPath)
   try {
     await readFile(path.join(declaredRoot, 'SKILL.md'))
     return [{ id: assertRegistryID(path.posix.basename(declaredPath), 'skill ID'), root: declaredRoot, relativePath: declaredPath }]
@@ -188,7 +196,7 @@ async function discoverSkillRoots(packageRoot: string, declaredPath: string) {
   const roots: Array<{ id: string; root: string; relativePath: string }> = []
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     if (!entry.isDirectory()) continue
-    const root = resolveInside(declaredRoot, entry.name)
+    const root = await resolveRealInside(declaredRoot, entry.name)
     try {
       await readFile(path.join(root, 'SKILL.md'))
       roots.push({ id: assertRegistryID(entry.name, 'skill ID'), root, relativePath: `${declaredPath}/${entry.name}` })
@@ -207,7 +215,8 @@ async function codexMarketplaceSkills(
   packageFilter?: string,
   skillFilter?: string,
 ): Promise<SkillAdapterResult> {
-  const entries = parseMarketplace(JSON.parse(await readFile(resolveInside(sourceRoot, definition.catalog_path!), 'utf8')))
+  const catalogPath = await resolveRealInside(sourceRoot, definition.catalog_path!)
+  const entries = parseMarketplace(JSON.parse(await readFile(catalogPath, 'utf8')))
     .filter((entry) => !packageFilter || entry.name === packageFilter)
   if (packageFilter && !entries.length) throw new Error(`${definition.id}: package "${packageFilter}" not found`)
   const packages = entries.map((entry) => {
@@ -220,7 +229,9 @@ async function codexMarketplaceSkills(
   const prepared = []
   const diagnostics: RegistryDiagnostic[] = []
   for (const item of packages) {
-    const manifest = JSON.parse(await readFile(resolveInside(sourceRoot, `${item.packagePath}/.codex-plugin/plugin.json`), 'utf8')) as Record<string, any>
+    const packageRoot = await resolveRealInside(sourceRoot, item.packagePath)
+    const manifestPath = await resolveRealInside(packageRoot, '.codex-plugin/plugin.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<string, any>
     if (String(manifest.name ?? '') !== item.entry.name) {
       throw new Error(`${definition.id}: package "${item.entry.name}" manifest name does not match`)
     }
@@ -237,22 +248,22 @@ async function codexMarketplaceSkills(
       continue
     }
     const skillPaths = codexSkillPaths(manifest.skills)
-    prepared.push({ ...item, manifest, skillPaths })
+    prepared.push({ ...item, packageRoot, manifest, skillPaths })
   }
   await ensurePaths(prepared.flatMap((item) => item.skillPaths.map((skillPath) => `${item.packagePath}/${skillPath}`)))
 
   const skills: SkillCandidate[] = []
   for (const item of prepared) {
-    const packageRoot = resolveInside(sourceRoot, item.packagePath)
     const seen = new Set<string>()
     for (const skillPath of item.skillPaths) {
-      for (const root of await discoverSkillRoots(packageRoot, skillPath)) {
+      for (const root of await discoverSkillRoots(item.packageRoot, skillPath)) {
         if (seen.has(root.id)) throw new Error(`${definition.id}/${item.entry.name}: duplicate skill ID ${root.id}`)
         seen.add(root.id)
         if (skillFilter && root.id !== skillFilter) continue
         skills.push(await candidate({
           definition, packageID: item.entry.name, skillID: root.id,
           sourcePath: `${item.packagePath}/${root.relativePath}`, root: root.root,
+          allowedRoot: item.packageRoot,
           packageManifest: item.manifest, sourceCategory: item.entry.category,
         }))
       }
