@@ -51,20 +51,59 @@ function stableCatalogContent(definition: SkillRegistryDefinition, skills: Catal
   }
 }
 
+function sameDefinition(left: SkillRegistryDefinition, right: SkillRegistryDefinition) {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+export interface SkillRegistryRefreshResult {
+  registry: string
+  revision?: string
+  skills?: number
+  diagnostics?: number
+  skipped?: string
+}
+
+interface CompletedRefresh {
+  revision: string
+  state: SkillRegistryStatus['state']
+  succeededAt: string
+  result: SkillRegistryRefreshResult
+}
+
 export class SkillRegistryRefresher {
+  private readonly activeRegistries = new Set<string>()
+
   constructor(private readonly store: SkillRegistryStore, private readonly projectRoot: string) {}
 
   async refresh(
     definition: SkillRegistryDefinition,
     options: { package?: string; skill?: string; force?: boolean } = {},
   ) {
+    if (this.activeRegistries.has(definition.id)) {
+      throw new Error(`${definition.id}: another refresh is already running in this Refresher`)
+    }
+    this.activeRegistries.add(definition.id)
+    try {
+      return await this.refreshRegistry(definition, options)
+    } finally {
+      this.activeRegistries.delete(definition.id)
+    }
+  }
+
+  private async refreshRegistry(
+    definition: SkillRegistryDefinition,
+    options: { package?: string; skill?: string; force?: boolean },
+  ) {
     if (options.skill && !options.package) throw new Error('--skill requires --package')
     const attemptedAt = new Date().toISOString()
-    await this.store.putDefinition(definition)
     const [current, previousStatus] = await Promise.all([
       this.store.getCatalog(definition.id),
       this.store.getStatus(definition.id),
     ])
+    if (options.package && current && !sameDefinition(current.registry, definition)) {
+      throw new Error(`${definition.id}: scoped refresh requires an unchanged Registry definition; run a full refresh`)
+    }
+    await this.store.putDefinition(definition)
     const lastSuccessAt = previousStatus?.last_success_at ?? current?.synced_at
     if (!definition.enabled) {
       await this.store.putStatus({
@@ -79,15 +118,24 @@ export class SkillRegistryRefresher {
     })
 
     let source
+    let completed: CompletedRefresh | undefined
     try {
       if (options.package && !current) {
         throw new Error(`${definition.id}: scoped refresh requires an existing Catalog`)
       }
       source = await materializeSkillRegistrySource(definition, this.projectRoot)
+      const scopeExists = options.package ? Boolean(options.skill
+        ? current?.skills.some((skill) => skill.package_id === options.package && skill.skill_id === options.skill)
+        : current?.skills.some((skill) => skill.package_id === options.package)
+          || current?.diagnostics.some((item) => item.package_id === options.package)) : false
       const result = await buildSkillCandidates({
         definition: source.definition, sourceRoot: source.root, ensurePaths: source.ensurePaths,
         packageFilter: options.package, skillFilter: options.skill,
+        allowMissingScope: scopeExists,
       })
+      if (options.skill && result.diagnostics.some((item) => item.package_id === options.package)) {
+        throw new Error(`${definition.id}/${options.package}: package compatibility changed; refresh the whole package`)
+      }
       const createdAt = new Date().toISOString()
       const refreshed: CatalogSkill[] = []
       for (const candidate of result.skills) {
@@ -143,11 +191,15 @@ export class SkillRegistryRefresher {
       const unchanged = current?.content_revision === contentRevision
       const succeededAt = new Date().toISOString()
       if (!options.force && unchanged) {
+        completed = {
+          revision: current.revision, state: skills.length ? 'ready' : 'empty', succeededAt,
+          result: { registry: definition.id, revision: current.revision, skills: skills.length, skipped: 'unchanged' },
+        }
         await this.store.putStatus({
-          registry_id: definition.id, state: skills.length ? 'ready' : 'empty', current_revision: current.revision,
+          registry_id: definition.id, state: completed.state, current_revision: current.revision,
           last_attempt_at: attemptedAt, last_success_at: succeededAt,
         })
-        return { registry: definition.id, revision: current.revision, skills: skills.length, skipped: 'unchanged' }
+        return completed.result
       }
       const revision = options.force
         ? await sha256(`${contentRevision}\nforced:${crypto.randomUUID()}`)
@@ -156,15 +208,30 @@ export class SkillRegistryRefresher {
         schema_version: '1', registry: source.definition, revision, content_revision: contentRevision,
         source_revision: source.revision, synced_at: succeededAt, skills, diagnostics,
       }
+      completed = {
+        revision, state: skills.length ? 'ready' : 'empty', succeededAt,
+        result: { registry: definition.id, revision, skills: skills.length, diagnostics: diagnostics.length },
+      }
       await this.store.publishCatalog(catalog)
       await this.store.putStatus({
-        registry_id: definition.id, state: skills.length ? 'ready' : 'empty', current_revision: revision,
+        registry_id: definition.id, state: completed.state, current_revision: revision,
         last_attempt_at: attemptedAt, last_success_at: succeededAt,
       })
-      return { registry: definition.id, revision, skills: skills.length, diagnostics: diagnostics.length }
+      return completed.result
     } catch (error) {
+      if (completed) {
+        const live = await this.store.getCatalog(definition.id)
+        if (live?.revision === completed.revision) {
+          await this.store.putStatus({
+            registry_id: definition.id, state: completed.state, current_revision: completed.revision,
+            last_attempt_at: attemptedAt, last_success_at: completed.succeededAt,
+          })
+          return completed.result
+        }
+      }
+      const live = await this.store.getCatalog(definition.id).catch(() => current)
       await this.store.putStatus({
-        registry_id: definition.id, state: current ? 'stale' : 'empty', current_revision: current?.revision,
+        registry_id: definition.id, state: live ? 'stale' : 'empty', current_revision: live?.revision,
         last_attempt_at: attemptedAt, last_success_at: lastSuccessAt,
         last_error: error instanceof Error ? error.message : String(error),
       })

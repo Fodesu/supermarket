@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import type { SkillRegistryDefinition } from '../../server/types/skill-registry'
 import { LocalSkillRegistryStore } from '../../server/utils/local-skill-registry-store'
+import type { SkillRegistryStore } from '../../server/utils/skill-registry-store'
 import { isSkillRegistryRefreshDue, SkillRegistryRefresher } from './refresher'
 
 const roots: string[] = []
@@ -50,6 +51,10 @@ describe('SkillRegistryRefresher', () => {
     expect(initial?.skills.every((skill) => skill.artifact.format === 'memoh_skill_v1')).toBe(true)
     for (const skill of initial!.skills) expect(await store.getArtifact(skill.artifact.digest)).not.toBeNull()
 
+    const overlapping = refresher.refresh(definition)
+    await expect(refresher.refresh(definition)).rejects.toThrow('another refresh is already running')
+    await overlapping
+
     await Bun.sleep(5)
     expect(await refresher.refresh(definition)).toMatchObject({ revision: initial?.revision, skipped: 'unchanged' })
     const unchangedStatus = await store.getStatus('memoh')
@@ -64,11 +69,55 @@ describe('SkillRegistryRefresher', () => {
     expect(updated?.skills.find((skill) => skill.skill_id === 'alpha')?.description).toBe('Version 2')
     expect(updated?.skills.find((skill) => skill.skill_id === 'beta')?.description).toBe('Version 1')
 
+    await expect(refresher.refresh({ ...definition, priority: 101 }, { package: 'alpha' }))
+      .rejects.toThrow('unchanged Registry definition')
+    expect((await store.getDefinition('memoh'))?.priority).toBe(100)
+
+    await rm(path.join(projectRoot, 'skills/beta'), { recursive: true })
+    await refresher.refresh(definition, { package: 'beta' })
+    expect((await store.getCatalog('memoh'))?.skills.map((skill) => skill.skill_id)).toEqual(['alpha'])
+    await expect(refresher.refresh(definition, { package: 'missing' })).rejects.toThrow('not found')
+
     await writeFile(path.join(projectRoot, 'skills/alpha/SKILL.md'), '# invalid')
+    const beforeFailure = await store.getCatalog('memoh')
     const lastSuccessAt = (await store.getStatus('memoh'))?.last_success_at
     await expect(refresher.refresh(definition, { package: 'alpha' })).rejects.toThrow('frontmatter')
-    expect((await store.getCatalog('memoh'))?.revision).toBe(updated?.revision)
+    expect((await store.getCatalog('memoh'))?.revision).toBe(beforeFailure?.revision)
     expect((await store.getStatus('memoh'))?.state).toBe('stale')
     expect((await store.getStatus('memoh'))?.last_success_at).toBe(lastSuccessAt)
+  })
+
+  test('recovers success status when publication committed before a status write failed', async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'skill-status-recovery-project-'))
+    const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'skill-status-recovery-data-'))
+    roots.push(projectRoot, dataRoot)
+    await writeSkill(projectRoot, 'alpha', '1')
+    const base = new LocalSkillRegistryStore(dataRoot)
+    let failReadyStatus = true
+    const store: SkillRegistryStore = {
+      listRegistryIDs: () => base.listRegistryIDs(),
+      getDefinition: (id) => base.getDefinition(id),
+      putDefinition: (value) => base.putDefinition(value),
+      getCatalog: (id) => base.getCatalog(id),
+      publishCatalog: (catalog) => base.publishCatalog(catalog),
+      getStatus: (id) => base.getStatus(id),
+      putStatus: async (status) => {
+        if (failReadyStatus && status.state === 'ready') {
+          failReadyStatus = false
+          throw new Error('transient status failure')
+        }
+        await base.putStatus(status)
+      },
+      putArtifact: (descriptor, bytes) => base.putArtifact(descriptor, bytes),
+      getArtifact: (digest) => base.getArtifact(digest),
+    }
+    const definition: SkillRegistryDefinition = {
+      schema_version: '1', id: 'memoh', name: 'Memoh', enabled: true, priority: 100,
+      adapter: 'skill_directory', source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
+    }
+    const result = await new SkillRegistryRefresher(store, projectRoot).refresh(definition)
+    expect(result.skills).toBe(1)
+    const catalog = await base.getCatalog('memoh')
+    expect(await base.getStatus('memoh')).toMatchObject({ state: 'ready', current_revision: catalog?.revision })
   })
 })
