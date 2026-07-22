@@ -7,6 +7,15 @@ export default defineNitroConfig({
   cloudflare: {
     deployConfig: true,
     nodeCompat: true,
+    wrangler: {
+      r2_buckets: [
+        {
+          binding: "SKILL_REGISTRY_BUCKET",
+          bucket_name: process.env.R2_BUCKET || "supermarket-skill-registries",
+          preview_bucket_name: process.env.R2_PREVIEW_BUCKET || "supermarket-skill-registries-preview",
+        },
+      ],
+    },
   },
   serverAssets: [
     { baseName: "plugins", dir: "./plugins" },
