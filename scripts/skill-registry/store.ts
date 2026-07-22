@@ -2,9 +2,13 @@ import path from 'node:path'
 import { LocalSkillRegistryStore } from '../../server/utils/local-skill-registry-store'
 import { BlobSkillRegistryStore, type BlobBackend, type SkillRegistryStore } from '../../server/utils/skill-registry-store'
 
-class S3BlobBackend implements BlobBackend {
+export class S3BlobBackend implements BlobBackend {
   private readonly client: any
-  constructor() {
+  constructor(client?: any) {
+    if (client) {
+      this.client = client
+      return
+    }
     const S3Client = (Bun as any).S3Client
     if (!S3Client) throw new Error('This Bun runtime does not provide S3Client')
     const accountID = process.env.R2_ACCOUNT_ID!

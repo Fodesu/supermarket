@@ -56,7 +56,8 @@ describe('Skill Registry adapters', () => {
       name: 'usable', author: { name: 'OpenAI' }, keywords: ['codex'], skills: './skills',
     }))
     await writeFile(path.join(root, 'packages/blocked/.codex-plugin/plugin.json'), JSON.stringify({
-      name: 'blocked', skills: './skills', mcpServers: { example: { url: 'https://example.test' } },
+      name: 'blocked', skills: './skills', apps: ['./app'],
+      mcpServers: { example: { url: 'https://example.test' } }, hooks: { sessionStart: ['./hook'] },
     }))
     await writeSkill(root, 'packages/usable/skills/demo', 'Demo')
     await writeSkill(root, 'packages/blocked/skills/blocked', 'Blocked')
@@ -71,7 +72,7 @@ describe('Skill Registry adapters', () => {
     })
     expect(result.diagnostics).toEqual([{
       package_id: 'blocked', code: 'source_requires_runtime_components',
-      message: 'Skipped package because it declares: mcpServers',
+      message: 'Skipped package because it declares: apps, mcpServers, hooks',
     }])
   })
 

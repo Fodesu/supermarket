@@ -37,4 +37,18 @@ describe('Skill Registry client archives', () => {
     const compressed = await gzip(new Uint8Array(1024))
     await expect(gunzip(compressed, 100)).rejects.toThrow('decompression limit')
   })
+
+  test('serializes concurrent installs for the same identity', async () => {
+    const installID = 'registry+package+skill'
+    const files = parseTarArchive(createTar({
+      'SKILL.md': new TextEncoder().encode('---\nname: skill\n---\n'),
+    }, installID))
+    const root = await mkdtemp(path.join(os.tmpdir(), 'skill-client-concurrent-install-'))
+    roots.push(root)
+    const results = await Promise.allSettled([
+      extractSkillArchive(files, root, installID), extractSkillArchive(files, root, installID),
+    ])
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1)
+  })
 })
