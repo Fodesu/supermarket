@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import type { SkillRegistryDefinition } from '../../server/types/skill-registry'
 import { LocalSkillRegistryStore } from '../../server/utils/local-skill-registry-store'
-import { SkillRegistryRefresher } from './refresher'
+import { isSkillRegistryRefreshDue, SkillRegistryRefresher } from './refresher'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
@@ -16,6 +16,17 @@ async function writeSkill(projectRoot: string, id: string, version: string) {
 }
 
 describe('SkillRegistryRefresher', () => {
+  test('uses each Registry refresh interval to determine whether it is due', () => {
+    const definition: SkillRegistryDefinition = {
+      schema_version: '1', id: 'memoh', name: 'Memoh', enabled: true, priority: 100,
+      adapter: 'skill_directory', source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 7_200,
+    }
+    const lastSuccess = '2026-01-01T00:00:00.000Z'
+    expect(isSkillRegistryRefreshDue(definition, { registry_id: 'memoh', state: 'ready', last_success_at: lastSuccess }, Date.parse('2026-01-01T01:59:59.000Z'))).toBe(false)
+    expect(isSkillRegistryRefreshDue(definition, { registry_id: 'memoh', state: 'ready', last_success_at: lastSuccess }, Date.parse('2026-01-01T02:00:00.000Z'))).toBe(true)
+    expect(isSkillRegistryRefreshDue(definition, null)).toBe(true)
+  })
+
   test('publishes ready artifacts, supports scoped refresh and preserves last-known-good', async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'skill-refresher-project-'))
     const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'skill-refresher-data-'))

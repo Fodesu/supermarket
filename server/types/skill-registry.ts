@@ -112,6 +112,8 @@ export interface SkillRegistrySummary {
   package_count: number
   category_count: number
   skipped_package_count: number
+  refresh_interval_seconds: number
+  next_refresh_at?: string
   status: SkillRegistryStatus['state']
   last_error?: string
 }

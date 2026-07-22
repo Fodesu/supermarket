@@ -7,6 +7,7 @@ import type {
   SkillArtifactDescriptor,
   SkillRegistryCatalog,
   SkillRegistryDefinition,
+  SkillRegistryStatus,
 } from '../../server/types/skill-registry'
 import { parseSkillRegistryDefinition } from '../../server/utils/skill-registry-definition'
 import type { SkillRegistryStore } from '../../server/utils/skill-registry-store'
@@ -27,6 +28,16 @@ export async function loadSkillRegistryDefinitions(projectRoot: string) {
     definitions.push(definition)
   }
   return definitions.sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id))
+}
+
+export function isSkillRegistryRefreshDue(
+  definition: SkillRegistryDefinition,
+  status: SkillRegistryStatus | null,
+  now = Date.now(),
+) {
+  if (!status?.last_success_at) return true
+  const lastSuccess = Date.parse(status.last_success_at)
+  return !Number.isFinite(lastSuccess) || now >= lastSuccess + definition.refresh_interval_seconds * 1000
 }
 
 function stableCatalogContent(definition: SkillRegistryDefinition, skills: CatalogSkill[], diagnostics: RegistryDiagnostic[]) {
