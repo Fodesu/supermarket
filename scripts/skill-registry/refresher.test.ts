@@ -40,13 +40,20 @@ describe('SkillRegistryRefresher', () => {
     const store = new LocalSkillRegistryStore(dataRoot)
     const refresher = new SkillRegistryRefresher(store, projectRoot)
 
+    await expect(refresher.refresh(definition, { package: 'alpha' }))
+      .rejects.toThrow('scoped refresh requires an existing Catalog')
+    expect(await store.getCatalog('memoh')).toBeNull()
+
     const first = await refresher.refresh(definition)
     expect(first.skills).toBe(2)
     const initial = await store.getCatalog('memoh')
     expect(initial?.skills.every((skill) => skill.artifact.format === 'memoh_skill_v1')).toBe(true)
     for (const skill of initial!.skills) expect(await store.getArtifact(skill.artifact.digest)).not.toBeNull()
 
+    await Bun.sleep(5)
     expect(await refresher.refresh(definition)).toMatchObject({ revision: initial?.revision, skipped: 'unchanged' })
+    const unchangedStatus = await store.getStatus('memoh')
+    expect(Date.parse(unchangedStatus!.last_success_at!)).toBeGreaterThan(Date.parse(initial!.synced_at))
     const forced = await refresher.refresh(definition, { force: true })
     expect(forced.revision).not.toBe(initial?.revision)
 
@@ -58,8 +65,10 @@ describe('SkillRegistryRefresher', () => {
     expect(updated?.skills.find((skill) => skill.skill_id === 'beta')?.description).toBe('Version 1')
 
     await writeFile(path.join(projectRoot, 'skills/alpha/SKILL.md'), '# invalid')
+    const lastSuccessAt = (await store.getStatus('memoh'))?.last_success_at
     await expect(refresher.refresh(definition, { package: 'alpha' })).rejects.toThrow('frontmatter')
     expect((await store.getCatalog('memoh'))?.revision).toBe(updated?.revision)
     expect((await store.getStatus('memoh'))?.state).toBe('stale')
+    expect((await store.getStatus('memoh'))?.last_success_at).toBe(lastSuccessAt)
   })
 })

@@ -25,10 +25,17 @@ export async function getRuntimeSkillRegistryStore(event?: any): Promise<SkillRe
   return localStore
 }
 
-async function catalogs(store: SkillRegistryStore, registryID?: string): Promise<SkillRegistryCatalog[]> {
+export async function getEnabledSkillRegistryCatalogs(
+  store: SkillRegistryStore,
+  registryID?: string,
+): Promise<SkillRegistryCatalog[]> {
   const ids = registryID ? [registryID] : await store.listRegistryIDs()
-  const values = await Promise.all(ids.map((id) => store.getCatalog(id)))
-  return values.filter((catalog): catalog is SkillRegistryCatalog => Boolean(catalog?.registry.enabled))
+  const values = await Promise.all(ids.map(async (id) => {
+    const [catalog, definition] = await Promise.all([store.getCatalog(id), store.getDefinition(id)])
+    if (!catalog || !(definition?.enabled ?? catalog.registry.enabled)) return null
+    return catalog
+  }))
+  return values.filter((catalog): catalog is SkillRegistryCatalog => catalog !== null)
 }
 
 function artifactResponse(descriptor: SkillArtifactDescriptor) {
@@ -42,13 +49,13 @@ export function publicCatalogSkill(skill: CatalogSkill) {
 
 export async function getCatalogSkills(event: any, options: SkillCatalogSearchOptions = {}) {
   const store = await getRuntimeSkillRegistryStore(event)
-  const skills = (await catalogs(store, options.registry)).flatMap((catalog) => catalog.skills)
+  const skills = (await getEnabledSkillRegistryCatalogs(store, options.registry)).flatMap((catalog) => catalog.skills)
   const result = searchCatalogSkills(skills, options)
   return { ...result, data: result.data.map(publicCatalogSkill) }
 }
 
 export async function getCatalogSkill(event: any, registryID: string, packageID: string, skillID: string) {
-  const catalog = await (await getRuntimeSkillRegistryStore(event)).getCatalog(registryID)
+  const [catalog] = await getEnabledSkillRegistryCatalogs(await getRuntimeSkillRegistryStore(event), registryID)
   return catalog?.skills.find((skill) => skill.package_id === packageID && skill.skill_id === skillID)
 }
 
@@ -92,13 +99,13 @@ export async function getSkillRegistryDetails(event: any, registryID: string) {
 
 export async function getSkillCategories(event: any, registryID?: string) {
   const store = await getRuntimeSkillRegistryStore(event)
-  return summarizeSkillCategories((await catalogs(store, registryID)).flatMap((catalog) => catalog.skills))
+  return summarizeSkillCategories((await getEnabledSkillRegistryCatalogs(store, registryID)).flatMap((catalog) => catalog.skills))
 }
 
 export async function getRegistrySkillTags(event: any) {
   const tags = new Set<string>()
   const store = await getRuntimeSkillRegistryStore(event)
-  for (const skill of (await catalogs(store)).flatMap((catalog) => catalog.skills)) {
+  for (const skill of (await getEnabledSkillRegistryCatalogs(store)).flatMap((catalog) => catalog.skills)) {
     for (const tag of skill.tags) tags.add(tag)
   }
   return [...tags].sort()
