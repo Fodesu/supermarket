@@ -21,6 +21,7 @@ describe('SkillRegistryRefresher', () => {
     const definition: SkillRegistryDefinition = {
       schema_version: '1', id: 'memoh', name: 'Memoh', enabled: true, priority: 100,
       adapter: 'skill_directory', source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 7_200,
+      retention: { catalog_revisions: 30 },
     }
     const lastSuccess = '2026-01-01T00:00:00.000Z'
     expect(isSkillRegistryRefreshDue(definition, { registry_id: 'memoh', state: 'ready', last_success_at: lastSuccess }, Date.parse('2026-01-01T01:59:59.000Z'))).toBe(false)
@@ -37,6 +38,7 @@ describe('SkillRegistryRefresher', () => {
     const definition: SkillRegistryDefinition = {
       schema_version: '1', id: 'memoh', name: 'Memoh', enabled: true, priority: 100,
       adapter: 'skill_directory', source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
+      retention: { catalog_revisions: 30 },
     }
     const store = new LocalSkillRegistryStore(dataRoot)
     const refresher = new SkillRegistryRefresher(store, projectRoot)
@@ -116,6 +118,7 @@ describe('SkillRegistryRefresher', () => {
     const definition: SkillRegistryDefinition = {
       schema_version: '1', id: 'memoh', name: 'Memoh', enabled: true, priority: 100,
       adapter: 'skill_directory', source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
+      retention: { catalog_revisions: 30 },
     }
     const result = await new SkillRegistryRefresher(store, projectRoot).refresh(definition)
     expect(result.skills).toBe(1)

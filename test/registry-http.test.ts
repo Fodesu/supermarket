@@ -17,15 +17,29 @@ afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recur
 
 function inMemoryBucket() {
   const objects = new Map<string, Uint8Array>()
+  const versions = new Map<string, string>()
+  let version = 0
   return {
     async get(key: string) {
       const value = objects.get(key)
       return value ? {
         size: value.length, body: new Blob([value.slice().buffer as ArrayBuffer]).stream(),
-        arrayBuffer: async () => value.slice().buffer,
+        arrayBuffer: async () => value.slice().buffer, etag: versions.get(key)!,
       } : null
     },
-    async put(key: string, value: Uint8Array) { objects.set(key, value.slice()) },
+    async put(key: string, value: Uint8Array, options?: { onlyIf?: { etagMatches?: string; etagDoesNotMatch?: string } }) {
+      const current = versions.get(key)
+      if (options?.onlyIf?.etagDoesNotMatch === '*' && current) return null
+      if (options?.onlyIf?.etagMatches != null && options.onlyIf.etagMatches !== current) return null
+      const etag = `version-${++version}`
+      objects.set(key, value.slice())
+      versions.set(key, etag)
+      return { etag }
+    },
+    async delete(key: string) {
+      objects.delete(key)
+      versions.delete(key)
+    },
     async list({ prefix = '', cursor, delimiter }: { prefix?: string; cursor?: string; delimiter?: string } = {}) {
       const keys = [...objects.keys()].filter((key) => key.startsWith(prefix)).sort()
       if (delimiter) {
@@ -53,6 +67,7 @@ describe('Skill Registry HTTP protocol', () => {
     const definition: SkillRegistryDefinition = {
       schema_version: '1', id: 'example', name: 'Example', enabled: true, priority: 10,
       adapter: 'skill_directory', source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
+      retention: { catalog_revisions: 30 },
     }
     const installID = 'example+tools+demo'
     const archive = await gzip(createTar({

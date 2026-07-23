@@ -48,6 +48,23 @@ function parseRefreshInterval(raw: unknown, label: string): number {
   return seconds
 }
 
+function parseRetention(raw: unknown, registryID: string): SkillRegistryDefinition['retention'] {
+  if (raw == null) return { catalog_revisions: 30 }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`${registryID}.retention must be an object`)
+  }
+  const data = raw as Record<string, unknown>
+  if (Object.keys(data).some((field) => field !== 'catalog_revisions')) {
+    throw new Error(`${registryID}.retention contains unsupported fields`)
+  }
+  const catalogRevisions = data.catalog_revisions
+  if (typeof catalogRevisions !== 'number' || !Number.isSafeInteger(catalogRevisions)
+    || catalogRevisions < 1 || catalogRevisions > 10_000) {
+    throw new Error(`${registryID}.retention.catalog_revisions must be an integer from 1 to 10000`)
+  }
+  return { catalog_revisions: catalogRevisions }
+}
+
 function parseOverrides(raw: unknown, registryID: string, kind: 'package' | 'skill') {
   if (raw == null) return undefined
   if (!raw || typeof raw !== 'object') throw new Error(`${registryID}.${kind}_overrides must be an object`)
@@ -154,6 +171,7 @@ export function parseSkillRegistryDefinition(raw: unknown): SkillRegistryDefinit
     priority: Number.isFinite(Number(data.priority)) ? Number(data.priority) : 0,
     adapter, source, catalog_path: catalogPath,
     refresh_interval_seconds: parseRefreshInterval(data.refresh_interval, `${id}.refresh_interval`),
+    retention: parseRetention(data.retention, id),
     taxonomy: parseTaxonomy(data.taxonomy, id),
     defaults: defaultRequirements ? { runtime_requirements: defaultRequirements } : undefined,
     package_overrides: parseOverrides(data.package_overrides, id, 'package'),

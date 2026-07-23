@@ -7,6 +7,8 @@
     "preview": "vite preview",
     "test": "bun test",
     "registry:refresh": "bun scripts/skill-registry-refresh.ts",
+    "registry:gc": "bun scripts/skill-registry-gc.ts",
+    "registry:unlock": "bun scripts/skill-registry-unlock.ts",
     "registry:validate": "bun scripts/skill-registry-validate.ts",
     "registry:client": "bun client/skill-registry-client.ts"
   },
