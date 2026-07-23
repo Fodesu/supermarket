@@ -39,6 +39,7 @@ describe('Skill Registry Git sources', () => {
       schema_version: '1', id: 'example', name: 'Example', enabled: true, priority: 10,
       adapter: 'codex_marketplace_skills', source: { type: 'git', url: repository, ref: 'main' },
       catalog_path: 'marketplace.json', refresh_interval_seconds: 43_200,
+      retention: { catalog_revisions: 30 },
     }
     const source = await materializeSkillRegistrySource(definition, projectRoot)
     try {

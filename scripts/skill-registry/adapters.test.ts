@@ -20,7 +20,8 @@ function definition(adapter: SkillRegistryDefinition['adapter']): SkillRegistryD
   return {
     schema_version: '1', id: 'example', name: 'Example', enabled: true, priority: 10, adapter,
     source: { type: 'local', path: 'source' }, catalog_path: adapter === 'codex_marketplace_skills' ? 'marketplace.json' : undefined,
-    refresh_interval_seconds: 43_200, defaults: { runtime_requirements: { os: ['darwin', 'linux', 'win32'] } },
+    refresh_interval_seconds: 43_200, retention: { catalog_revisions: 30 },
+    defaults: { runtime_requirements: { os: ['darwin', 'linux', 'win32'] } },
   }
 }
 

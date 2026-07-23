@@ -12,6 +12,7 @@ afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recur
 const definition: SkillRegistryDefinition = {
   schema_version: '1', id: 'example', name: 'Example', enabled: true, priority: 10,
   adapter: 'skill_directory', source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
+  retention: { catalog_revisions: 30 },
 }
 
 describe('Skill Registry loader', () => {

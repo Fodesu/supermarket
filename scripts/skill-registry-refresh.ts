@@ -1,9 +1,9 @@
 import path from 'node:path'
 import type { SkillRegistryDefinition } from '../server/types/skill-registry'
-import type { SkillRegistryStore } from '../server/utils/skill-registry-store'
+import { IndeterminateRemoteMutationError, type SkillRegistryStore } from '../server/utils/skill-registry-store'
 import { isSkillRegistryRefreshDue, loadSkillRegistryDefinitionResults, SkillRegistryRefresher } from './skill-registry/refresher'
-import { acquireProcessLock } from './skill-registry/process-lock'
 import { createSkillRegistryStore } from './skill-registry/store'
+import { acquireRegistryWriterLock } from './skill-registry/writer-lock'
 
 interface RefreshRunner {
   refresh(
@@ -40,6 +40,7 @@ export async function runSkillRegistryRefreshes(input: {
         package: input.package, skill: input.skill, force: input.force,
       }))
     } catch (error) {
+      if (error instanceof IndeterminateRemoteMutationError) throw error
       failures.push({ registry: definition.id, error })
     }
   }
@@ -60,7 +61,8 @@ if (import.meta.main) {
   if ((packageID || skillID) && !registryID) throw new Error('--package and --skill require --registry')
 
   const lockPath = process.env.REGISTRY_REFRESH_LOCK_DIR || path.join(projectRoot, '.data/registry-refresh.lock')
-  const releaseLock = await acquireProcessLock(lockPath)
+  const store = createSkillRegistryStore(projectRoot)
+  const writerLock = await acquireRegistryWriterLock(store, lockPath, `registry:refresh pid=${process.pid}`)
   try {
     const loaded = await loadSkillRegistryDefinitionResults(projectRoot)
     const selected = registryID ? loaded.definitions.filter((definition) => definition.id === registryID) : loaded.definitions
@@ -68,9 +70,9 @@ if (import.meta.main) {
       ? loaded.failures.filter((failure) => failure.registry === registryID)
       : loaded.failures
     if (registryID && selected.length === 0 && definitionFailures.length === 0) throw new Error(`Registry not found: ${registryID}`)
-    const store = createSkillRegistryStore(projectRoot)
     const outcome = await runSkillRegistryRefreshes({
-      definitions: selected, store, refresher: new SkillRegistryRefresher(store, projectRoot),
+      definitions: selected, store,
+      refresher: new SkillRegistryRefresher(store, projectRoot, () => writerLock.assertActive()),
       due: process.argv.includes('--due'), force: process.argv.includes('--force'),
       package: packageID, skill: skillID,
     })
@@ -85,8 +87,17 @@ if (import.meta.main) {
         error: failure.error instanceof Error ? failure.error.message : String(failure.error),
       })
     }
+    const indeterminate = failures.find((failure) => failure.error instanceof IndeterminateRemoteMutationError)
+    if (indeterminate) throw indeterminate.error
     if (failures.length) process.exitCode = 1
+  } catch (error) {
+    if (error instanceof IndeterminateRemoteMutationError) {
+      const owner = writerLock.owner
+      writerLock.abandon()
+      throw new Error(`${error.message}; writer lease ${owner} remains active until it expires, the remote request is confirmed finished, and registry:unlock -- --owner ${owner} --confirm-owner-stopped is run`, { cause: error })
+    }
+    throw error
   } finally {
-    await releaseLock()
+    await writerLock.release()
   }
 }

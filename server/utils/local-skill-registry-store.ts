@@ -35,6 +35,10 @@ export class LocalBlobBackend implements BlobBackend {
     }
   }
 
+  async delete(key: string) {
+    await rm(this.resolve(key), { force: true })
+  }
+
   async list(prefix: string) {
     const base = this.resolve(prefix)
     const keys: string[] = []

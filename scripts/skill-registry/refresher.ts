@@ -11,7 +11,7 @@ import type {
 } from '../../server/types/skill-registry'
 import { parseSkillRegistryDefinition } from '../../server/utils/skill-registry-definition'
 import type { SkillRegistryStore } from '../../server/utils/skill-registry-store'
-import { sha256 } from '../../server/utils/skill-registry-store'
+import { IndeterminateRemoteMutationError, sha256 } from '../../server/utils/skill-registry-store'
 import { buildSkillCandidates } from './adapters'
 import { packageSkill } from './files'
 import { materializeSkillRegistrySource } from './source'
@@ -97,12 +97,17 @@ interface CompletedRefresh {
 export class SkillRegistryRefresher {
   private readonly activeRegistries = new Set<string>()
 
-  constructor(private readonly store: SkillRegistryStore, private readonly projectRoot: string) {}
+  constructor(
+    private readonly store: SkillRegistryStore,
+    private readonly projectRoot: string,
+    private readonly assertWriterLease: () => void = () => {},
+  ) {}
 
   async refresh(
     definition: SkillRegistryDefinition,
     options: { package?: string; skill?: string; force?: boolean } = {},
   ) {
+    this.assertWriterLease()
     if (this.activeRegistries.has(definition.id)) {
       throw new Error(`${definition.id}: another refresh is already running in this Refresher`)
     }
@@ -129,13 +134,16 @@ export class SkillRegistryRefresher {
     }
     const lastSuccessAt = previousStatus?.last_success_at ?? current?.synced_at
     if (!definition.enabled) {
+      this.assertWriterLease()
       await this.store.putDefinition(definition)
+      this.assertWriterLease()
       await this.store.putStatus({
         registry_id: definition.id, state: 'disabled', current_revision: current?.revision,
         last_attempt_at: attemptedAt, last_success_at: lastSuccessAt,
       })
       return { registry: definition.id, skipped: 'disabled' }
     }
+    this.assertWriterLease()
     await this.store.putStatus({
       registry_id: definition.id, state: 'refreshing', current_revision: current?.revision,
       last_attempt_at: attemptedAt, last_success_at: lastSuccessAt,
@@ -148,6 +156,7 @@ export class SkillRegistryRefresher {
         throw new Error(`${definition.id}: scoped refresh requires an existing Catalog`)
       }
       source = await materializeSkillRegistrySource(definition, this.projectRoot)
+      this.assertWriterLease()
       const scopeExists = options.package ? Boolean(options.skill
         ? current?.skills.some((skill) => skill.package_id === options.package && skill.skill_id === options.skill)
         : current?.skills.some((skill) => skill.package_id === options.package)
@@ -163,6 +172,7 @@ export class SkillRegistryRefresher {
       const createdAt = new Date().toISOString()
       const refreshed: CatalogSkill[] = []
       for (const candidate of result.skills) {
+        this.assertWriterLease()
         const packaged = await packageSkill(candidate.files, candidate.install_id)
         const existingCreatedAt = current?.skills.find((skill) =>
           skill.registry_id === definition.id
@@ -176,6 +186,7 @@ export class SkillRegistryRefresher {
           size: packaged.bytes.length, filename: `${candidate.install_id}.tar.gz`,
           content_type: 'application/gzip', created_at: existingCreatedAt ?? createdAt,
         }
+        this.assertWriterLease()
         await this.store.putArtifact(descriptor, packaged.bytes)
         refreshed.push({
           schema_version: '1', registry_id: definition.id, registry_priority: definition.priority,
@@ -219,7 +230,9 @@ export class SkillRegistryRefresher {
           revision: current.revision, state: skills.length ? 'ready' : 'empty', succeededAt,
           result: { registry: definition.id, revision: current.revision, skills: skills.length, skipped: 'unchanged' },
         }
+        this.assertWriterLease()
         await this.store.putDefinition(definition)
+        this.assertWriterLease()
         await this.store.putStatus({
           registry_id: definition.id, state: completed.state, current_revision: current.revision,
           last_attempt_at: attemptedAt, last_success_at: succeededAt,
@@ -237,18 +250,25 @@ export class SkillRegistryRefresher {
         revision, state: skills.length ? 'ready' : 'empty', succeededAt,
         result: { registry: definition.id, revision, skills: skills.length, diagnostics: diagnostics.length },
       }
-      await this.store.publishCatalog(catalog)
+      this.assertWriterLease()
+      await this.store.publishCatalog(catalog, this.assertWriterLease)
+      this.assertWriterLease()
       await this.store.putDefinition(definition)
+      this.assertWriterLease()
       await this.store.putStatus({
         registry_id: definition.id, state: completed.state, current_revision: revision,
         last_attempt_at: attemptedAt, last_success_at: succeededAt,
       })
       return completed.result
     } catch (error) {
+      if (error instanceof IndeterminateRemoteMutationError) throw error
+      this.assertWriterLease()
       if (completed) {
         const live = await this.store.getCatalog(definition.id)
         if (live?.revision === completed.revision) {
+          this.assertWriterLease()
           await this.store.putDefinition(definition)
+          this.assertWriterLease()
           await this.store.putStatus({
             registry_id: definition.id, state: completed.state, current_revision: completed.revision,
             last_attempt_at: attemptedAt, last_success_at: completed.succeededAt,
@@ -257,6 +277,7 @@ export class SkillRegistryRefresher {
         }
       }
       const live = await this.store.getCatalog(definition.id).catch(() => current)
+      this.assertWriterLease()
       await this.store.putStatus({
         registry_id: definition.id, state: live ? 'stale' : 'empty', current_revision: live?.revision,
         last_attempt_at: attemptedAt, last_success_at: lastSuccessAt,

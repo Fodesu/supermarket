@@ -25,6 +25,7 @@ export interface SkillRegistryDefinition {
   source: SkillRegistrySource
   catalog_path?: string
   refresh_interval_seconds: number
+  retention: { catalog_revisions: number }
   taxonomy?: { mappings?: Record<string, string> }
   defaults?: { runtime_requirements?: SkillRuntimeRequirements }
   package_overrides?: Record<string, { runtime_requirements?: SkillRuntimeRequirements }>

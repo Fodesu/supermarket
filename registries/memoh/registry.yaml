@@ -8,6 +8,8 @@ source:
   type: local
   path: skills
 refresh_interval: 12h
+retention:
+  catalog_revisions: 30
 defaults:
   runtime_requirements:
     os:

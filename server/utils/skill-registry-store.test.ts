@@ -13,6 +13,7 @@ afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recur
 const definition: SkillRegistryDefinition = {
   schema_version: '1', id: 'example', name: 'Example', enabled: true, priority: 10,
   adapter: 'skill_directory', source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
+  retention: { catalog_revisions: 30 },
 }
 
 function catalog(revision: string): SkillRegistryCatalog {
@@ -65,12 +66,26 @@ describe('SkillRegistryStore contract', () => {
 
   test('R2 backend handles paginated object listings', async () => {
     const objects = new Map<string, Uint8Array>()
+    const versions = new Map<string, string>()
+    let version = 0
     const bucket = {
       async get(key: string) {
         const value = objects.get(key)
-        return value ? { arrayBuffer: async () => value.slice().buffer } : null
+        return value ? { arrayBuffer: async () => value.slice().buffer, etag: versions.get(key)! } : null
       },
-      async put(key: string, value: Uint8Array) { objects.set(key, value.slice()) },
+      async put(key: string, value: Uint8Array, options?: { onlyIf?: { etagMatches?: string; etagDoesNotMatch?: string } }) {
+        const current = versions.get(key)
+        if (options?.onlyIf?.etagDoesNotMatch === '*' && current) return null
+        if (options?.onlyIf?.etagMatches != null && options.onlyIf.etagMatches !== current) return null
+        const etag = `version-${++version}`
+        objects.set(key, value.slice())
+        versions.set(key, etag)
+        return { etag }
+      },
+      async delete(key: string) {
+        objects.delete(key)
+        versions.delete(key)
+      },
       async list({ prefix = '', cursor, delimiter }: { prefix?: string; cursor?: string; delimiter?: string } = {}) {
         const keys = [...objects.keys()].filter((key) => key.startsWith(prefix)).sort()
         if (delimiter) {
@@ -97,5 +112,25 @@ describe('SkillRegistryStore contract', () => {
     const corrupt = await store.getArtifactStream(digest)
     if (!(corrupt?.body instanceof ReadableStream)) throw new Error('Expected a corrupt R2 Artifact stream')
     await expect(new Response(corrupt.body).arrayBuffer()).rejects.toThrow('corrupt')
+
+    const firstLease = await store.acquireWriterLease({ leaseMs: 10_000, heartbeatMs: 1_000 })
+    expect(firstLease.owner).toMatch(/^[a-f0-9-]{36}$/)
+    await expect(store.acquireWriterLease({ leaseMs: 10_000, heartbeatMs: 1_000 })).rejects.toThrow('already held')
+    await expect(store.breakWriterLease(firstLease.owner)).rejects.toThrow('has not expired')
+    await firstLease.release()
+    const secondLease = await store.acquireWriterLease({ leaseMs: 10_000, heartbeatMs: 1_000 })
+    secondLease.assertActive()
+    await secondLease.release()
+
+    const leaseKey = 'skill-registry-maintenance/writer-lease.json'
+    const staleOwner = '00000000-0000-4000-8000-000000000000'
+    objects.set(leaseKey, new TextEncoder().encode(JSON.stringify({
+      owner: staleOwner, renewed_at: '2020-01-01T00:00:00.000Z', expires_at: '2020-01-01T00:00:01.000Z',
+    })))
+    versions.set(leaseKey, `version-${++version}`)
+    await expect(store.acquireWriterLease({ leaseMs: 10_000, heartbeatMs: 1_000 })).rejects.toThrow('registry:unlock')
+    await store.breakWriterLease(staleOwner)
+    const recoveredLease = await store.acquireWriterLease({ leaseMs: 10_000, heartbeatMs: 1_000 })
+    await recoveredLease.release()
   })
 })

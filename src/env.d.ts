@@ -2,10 +2,14 @@ interface R2ObjectBody {
   arrayBuffer(): Promise<ArrayBuffer>
   body: ReadableStream<Uint8Array>
   size: number
+  etag: string
 }
 interface R2Bucket {
   get(key: string): Promise<R2ObjectBody | null>
-  put(key: string, value: Uint8Array): Promise<unknown>
+  put(key: string, value: Uint8Array, options?: {
+    onlyIf?: { etagMatches?: string; etagDoesNotMatch?: string }
+  }): Promise<{ etag: string } | null>
+  delete(key: string): Promise<void>
   list(options?: { prefix?: string; cursor?: string; delimiter?: string }): Promise<{
     objects: Array<{ key: string }>
     truncated: boolean
