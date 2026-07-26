@@ -35,6 +35,13 @@ async function putArtifact(store: LocalSkillRegistryStore, id: string) {
   return descriptor
 }
 
+async function putImage(store: LocalSkillRegistryStore, id: string) {
+  const bytes = new TextEncoder().encode(`<svg xmlns="http://www.w3.org/2000/svg"><title>${id}</title></svg>`)
+  const descriptor = { digest: await sha256(bytes), size: bytes.length, content_type: 'image/svg+xml' as const }
+  await store.putImage(descriptor, bytes)
+  return descriptor
+}
+
 function catalog(definition: SkillRegistryDefinition, revision: string, syncedAt: string, artifact: SkillArtifactDescriptor): SkillRegistryCatalog {
   const skill: CatalogSkill = {
     schema_version: '1', registry_id: definition.id, registry_priority: definition.priority,
@@ -62,12 +69,16 @@ describe('Skill Registry garbage collection', () => {
     const liveArtifact = await putArtifact(store, 'live')
     const orphanArtifact = await putArtifact(store, 'orphan')
     const unmanagedArtifact = await putArtifact(store, 'unmanaged')
+    const liveImage = await putImage(store, 'live')
+    const orphanImage = await putImage(store, 'orphan')
     const revisions = await Promise.all(['old', 'middle', 'current', 'unmanaged'].map(sha256))
 
     await store.putDefinition(known)
     await store.publishCatalog(catalog(known, revisions[0]!, '2026-01-01T00:00:00.000Z', oldArtifact))
     await store.publishCatalog(catalog(known, revisions[1]!, '2026-01-02T00:00:00.000Z', liveArtifact))
-    await store.publishCatalog(catalog(known, revisions[2]!, '2026-01-03T00:00:00.000Z', liveArtifact))
+    const currentCatalog = catalog(known, revisions[2]!, '2026-01-03T00:00:00.000Z', liveArtifact)
+    currentCatalog.skills[0]!.icon = { card: liveImage }
+    await store.publishCatalog(currentCatalog)
     await store.putDefinition(unmanaged)
     await store.publishCatalog(catalog(unmanaged, revisions[3]!, '2026-01-04T00:00:00.000Z', unmanagedArtifact))
 
@@ -76,6 +87,7 @@ describe('Skill Registry garbage collection', () => {
     expect(dryRun.registries.find((item) => item.registry_id === 'known')?.deleted_revisions).toEqual([revisions[0]!])
     expect(dryRun.registries.find((item) => item.registry_id === 'unmanaged')?.protected_reason).toBe('unmanaged_registry')
     expect(dryRun.artifacts.deleted.sort()).toEqual([oldArtifact.digest, orphanArtifact.digest].sort())
+    expect(dryRun.images.deleted).toEqual([orphanImage.digest])
     expect(await store.getArtifact(oldArtifact.digest)).not.toBeNull()
     expect(await store.listCatalogRevisions('known')).toHaveLength(3)
 
@@ -92,6 +104,8 @@ describe('Skill Registry garbage collection', () => {
     expect(await store.getArtifact(orphanArtifact.digest)).toBeNull()
     expect(await store.getArtifact(liveArtifact.digest)).not.toBeNull()
     expect(await store.getArtifact(unmanagedArtifact.digest)).not.toBeNull()
+    expect(await store.getImage(orphanImage.digest)).toBeNull()
+    expect(await store.getImage(liveImage.digest)).not.toBeNull()
   })
 
   test('always retains a current Catalog that was rolled back behind the retention window', async () => {

@@ -188,6 +188,7 @@ export class SkillRegistryRefresher {
         }
         this.assertWriterLease()
         await this.store.putArtifact(descriptor, packaged.bytes)
+        for (const image of candidate.icon_assets ?? []) await this.store.putImage(image.descriptor, image.bytes)
         refreshed.push({
           schema_version: '1', registry_id: definition.id, registry_priority: definition.priority,
           package_id: candidate.package_id, skill_id: candidate.skill_id, install_id: candidate.install_id,
@@ -200,7 +201,7 @@ export class SkillRegistryRefresher {
             path: [definition.source.path, candidate.source_path].filter(Boolean).join('/'),
             repository: definition.source.type === 'git' ? definition.source.url : undefined,
           },
-          files: Object.keys(candidate.files).sort(), artifact: descriptor,
+          files: Object.keys(candidate.files).sort(), icon: candidate.icon, artifact: descriptor,
         })
       }
 

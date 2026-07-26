@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import type {
   SkillArtifactDescriptor,
   SkillArtifactBlob,
+  SkillImageAsset,
   SkillRegistryCatalog,
   SkillRegistryDefinition,
   SkillRegistryStatus,
@@ -51,12 +52,20 @@ export interface SkillRegistryStore {
     descriptor: SkillArtifactBlob
     body: ReadableStream<Uint8Array> | Uint8Array
   } | null>
+  putImage(descriptor: SkillImageAsset, bytes: Uint8Array): Promise<void>
+  getImage(digest: string): Promise<{ descriptor: SkillImageAsset; bytes: Uint8Array } | null>
+  getImageStream?(digest: string): Promise<{
+    descriptor: SkillImageAsset
+    body: ReadableStream<Uint8Array> | Uint8Array
+  } | null>
   acquireWriterLease?(options?: { leaseMs?: number; heartbeatMs?: number; holder?: string }): Promise<SkillRegistryWriterLease>
   breakWriterLease?(owner: string): Promise<void>
   listCatalogRevisions?(registryID: string): Promise<SkillRegistryCatalog[]>
   deleteCatalogRevision?(registryID: string, revision: string): Promise<void>
   listArtifactDigests?(): Promise<string[]>
   deleteArtifact?(digest: string): Promise<void>
+  listImageDigests?(): Promise<string[]>
+  deleteImage?(digest: string): Promise<void>
 }
 
 function assertDigest(value: string): string {
@@ -90,6 +99,14 @@ function validateArtifactBlob(descriptor: SkillArtifactBlob, digest: string) {
   }
 }
 
+function validateImageAsset(descriptor: SkillImageAsset, digest: string) {
+  const supported = new Set(['image/svg+xml', 'image/png', 'image/jpeg', 'image/webp'])
+  if (!supported.has(descriptor.content_type) || descriptor.digest !== digest
+    || !Number.isSafeInteger(descriptor.size) || descriptor.size < 1 || descriptor.size > 512 * 1024) {
+    throw new Error(`Invalid stored Skill image metadata: ${digest}`)
+  }
+}
+
 function validateStoredCatalog(catalog: SkillRegistryCatalog, registryID: string, revision: string, key: string) {
   if (!catalog || catalog.schema_version !== '1' || catalog.registry?.id !== registryID
     || catalog.revision !== revision || !Array.isArray(catalog.skills) || !Array.isArray(catalog.diagnostics)) {
@@ -105,25 +122,35 @@ function validateStoredCatalog(catalog: SkillRegistryCatalog, registryID: string
       assertRegistryID(skill.package_id, 'package ID')
       assertRegistryID(skill.skill_id, 'skill ID')
       assertDigest(skill.artifact.digest)
+      for (const image of [skill.icon?.card, skill.icon?.detail, skill.icon?.dark]) {
+        if (image) {
+          assertDigest(image.digest)
+          validateImageAsset(image, image.digest)
+        }
+      }
     } catch {
       throw new Error(`Invalid stored Catalog Artifact reference: ${key}`)
     }
   }
 }
 
-function verifiedArtifactStream(body: ReadableStream<Uint8Array>, descriptor: SkillArtifactBlob) {
+function verifiedAssetStream(
+  body: ReadableStream<Uint8Array>,
+  descriptor: { digest: string; size: number },
+  label = 'Artifact',
+) {
   const hash = createHash('sha256')
   let size = 0
   return body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
       size += chunk.length
-      if (size > descriptor.size) throw new Error(`Stored Artifact size is corrupt: ${descriptor.digest}`)
+      if (size > descriptor.size) throw new Error(`Stored ${label} size is corrupt: ${descriptor.digest}`)
       hash.update(chunk)
       controller.enqueue(chunk)
     },
     flush() {
       if (size !== descriptor.size || hash.digest('hex') !== descriptor.digest) {
-        throw new Error(`Stored Artifact content is corrupt: ${descriptor.digest}`)
+        throw new Error(`Stored ${label} content is corrupt: ${descriptor.digest}`)
       }
     },
   }))
@@ -440,10 +467,73 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
       if (streamed.size != null && streamed.size !== descriptor.size) {
         throw new Error(`Stored Artifact size is corrupt: ${digest}`)
       }
-      return { descriptor, body: verifiedArtifactStream(streamed.body, descriptor) }
+      return { descriptor, body: verifiedAssetStream(streamed.body, descriptor) }
     }
     const artifact = await this.getArtifact(digest)
     return artifact ? { descriptor: artifact.descriptor, body: artifact.bytes } : null
+  }
+
+  async putImage(descriptor: SkillImageAsset, bytes: Uint8Array) {
+    const digest = assertDigest(descriptor.digest)
+    validateImageAsset(descriptor, digest)
+    if (bytes.length !== descriptor.size || await sha256(bytes) !== digest) {
+      throw new Error('Skill image metadata does not match its content')
+    }
+    const metadataKey = `skill-images/${digest}.json`
+    const imageKey = `skill-images/${digest}`
+    const [storedMetadata, storedImage] = await Promise.all([
+      this.backend.get(metadataKey), this.backend.get(imageKey),
+    ])
+    const metadata = jsonBytes(descriptor)
+    if (storedMetadata && decoder.decode(storedMetadata) !== decoder.decode(metadata)) {
+      throw new Error(`Skill image ${digest} metadata is immutable`)
+    }
+    if (storedImage && await sha256(storedImage) !== digest) throw new Error(`Skill image ${digest} content is immutable`)
+    if (!storedImage) await this.backend.put(imageKey, bytes)
+    if (!storedMetadata) await this.backend.put(metadataKey, metadata)
+  }
+
+  async getImage(digest: string) {
+    assertDigest(digest)
+    const [descriptor, bytes] = await Promise.all([
+      readJSON<SkillImageAsset>(this.backend, `skill-images/${digest}.json`),
+      this.backend.get(`skill-images/${digest}`),
+    ])
+    if (!descriptor || !bytes) return null
+    validateImageAsset(descriptor, digest)
+    if (bytes.length !== descriptor.size || await sha256(bytes) !== digest) throw new Error(`Stored Skill image is corrupt: ${digest}`)
+    return { descriptor, bytes }
+  }
+
+  async getImageStream(digest: string) {
+    assertDigest(digest)
+    const descriptor = await readJSON<SkillImageAsset>(this.backend, `skill-images/${digest}.json`)
+    if (!descriptor) return null
+    validateImageAsset(descriptor, digest)
+    if (this.backend.getStream) {
+      const streamed = await this.backend.getStream(`skill-images/${digest}`)
+      if (!streamed) return null
+      if (streamed.size != null && streamed.size !== descriptor.size) throw new Error(`Stored Skill image size is corrupt: ${digest}`)
+      return { descriptor, body: verifiedAssetStream(streamed.body, descriptor, 'Skill image') }
+    }
+    const image = await this.getImage(digest)
+    return image ? { descriptor: image.descriptor, body: image.bytes } : null
+  }
+
+  async listImageDigests() {
+    const keys = await this.backend.list('skill-images/')
+    return [...new Set(keys.flatMap((key): string[] => {
+      const match = key.match(/^skill-images\/([a-f0-9]{64})(?:\.json)?$/)
+      return match?.[1] ? [match[1]] : []
+    }))].sort()
+  }
+
+  async deleteImage(digest: string) {
+    const value = assertDigest(digest)
+    await Promise.all([
+      this.backend.delete(`skill-images/${value}.json`),
+      this.backend.delete(`skill-images/${value}`),
+    ])
   }
 }
 
