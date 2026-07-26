@@ -3,6 +3,7 @@ import type { SkillAuthor } from './skill'
 export const MAX_SKILL_ARTIFACT_COMPRESSED_BYTES = 25 * 1024 * 1024
 export const MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
 export const MAX_SKILL_ARTIFACT_FILES = 10_000
+export const MAX_SKILL_IMAGE_BYTES = 512 * 1024
 
 export type SkillRegistryAdapter = 'skill_directory' | 'codex_marketplace_skills'
 export type SkillRuntimeOS = 'darwin' | 'linux' | 'win32'
@@ -52,6 +53,21 @@ export interface SkillArtifactBlob {
   content_type: 'application/gzip'
 }
 
+export type SkillImageContentType = 'image/svg+xml' | 'image/png' | 'image/jpeg' | 'image/webp'
+
+export interface SkillImageAsset {
+  digest: string
+  size: number
+  content_type: SkillImageContentType
+}
+
+export interface SkillIcon {
+  card?: SkillImageAsset
+  detail?: SkillImageAsset
+  dark?: SkillImageAsset
+  brand_color?: string
+}
+
 export interface CatalogSkill {
   schema_version: '1'
   registry_id: string
@@ -75,6 +91,7 @@ export interface CatalogSkill {
     repository?: string
   }
   files: string[]
+  icon?: SkillIcon
   artifact: SkillArtifactDescriptor
 }
 

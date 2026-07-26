@@ -2,11 +2,13 @@ import type { SkillRegistryCatalog, SkillRegistryDefinition } from '../../server
 import type { SkillRegistryStore } from '../../server/utils/skill-registry-store'
 
 type MaintenanceMethod = 'listCatalogRevisions' | 'deleteCatalogRevision' | 'listArtifactDigests' | 'deleteArtifact'
+  | 'listImageDigests' | 'deleteImage'
 type MaintenanceStore = SkillRegistryStore & Required<Pick<SkillRegistryStore, MaintenanceMethod>>
 
 function requireMaintenanceStore(store: SkillRegistryStore): asserts store is MaintenanceStore {
   const methods: MaintenanceMethod[] = [
     'listCatalogRevisions', 'deleteCatalogRevision', 'listArtifactDigests', 'deleteArtifact',
+    'listImageDigests', 'deleteImage',
   ]
   const missing = methods.filter((method) => typeof store[method] !== 'function')
   if (missing.length) throw new Error(`Registry Store does not support garbage collection: ${missing.join(', ')}`)
@@ -33,6 +35,11 @@ export interface SkillRegistryGarbageCollectionResult {
     referenced: number
     deleted: string[]
   }
+  images: {
+    stored: number
+    referenced: number
+    deleted: string[]
+  }
 }
 
 export async function garbageCollectSkillRegistries(input: {
@@ -50,6 +57,7 @@ export async function garbageCollectSkillRegistries(input: {
   const storedIDs = await input.store.listRegistryIDs()
   const registryIDs = [...new Set([...storedIDs, ...definitions.keys()])].sort()
   const referencedArtifacts = new Set<string>()
+  const referencedImages = new Set<string>()
   const currentRevisions = new Map<string, string | undefined>()
   const registries: SkillRegistryGarbageCollectionResult['registries'] = []
 
@@ -85,7 +93,12 @@ export async function garbageCollectSkillRegistries(input: {
       deleted = sorted.filter((catalog) => !retainedRevisions.has(catalog.revision))
     }
     for (const catalog of retained) {
-      for (const skill of catalog.skills) referencedArtifacts.add(skill.artifact.digest)
+      for (const skill of catalog.skills) {
+        referencedArtifacts.add(skill.artifact.digest)
+        for (const image of [skill.icon?.card, skill.icon?.detail, skill.icon?.dark]) {
+          if (image) referencedImages.add(image.digest)
+        }
+      }
     }
     registries.push({
       registry_id: registryID,
@@ -97,8 +110,11 @@ export async function garbageCollectSkillRegistries(input: {
     })
   }
 
-  const storedArtifacts = await input.store.listArtifactDigests()
+  const [storedArtifacts, storedImages] = await Promise.all([
+    input.store.listArtifactDigests(), input.store.listImageDigests(),
+  ])
   const deletedArtifacts = storedArtifacts.filter((digest) => !referencedArtifacts.has(digest))
+  const deletedImages = storedImages.filter((digest) => !referencedImages.has(digest))
   if (input.apply) {
     for (const registry of registries) {
       for (const revision of registry.deleted_revisions) {
@@ -117,6 +133,10 @@ export async function garbageCollectSkillRegistries(input: {
       assertWriterLease()
       await input.store.deleteArtifact(digest)
     }
+    for (const digest of deletedImages) {
+      assertWriterLease()
+      await input.store.deleteImage(digest)
+    }
   }
 
   return {
@@ -126,6 +146,11 @@ export async function garbageCollectSkillRegistries(input: {
       stored: storedArtifacts.length,
       referenced: referencedArtifacts.size,
       deleted: deletedArtifacts,
+    },
+    images: {
+      stored: storedImages.length,
+      referenced: referencedImages.size,
+      deleted: deletedImages,
     },
   }
 }

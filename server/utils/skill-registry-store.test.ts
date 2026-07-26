@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../types/skill-registry'
-import type { SkillArtifactDescriptor, SkillRegistryCatalog, SkillRegistryDefinition } from '../types/skill-registry'
+import type { SkillArtifactDescriptor, SkillImageAsset, SkillRegistryCatalog, SkillRegistryDefinition } from '../types/skill-registry'
 import { LocalSkillRegistryStore } from './local-skill-registry-store'
 import { BlobSkillRegistryStore, R2BlobBackend, sha256 } from './skill-registry-store'
 
@@ -49,6 +49,12 @@ async function exerciseStore(store: LocalSkillRegistryStore | BlobSkillRegistryS
   await expect(store.putArtifact({ ...descriptor, size: bytes.length + 1 }, bytes)).rejects.toThrow('size')
   await expect(store.putArtifact({ ...descriptor, size: MAX_SKILL_ARTIFACT_COMPRESSED_BYTES + 1 }, bytes))
     .rejects.toThrow('compressed size limit')
+  const imageBytes = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"/>')
+  const image: SkillImageAsset = {
+    digest: await sha256(imageBytes), size: imageBytes.length, content_type: 'image/svg+xml',
+  }
+  await store.putImage(image, imageBytes)
+  expect(await store.getImage(image.digest)).toEqual({ descriptor: image, bytes: imageBytes })
   return digest
 }
 

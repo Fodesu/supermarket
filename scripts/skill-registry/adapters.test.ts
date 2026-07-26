@@ -55,7 +55,13 @@ describe('Skill Registry adapters', () => {
     ] }))
     await writeFile(path.join(root, 'packages/usable/.codex-plugin/plugin.json'), JSON.stringify({
       name: 'usable', author: { name: 'OpenAI' }, keywords: ['codex'], skills: './skills',
+      interface: {
+        composerIcon: './assets/icon.svg', logo: './assets/logo.png', brandColor: '#0b7285',
+      },
     }))
+    await mkdir(path.join(root, 'packages/usable/assets'), { recursive: true })
+    await writeFile(path.join(root, 'packages/usable/assets/icon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>')
+    await writeFile(path.join(root, 'packages/usable/assets/logo.png'), 'png')
     await writeFile(path.join(root, 'packages/blocked/.codex-plugin/plugin.json'), JSON.stringify({
       name: 'blocked', skills: './skills', apps: ['./app'],
       mcpServers: { example: { url: 'https://example.test' } }, hooks: { sessionStart: ['./hook'] },
@@ -70,7 +76,11 @@ describe('Skill Registry adapters', () => {
     expect(result.skills[0]).toMatchObject({
       package_id: 'usable', skill_id: 'demo', category: 'developer-tools',
       author: { name: 'OpenAI', email: '' }, tags: ['test', 'codex'],
+      icon: {
+        card: { content_type: 'image/svg+xml' }, detail: { content_type: 'image/png' }, brand_color: '#0B7285',
+      },
     })
+    expect(result.skills[0]!.icon_assets).toHaveLength(2)
     expect(result.diagnostics).toEqual([{
       package_id: 'blocked', code: 'source_requires_runtime_components',
       message: 'Skipped package because it declares: apps, mcpServers, hooks',

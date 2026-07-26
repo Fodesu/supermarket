@@ -46,9 +46,15 @@ function artifactResponse(descriptor: SkillArtifactDescriptor) {
   return { ...descriptor, download_url: `/api/artifacts/${descriptor.digest}/download` }
 }
 
+function iconResponse(icon: CatalogSkill['icon']) {
+  if (!icon) return undefined
+  const image = (value: typeof icon.card) => value && ({ ...value, download_url: `/api/skill-images/${value.digest}` })
+  return { ...icon, card: image(icon.card), detail: image(icon.detail), dark: image(icon.dark) }
+}
+
 export function publicCatalogSkill(skill: CatalogSkill) {
   const { registry_priority: _priority, ...value } = skill
-  return { ...value, artifact: artifactResponse(skill.artifact) }
+  return { ...value, icon: iconResponse(skill.icon), artifact: artifactResponse(skill.artifact) }
 }
 
 export async function getCatalogSkills(event: any, options: SkillCatalogSearchOptions = {}) {

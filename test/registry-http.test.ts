@@ -5,6 +5,7 @@ import path from 'node:path'
 import { H3 } from 'h3'
 import { extractSkillArchive, gunzip, parseTarArchive } from '../client/archive'
 import artifactDownload from '../server/api/artifacts/[digest]/download.get'
+import skillImage from '../server/api/skill-images/[digest].get'
 import catalogSearch from '../server/api/catalog/skills.get'
 import registrySkill from '../server/api/registries/[id]/packages/[packageId]/skills/[skillId].get'
 import registries from '../server/api/registries/index.get'
@@ -80,6 +81,8 @@ describe('Skill Registry HTTP protocol', () => {
       format: 'memoh_skill_v1', digest, size: archive.length, filename: `${installID}.tar.gz`,
       content_type: 'application/gzip', created_at: '2026-01-01T00:00:00.000Z',
     }
+    const imageBytes = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"/>')
+    const image = { digest: await sha256(imageBytes), size: imageBytes.length, content_type: 'image/svg+xml' as const }
     const skill: CatalogSkill = {
       schema_version: '1', registry_id: 'example', registry_priority: 10,
       package_id: 'tools', skill_id: 'demo', install_id: installID,
@@ -87,7 +90,7 @@ describe('Skill Registry HTTP protocol', () => {
       tags: ['demo'], category: 'developer-tools', category_name: 'Developer Tools',
       runtime_requirements: { os: ['darwin', 'linux', 'win32'] },
       source: { type: 'local', revision: 'source', path: 'skills/demo' },
-      files: ['SKILL.md', 'scripts/run.sh'], artifact,
+      files: ['SKILL.md', 'scripts/run.sh'], icon: { card: image, detail: image, brand_color: '#0B7285' }, artifact,
     }
     const revision = await sha256('catalog')
     const catalog: SkillRegistryCatalog = {
@@ -96,6 +99,7 @@ describe('Skill Registry HTTP protocol', () => {
     }
     await store.putDefinition(definition)
     await store.putArtifact(artifact, archive)
+    await store.putImage(image, imageBytes)
     await store.publishCatalog(catalog)
     await store.putStatus({ registry_id: definition.id, state: 'ready', current_revision: revision })
 
@@ -105,6 +109,7 @@ describe('Skill Registry HTTP protocol', () => {
     app.get('/api/catalog/skills', catalogSearch)
     app.get('/api/registries/:id/packages/:packageId/skills/:skillId', registrySkill)
     app.get('/api/artifacts/:digest/download', artifactDownload)
+    app.get('/api/skill-images/:digest', skillImage)
 
     const registryResponse = await app.fetch(new Request('http://local/api/registries'))
     expect(registryResponse.status).toBe(200)
@@ -120,6 +125,11 @@ describe('Skill Registry HTTP protocol', () => {
     const detailResponse = await app.fetch(new Request('http://local/api/registries/example/packages/tools/skills/demo'))
     const detail = await detailResponse.json() as any
     expect(detail.artifact.download_url).toBe(`/api/artifacts/${digest}/download`)
+    expect(detail.icon.card.download_url).toBe(`/api/skill-images/${image.digest}`)
+    const imageResponse = await app.fetch(new Request(`http://local${detail.icon.card.download_url}`))
+    expect(imageResponse.headers.get('content-type')).toBe('image/svg+xml')
+    expect(imageResponse.headers.get('cache-control')).toContain('immutable')
+    expect(new Uint8Array(await imageResponse.arrayBuffer())).toEqual(imageBytes)
 
     const downloadURL = `http://local${detail.artifact.download_url}`
     const downloadResponse = await app.fetch(new Request(downloadURL))

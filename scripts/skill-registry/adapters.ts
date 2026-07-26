@@ -3,12 +3,17 @@ import path from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import type {
   RegistryDiagnostic,
+  SkillIcon,
+  SkillImageAsset,
+  SkillImageContentType,
   SkillRegistryDefinition,
   SkillRuntimeRequirements,
 } from '../../server/types/skill-registry'
 import type { SkillAuthor } from '../../server/types/skill'
 import { normalizeSkillCategory } from '../../server/utils/skill-catalog-search'
 import { assertRegistryID, resolveSkillRuntimeRequirements, safeRelativePath } from '../../server/utils/skill-registry-definition'
+import { MAX_SKILL_IMAGE_BYTES } from '../../server/types/skill-registry'
+import { sha256 } from '../../server/utils/skill-registry-store'
 import { readDirectoryFiles, resolveRealInside, type SkillSourceFile } from './files'
 
 export interface SkillCandidate {
@@ -26,6 +31,8 @@ export interface SkillCandidate {
   runtime_requirements: SkillRuntimeRequirements
   source_path: string
   files: Record<string, SkillSourceFile>
+  icon?: SkillIcon
+  icon_assets?: Array<{ descriptor: SkillImageAsset; bytes: Uint8Array }>
 }
 
 export interface SkillAdapterResult {
@@ -89,9 +96,11 @@ async function candidate(input: {
   root: string
   allowedRoot: string
   packageManifest?: Record<string, any>
+  icon?: SkillIcon
+  iconAssets?: Array<{ descriptor: SkillImageAsset; bytes: Uint8Array }>
   sourceCategory?: string
 }): Promise<SkillCandidate> {
-  const { definition, packageID, skillID, sourcePath, root, allowedRoot, packageManifest = {}, sourceCategory } = input
+  const { definition, packageID, skillID, sourcePath, root, allowedRoot, packageManifest = {}, sourceCategory, icon, iconAssets } = input
   const files = await readDirectoryFiles(root, allowedRoot)
   const { data, metadata } = parseSkill(files, skillID)
   const packageAuthor = normalizeAuthor(packageManifest.author)
@@ -116,6 +125,8 @@ async function candidate(input: {
     ),
     source_path: sourcePath,
     files,
+    icon,
+    icon_assets: iconAssets,
   }
 }
 
@@ -183,6 +194,57 @@ function codexSkillPaths(value: unknown) {
     throw new Error('Codex package skills must be a path or an array of paths')
   }
   return [...new Set(values.map((item) => safeRelativePath(item as string, 'Codex skill path')))]
+}
+
+const imageTypes: Record<string, SkillImageContentType> = {
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+}
+
+function declaredImagePath(value: unknown, field: string) {
+  if (value == null || value === '') return undefined
+  if (typeof value !== 'string') throw new Error(`${field} must be a relative image path`)
+  const relativePath = safeRelativePath(value, field)
+  if (!imageTypes[path.extname(relativePath).toLowerCase()]) throw new Error(`${field} uses an unsupported image type`)
+  return relativePath
+}
+
+async function readImageAsset(packageRoot: string, relativePath: string) {
+  const bytes = new Uint8Array(await readFile(await resolveRealInside(packageRoot, relativePath)))
+  if (!bytes.length || bytes.length > MAX_SKILL_IMAGE_BYTES) {
+    throw new Error(`Skill image ${relativePath} must be between 1 and ${MAX_SKILL_IMAGE_BYTES} bytes`)
+  }
+  const descriptor: SkillImageAsset = {
+    digest: await sha256(bytes),
+    size: bytes.length,
+    content_type: imageTypes[path.extname(relativePath).toLowerCase()]!,
+  }
+  return { descriptor, bytes }
+}
+
+async function packageIcon(packageRoot: string, manifest: Record<string, any>) {
+  const ui = manifest.interface && typeof manifest.interface === 'object' ? manifest.interface : {}
+  const paths = {
+    card: declaredImagePath(ui.composerIcon, 'interface.composerIcon'),
+    detail: declaredImagePath(ui.logo, 'interface.logo'),
+    dark: declaredImagePath(ui.logoDark, 'interface.logoDark'),
+  }
+  const brandColor = typeof ui.brandColor === 'string' && /^#[0-9a-f]{6}$/i.test(ui.brandColor)
+    ? ui.brandColor.toUpperCase()
+    : undefined
+  const icon: SkillIcon = { brand_color: brandColor }
+  const assets: Array<{ descriptor: SkillImageAsset; bytes: Uint8Array }> = []
+  for (const [kind, imagePath] of Object.entries(paths) as Array<[keyof typeof paths, string | undefined]>) {
+    if (imagePath) {
+      const asset = await readImageAsset(packageRoot, imagePath)
+      icon[kind] = asset.descriptor
+      if (!assets.some((item) => item.descriptor.digest === asset.descriptor.digest)) assets.push(asset)
+    }
+  }
+  return { icon: Object.keys(icon).length ? icon : undefined, assets }
 }
 
 async function discoverSkillRoots(packageRoot: string, declaredPath: string) {
@@ -256,12 +318,22 @@ async function codexMarketplaceSkills(
       continue
     }
     const skillPaths = codexSkillPaths(manifest.skills)
-    prepared.push({ ...item, packageRoot, manifest, skillPaths })
+    const ui = manifest.interface && typeof manifest.interface === 'object' ? manifest.interface : {}
+    const iconPaths = [
+      declaredImagePath(ui.composerIcon, 'interface.composerIcon'),
+      declaredImagePath(ui.logo, 'interface.logo'),
+      declaredImagePath(ui.logoDark, 'interface.logoDark'),
+    ].filter((value): value is string => Boolean(value))
+    prepared.push({ ...item, packageRoot, manifest, skillPaths, iconPaths })
   }
-  await ensurePaths(prepared.flatMap((item) => item.skillPaths.map((skillPath) => `${item.packagePath}/${skillPath}`)))
+  await ensurePaths(prepared.flatMap((item) => [
+    ...item.skillPaths.map((skillPath) => `${item.packagePath}/${skillPath}`),
+    ...item.iconPaths.map((iconPath) => `${item.packagePath}/${iconPath}`),
+  ]))
 
   const skills: SkillCandidate[] = []
   for (const item of prepared) {
+    const presentation = await packageIcon(item.packageRoot, item.manifest)
     const seen = new Set<string>()
     for (const skillPath of item.skillPaths) {
       for (const root of await discoverSkillRoots(item.packageRoot, skillPath)) {
@@ -273,6 +345,7 @@ async function codexMarketplaceSkills(
           sourcePath: `${item.packagePath}/${root.relativePath}`, root: root.root,
           allowedRoot: item.packageRoot,
           packageManifest: item.manifest, sourceCategory: item.entry.category,
+          icon: presentation.icon, iconAssets: presentation.assets,
         }))
       }
     }
