@@ -323,11 +323,15 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
   }
 
   async getCatalog(registryID: string) {
-    assertRegistryID(registryID, 'registry ID')
-    const pointer = await readJSON<{ revision: string }>(this.backend, `skill-registries/${registryID}/current.json`)
-    return pointer
-      ? readJSON<SkillRegistryCatalog>(this.backend, `skill-registries/${registryID}/catalogs/${pointer.revision}.json`)
-      : null
+    const id = assertRegistryID(registryID, 'registry ID')
+    const pointer = await readJSON<{ revision: string }>(this.backend, `skill-registries/${id}/current.json`)
+    if (!pointer) return null
+    const revision = assertDigest(pointer.revision)
+    const key = `skill-registries/${id}/catalogs/${revision}.json`
+    const catalog = await readJSON<SkillRegistryCatalog>(this.backend, key)
+    if (!catalog) throw new Error(`Current Catalog revision is missing: ${id}/${revision}`)
+    validateStoredCatalog(catalog, id, revision, key)
+    return catalog
   }
 
   async publishCatalog(catalog: SkillRegistryCatalog, assertWriterLease: () => void = () => {}) {

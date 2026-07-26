@@ -171,6 +171,7 @@ export class SkillRegistryRefresher {
       }
       const createdAt = new Date().toISOString()
       const refreshed: CatalogSkill[] = []
+      const storedImages = new Set<string>()
       for (const candidate of result.skills) {
         this.assertWriterLease()
         const packaged = await packageSkill(candidate.files, candidate.install_id)
@@ -188,7 +189,12 @@ export class SkillRegistryRefresher {
         }
         this.assertWriterLease()
         await this.store.putArtifact(descriptor, packaged.bytes)
-        for (const image of candidate.icon_assets ?? []) await this.store.putImage(image.descriptor, image.bytes)
+        for (const image of candidate.icon_assets ?? []) {
+          if (storedImages.has(image.descriptor.digest)) continue
+          this.assertWriterLease()
+          await this.store.putImage(image.descriptor, image.bytes)
+          storedImages.add(image.descriptor.digest)
+        }
         refreshed.push({
           schema_version: '1', registry_id: definition.id, registry_priority: definition.priority,
           package_id: candidate.package_id, skill_id: candidate.skill_id, install_id: candidate.install_id,
