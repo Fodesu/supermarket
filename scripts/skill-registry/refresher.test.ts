@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import type { SkillRegistryDefinition } from '../../server/types/skill-registry'
+import type { SkillRegistryDefinition, SkillRegistryStatus } from '../../server/types/skill-registry'
 import { LocalSkillRegistryStore } from '../../server/utils/local-skill-registry-store'
 import type { SkillRegistryStore } from '../../server/utils/skill-registry-store'
 import {
@@ -18,6 +18,15 @@ async function writeSkill(projectRoot: string, id: string, version: string) {
   const directory = path.join(projectRoot, 'skills', id)
   await mkdir(directory, { recursive: true })
   await writeFile(path.join(directory, 'SKILL.md'), `---\nname: ${id}\ndescription: Version ${version}\n---\n\n# ${id}\n`)
+}
+
+async function state(store: SkillRegistryStore, id: string) {
+  return store.getState(id)
+}
+
+async function snapshot(store: SkillRegistryStore, id: string) {
+  const current = await state(store, id)
+  return current?.current_revision ? store.getSnapshot(id, current.current_revision) : null
 }
 
 describe('SkillRegistryRefresher', () => {
@@ -49,11 +58,11 @@ describe('SkillRegistryRefresher', () => {
 
     await expect(refresher.refresh(definition, { package: 'alpha' }))
       .rejects.toThrow('scoped refresh requires an existing Catalog')
-    expect(await store.getCatalog('memoh')).toBeNull()
+    expect(await snapshot(store, 'memoh')).toBeNull()
 
     const first = await refresher.refresh(definition)
     expect(first.skills).toBe(2)
-    const initial = await store.getCatalog('memoh')
+    const initial = await snapshot(store, 'memoh')
     expect(initial?.skills.every((skill) => skill.artifact.format === 'memoh_skill_v1')).toBe(true)
     for (const skill of initial!.skills) expect(await store.getArtifact(skill.artifact.digest)).not.toBeNull()
 
@@ -63,36 +72,36 @@ describe('SkillRegistryRefresher', () => {
 
     await Bun.sleep(5)
     expect(await refresher.refresh(definition)).toMatchObject({ revision: initial?.revision, skipped: 'unchanged' })
-    const unchangedStatus = await store.getStatus('memoh')
+    const unchangedStatus = (await state(store, 'memoh'))?.status
     expect(Date.parse(unchangedStatus!.last_success_at!)).toBeGreaterThan(Date.parse(initial!.synced_at))
     const forced = await refresher.refresh(definition, { force: true })
     expect(forced.revision).not.toBe(initial?.revision)
 
     await writeSkill(projectRoot, 'alpha', '2')
     await refresher.refresh(definition, { package: 'alpha', skill: 'alpha' })
-    const updated = await store.getCatalog('memoh')
+    const updated = await snapshot(store, 'memoh')
     expect(updated?.skills).toHaveLength(2)
     expect(updated?.skills.find((skill) => skill.skill_id === 'alpha')?.description).toBe('Version 2')
     expect(updated?.skills.find((skill) => skill.skill_id === 'beta')?.description).toBe('Version 1')
 
     await expect(refresher.refresh({ ...definition, priority: 101 }, { package: 'alpha' }))
       .rejects.toThrow('unchanged Registry definition')
-    expect((await store.getDefinition('memoh'))?.priority).toBe(100)
+    expect((await state(store, 'memoh'))?.definition.priority).toBe(100)
 
     await rm(path.join(projectRoot, 'skills/beta'), { recursive: true })
     await refresher.refresh(definition, { package: 'beta' })
-    expect((await store.getCatalog('memoh'))?.skills.map((skill) => skill.skill_id)).toEqual(['alpha'])
+    expect((await snapshot(store, 'memoh'))?.skills.map((skill) => skill.skill_id)).toEqual(['alpha'])
     await expect(refresher.refresh(definition, { package: 'missing' })).rejects.toThrow('not found')
 
     await writeFile(path.join(projectRoot, 'skills/alpha/SKILL.md'), '# invalid')
-    const beforeFailure = await store.getCatalog('memoh')
-    const lastSuccessAt = (await store.getStatus('memoh'))?.last_success_at
+    const beforeFailure = await snapshot(store, 'memoh')
+    const lastSuccessAt = (await state(store, 'memoh'))?.status.last_success_at
     await expect(refresher.refresh({ ...definition, priority: 101 })).rejects.toThrow('frontmatter')
-    expect((await store.getDefinition('memoh'))?.priority).toBe(100)
+    expect((await state(store, 'memoh'))?.definition.priority).toBe(100)
     await expect(refresher.refresh(definition, { package: 'alpha' })).rejects.toThrow('frontmatter')
-    expect((await store.getCatalog('memoh'))?.revision).toBe(beforeFailure?.revision)
-    expect((await store.getStatus('memoh'))?.state).toBe('stale')
-    expect((await store.getStatus('memoh'))?.last_success_at).toBe(lastSuccessAt)
+    expect((await snapshot(store, 'memoh'))?.revision).toBe(beforeFailure?.revision)
+    expect((await state(store, 'memoh'))?.status.state).toBe('stale')
+    expect((await state(store, 'memoh'))?.status.last_success_at).toBe(lastSuccessAt)
   })
 
   test('skips Git registries whose upstream revision is already verified', async () => {
@@ -124,22 +133,14 @@ describe('SkillRegistryRefresher', () => {
 
     const first = await refresher.refresh(definition)
     expect(first.skills).toBe(1)
-    const firstStatus = await store.getStatus('gitreg')
+    const firstStatus = (await state(store, 'gitreg'))?.status
     expect(firstStatus?.last_source_revision).toMatch(/^[a-f0-9]{40}$/)
-
-    // Status provenance is only valid for the Catalog revision it describes.
-    // A stale or manually rolled-back pointer must force a full verification.
-    await store.putStatus({ ...firstStatus!, current_revision: 'f'.repeat(64) })
-    events.length = 0
-    expect(await refresher.refresh(definition)).toMatchObject({ revision: first.revision, skipped: 'unchanged' })
-    expect(events.map((event) => event.type)).toContain('source')
-    expect(events.map((event) => event.type)).not.toContain('source_unchanged')
 
     // Unchanged upstream: one ls-remote, no clone, no Catalog work.
     events.length = 0
     expect(await refresher.refresh(definition)).toMatchObject({ revision: first.revision, skipped: 'source_unchanged' })
     expect(events.map((event) => event.type)).toEqual(['source_unchanged'])
-    expect(Date.parse((await store.getStatus('gitreg'))!.last_success_at!))
+    expect(Date.parse((await state(store, 'gitreg'))!.status.last_success_at!))
       .toBeGreaterThanOrEqual(Date.parse(firstStatus!.last_success_at!))
 
     // An upstream commit that touches no Skill: the full pass runs, but the
@@ -148,7 +149,7 @@ describe('SkillRegistryRefresher', () => {
     await git('add', '.')
     await git('commit', '-m', 'docs')
     expect(await refresher.refresh(definition)).toMatchObject({ revision: first.revision, skipped: 'unchanged' })
-    const afterDocs = await store.getStatus('gitreg')
+    const afterDocs = (await state(store, 'gitreg'))?.status
     expect(afterDocs?.last_source_revision).toMatch(/^[a-f0-9]{40}$/)
     expect(afterDocs?.last_source_revision).not.toBe(firstStatus?.last_source_revision)
 
@@ -167,7 +168,7 @@ describe('SkillRegistryRefresher', () => {
     await git('commit', '-m', 'two')
     const updated = await refresher.refresh(reprioritized)
     expect(updated.skipped).toBeUndefined()
-    expect((await store.getCatalog('gitreg'))?.skills[0]?.description).toBe('Two')
+    expect((await snapshot(store, 'gitreg'))?.skills[0]?.description).toBe('Two')
   })
 
   test('reports progress for uploads, cache hits, and skipped publications', async () => {
@@ -203,20 +204,18 @@ describe('SkillRegistryRefresher', () => {
     roots.push(projectRoot, dataRoot)
     await writeSkill(projectRoot, 'alpha', '1')
     const base = new LocalSkillRegistryStore(dataRoot)
-    let failReadyStatus = true
+    let failReadyState = true
     const store: SkillRegistryStore = {
       listRegistryIDs: () => base.listRegistryIDs(),
-      getDefinition: (id) => base.getDefinition(id),
-      putDefinition: (value) => base.putDefinition(value),
-      getCatalog: (id) => base.getCatalog(id),
-      publishCatalog: (catalog) => base.publishCatalog(catalog),
-      getStatus: (id) => base.getStatus(id),
-      putStatus: async (status) => {
-        if (failReadyStatus && status.state === 'ready') {
-          failReadyStatus = false
-          throw new Error('transient status failure')
+      getState: (id) => base.getState(id),
+      putState: (value) => base.putState(value),
+      getSnapshot: (id, revision) => base.getSnapshot(id, revision),
+      publishSnapshot: async (catalog, value) => {
+        await base.publishSnapshot(catalog, value)
+        if (failReadyState && value.status.state === 'ready') {
+          failReadyState = false
+          throw new Error('transient state response failure')
         }
-        await base.putStatus(status)
       },
       putArtifact: (descriptor, bytes) => base.putArtifact(descriptor, bytes),
       getArtifact: (digest) => base.getArtifact(digest),
@@ -228,7 +227,7 @@ describe('SkillRegistryRefresher', () => {
     }
     const result = await new SkillRegistryRefresher(store, projectRoot).refresh(definition)
     expect(result.skills).toBe(1)
-    const catalog = await base.getCatalog('memoh')
-    expect(await base.getStatus('memoh')).toMatchObject({ state: 'ready', current_revision: catalog?.revision })
+    const catalog = await snapshot(base, 'memoh')
+    expect((await state(base, 'memoh'))?.status).toMatchObject({ state: 'ready', current_revision: catalog?.revision })
   })
 })

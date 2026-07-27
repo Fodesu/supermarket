@@ -26,8 +26,11 @@ describe('Skill Registry refresh runner', () => {
     const outcome = await runSkillRegistryRefreshes({
       definitions, due: true,
       store: {
-        getDefinition: async (id) => id === 'first' ? definition('first', true) : definition(id),
-        getStatus: async (id) => statuses.get(id) ?? null,
+        getState: async (id) => ({
+          schema_version: '1' as const,
+          definition: id === 'first' ? definition('first', true) : definition(id),
+          status: statuses.get(id) ?? { registry_id: id, state: 'empty' as const },
+        }),
       },
       refresher: {
         refresh: async (item) => {
@@ -47,8 +50,10 @@ describe('Skill Registry refresh runner', () => {
     const outcome = await runSkillRegistryRefreshes({
       definitions: [item], due: true,
       store: {
-        getDefinition: async () => item,
-        getStatus: async () => ({ registry_id: item.id, state: 'disabled' }),
+        getState: async () => ({
+          schema_version: '1' as const, definition: item,
+          status: { registry_id: item.id, state: 'disabled' as const },
+        }),
       },
       refresher: { refresh: async () => { throw new Error('must not refresh') } },
     })
@@ -60,8 +65,10 @@ describe('Skill Registry refresh runner', () => {
     await expect(runSkillRegistryRefreshes({
       definitions: [definition('first'), definition('second')],
       store: {
-        getDefinition: async (id) => definition(id),
-        getStatus: async () => null,
+        getState: async (id) => ({
+          schema_version: '1' as const, definition: definition(id),
+          status: { registry_id: id, state: 'empty' as const },
+        }),
       },
       refresher: {
         refresh: async (item) => {

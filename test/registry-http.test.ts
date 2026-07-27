@@ -97,11 +97,12 @@ describe('Skill Registry HTTP protocol', () => {
       schema_version: '1', registry: definition, revision, content_revision: revision,
       source_revision: 'source', synced_at: '2026-01-01T00:00:00.000Z', skills: [skill], diagnostics: [],
     }
-    await store.putDefinition(definition)
     await store.putArtifact(artifact, archive)
     await store.putImage(image, imageBytes)
-    await store.publishCatalog(catalog)
-    await store.putStatus({ registry_id: definition.id, state: 'ready', current_revision: revision })
+    await store.publishSnapshot(catalog, {
+      schema_version: '1', definition, current_revision: revision,
+      status: { registry_id: definition.id, state: 'ready', current_revision: revision },
+    })
 
     const app = new H3()
     app.use((event) => { (event.req as any).runtime = { cloudflare: { env: { SKILL_REGISTRY_BUCKET: bucket } } } })

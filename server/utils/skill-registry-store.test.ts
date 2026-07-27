@@ -30,12 +30,15 @@ function catalog(revision: string): SkillRegistryCatalog {
 }
 
 async function exerciseStore(store: LocalSkillRegistryStore | BlobSkillRegistryStore) {
-  await store.putDefinition(definition)
-  expect((await store.getDefinition('example'))?.name).toBe('Example')
   const revision = 'a'.repeat(64)
-  await store.publishCatalog(catalog(revision))
-  await expect(store.publishCatalog({ ...catalog(revision), synced_at: '2026-01-02T00:00:00.000Z' })).resolves.toBeUndefined()
-  expect((await store.getCatalog('example'))?.revision).toBe(revision)
+  const readyState = {
+    schema_version: '1' as const, definition, current_revision: revision,
+    status: { registry_id: definition.id, state: 'ready' as const, current_revision: revision },
+  }
+  await store.publishSnapshot(catalog(revision), readyState)
+  await expect(store.publishSnapshot({ ...catalog(revision), synced_at: '2026-01-02T00:00:00.000Z' }, readyState)).resolves.toBeUndefined()
+  expect((await store.getState('example'))?.definition.name).toBe('Example')
+  expect((await store.getSnapshot('example', revision))?.revision).toBe(revision)
   expect(await store.listRegistryIDs()).toEqual(['example'])
 
   const bytes = new TextEncoder().encode('artifact')
@@ -161,16 +164,16 @@ describe('Immutable digest-addressed uploads', () => {
 })
 
 describe('SkillRegistryStore contract', () => {
-  test('Local store publishes catalogs before pointers and stores content-addressed artifacts', async () => {
+  test('Local store publishes snapshots before state and stores content-addressed artifacts', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'skill-registry-store-'))
     roots.push(root)
     const store = new LocalSkillRegistryStore(root)
     const digest = await exerciseStore(store)
-    const pointer = JSON.parse(await readFile(path.join(root, 'skill-registries/example/current.json'), 'utf8'))
-    expect(pointer.revision).toBe('a'.repeat(64))
-    await Bun.write(path.join(root, 'skill-registries/example/current.json'), JSON.stringify({ revision: '../invalid' }))
-    await expect(store.getCatalog('example')).rejects.toThrow('digest')
-    await Bun.write(path.join(root, 'skill-registries/example/current.json'), JSON.stringify(pointer))
+    const state = JSON.parse(await readFile(path.join(root, 'skill-registries/example/state.json'), 'utf8'))
+    expect(state.current_revision).toBe('a'.repeat(64))
+    await Bun.write(path.join(root, 'skill-registries/example/state.json'), JSON.stringify({ ...state, current_revision: '../invalid' }))
+    await expect(store.getState('example')).rejects.toThrow('digest')
+    await Bun.write(path.join(root, 'skill-registries/example/state.json'), JSON.stringify(state))
     await Bun.write(path.join(root, `skill-artifacts/${digest}.tar.gz`), 'corrupt')
     await expect(store.getArtifact(digest)).rejects.toThrow('corrupt')
   })

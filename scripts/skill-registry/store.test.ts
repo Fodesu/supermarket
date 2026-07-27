@@ -21,7 +21,7 @@ describe('Worker Registry blob backend', () => {
     process.env.REGISTRY_R2_MUTABLE_URL = 'http://registry-mutable'
     process.env.REGISTRY_WRITER_TOKEN = 'fencing-token'
 
-    await backend.put('skill-registries/memoh/current.json', new TextEncoder().encode('{}'))
+    await backend.put('skill-registries/memoh/state.json', new TextEncoder().encode('{}'))
     await backend.put('skill-artifacts/a'.padEnd(80, 'a'), new Uint8Array())
 
     expect(requests[0]?.url).toStartWith('http://registry-mutable/')

@@ -30,11 +30,16 @@ describe('Skill Registry loader', () => {
       schema_version: '1', registry: definition, revision, content_revision: revision,
       source_revision: revision, synced_at: '2026-01-01T00:00:00.000Z', skills: [], diagnostics: [],
     }
-    await store.putDefinition(definition)
-    await store.publishCatalog(catalog)
+    await store.publishSnapshot(catalog, {
+      schema_version: '1', definition, current_revision: revision,
+      status: { registry_id: definition.id, state: 'ready', current_revision: revision },
+    })
     expect(await getEnabledSkillRegistryCatalogs(store)).toEqual([catalog])
 
-    await store.putDefinition({ ...definition, enabled: false })
+    await store.putState({
+      schema_version: '1', definition: { ...definition, enabled: false }, current_revision: revision,
+      status: { registry_id: definition.id, state: 'disabled', current_revision: revision },
+    })
     expect(await getEnabledSkillRegistryCatalogs(store)).toEqual([])
     expect(await getEnabledSkillRegistryCatalogs(store, definition.id)).toEqual([])
   })

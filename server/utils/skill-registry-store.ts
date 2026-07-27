@@ -4,8 +4,7 @@ import type {
   SkillArtifactBlob,
   SkillImageAsset,
   SkillRegistryCatalog,
-  SkillRegistryDefinition,
-  SkillRegistryStatus,
+  SkillRegistryState,
 } from '../types/skill-registry'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../types/skill-registry'
 import { assertRegistryID } from './skill-registry-definition'
@@ -33,12 +32,10 @@ export interface BlobBackend {
 
 export interface SkillRegistryStore {
   listRegistryIDs(): Promise<string[]>
-  getDefinition(registryID: string): Promise<SkillRegistryDefinition | null>
-  putDefinition(definition: SkillRegistryDefinition): Promise<void>
-  getCatalog(registryID: string): Promise<SkillRegistryCatalog | null>
-  publishCatalog(catalog: SkillRegistryCatalog, assertWriterLease?: () => void): Promise<void>
-  getStatus(registryID: string): Promise<SkillRegistryStatus | null>
-  putStatus(status: SkillRegistryStatus): Promise<void>
+  getState(registryID: string): Promise<SkillRegistryState | null>
+  putState(state: SkillRegistryState): Promise<void>
+  getSnapshot(registryID: string, revision: string): Promise<SkillRegistryCatalog | null>
+  publishSnapshot(catalog: SkillRegistryCatalog, state: SkillRegistryState, assertWriterLease?: () => void): Promise<void>
   putArtifact(descriptor: SkillArtifactDescriptor, bytes: Uint8Array): Promise<{ stored: boolean }>
   getArtifact(digest: string): Promise<{ descriptor: SkillArtifactBlob; bytes: Uint8Array } | null>
   getArtifactStream?(digest: string): Promise<{
@@ -157,47 +154,57 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     }
     const keys = await this.backend.list('skill-registries/')
     return [...new Set(keys.flatMap((key): string[] => {
-      const match = key.match(/^skill-registries\/([^/]+)\/(?:definition|current|status)\.json$/)
+      const match = key.match(/^skill-registries\/([^/]+)\/state\.json$/)
       return match?.[1] ? [match[1]] : []
     }))].sort()
   }
 
-  getDefinition(registryID: string) {
-    assertRegistryID(registryID, 'registry ID')
-    return readJSON<SkillRegistryDefinition>(this.backend, `skill-registries/${registryID}/definition.json`)
-  }
-
-  async putDefinition(definition: SkillRegistryDefinition) {
-    const id = assertRegistryID(definition.id, 'registry ID')
-    await this.backend.put(`skill-registries/${id}/definition.json`, jsonBytes(definition))
-  }
-
-  async getCatalog(registryID: string) {
+  async getState(registryID: string) {
     const id = assertRegistryID(registryID, 'registry ID')
-    const pointer = await readJSON<{ revision: string }>(this.backend, `skill-registries/${id}/current.json`)
-    if (!pointer) return null
-    const revision = assertDigest(pointer.revision)
-    const key = `skill-registries/${id}/catalogs/${revision}.json`
+    const state = await readJSON<SkillRegistryState>(this.backend, `skill-registries/${id}/state.json`)
+    if (!state) return null
+    if (state.schema_version !== '1' || state.definition?.id !== id || state.status?.registry_id !== id) {
+      throw new Error(`Invalid Registry state: ${id}`)
+    }
+    if (state.current_revision) assertDigest(state.current_revision)
+    if (state.status.current_revision && state.status.current_revision !== state.current_revision) {
+      throw new Error(`Registry state revision mismatch: ${id}`)
+    }
+    return state
+  }
+
+  async putState(state: SkillRegistryState) {
+    const id = assertRegistryID(state.definition.id, 'registry ID')
+    if (state.schema_version !== '1' || state.status.registry_id !== id) throw new Error(`Invalid Registry state: ${id}`)
+    if (state.current_revision) assertDigest(state.current_revision)
+    await this.backend.put(`skill-registries/${id}/state.json`, jsonBytes(state))
+  }
+
+  async getSnapshot(registryID: string, revision: string) {
+    const id = assertRegistryID(registryID, 'registry ID')
+    const digest = assertDigest(revision)
+    const key = `skill-registries/${id}/snapshots/${digest}.json`
     const catalog = await readJSON<SkillRegistryCatalog>(this.backend, key)
-    if (!catalog) throw new Error(`Current Catalog revision is missing: ${id}/${revision}`)
-    validateStoredCatalog(catalog, id, revision, key)
+    if (!catalog) return null
+    validateStoredCatalog(catalog, id, digest, key)
     return catalog
   }
 
-  async publishCatalog(catalog: SkillRegistryCatalog, assertWriterLease: () => void = () => {}) {
+  async publishSnapshot(catalog: SkillRegistryCatalog, state: SkillRegistryState, assertWriterLease: () => void = () => {}) {
     const id = assertRegistryID(catalog.registry.id, 'registry ID')
     const revision = assertDigest(catalog.revision)
-    const key = `skill-registries/${id}/catalogs/${revision}.json`
+    if (state.definition.id !== id || state.current_revision !== revision || state.status.registry_id !== id) {
+      throw new Error(`Snapshot state does not match Catalog: ${id}/${revision}`)
+    }
+    const key = `skill-registries/${id}/snapshots/${revision}.json`
     const bytes = jsonBytes(catalog)
     let existing = await this.backend.get(key)
-    let syncedAt = catalog.synced_at
     if (existing) {
       const stored = JSON.parse(decoder.decode(existing)) as SkillRegistryCatalog
       validateStoredCatalog(stored, id, revision, key)
       if (stored.revision !== revision || stored.content_revision !== catalog.content_revision || stored.registry.id !== id) {
         throw new Error(`Catalog revision ${revision} is immutable`)
       }
-      syncedAt = stored.synced_at
     }
     if (!existing && this.backend.putConditional) {
       assertWriterLease()
@@ -208,19 +215,18 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
         const stored = JSON.parse(decoder.decode(existing)) as SkillRegistryCatalog
         validateStoredCatalog(stored, id, revision, key)
         if (stored.content_revision !== catalog.content_revision) throw new Error(`Catalog revision ${revision} is immutable`)
-        syncedAt = stored.synced_at
       }
     } else if (!existing) {
       assertWriterLease()
       await this.backend.put(key, bytes)
     }
     assertWriterLease()
-    await this.backend.put(`skill-registries/${id}/current.json`, jsonBytes({ revision, synced_at: syncedAt }))
+    await this.putState({ ...state, status: { ...state.status, current_revision: revision } })
   }
 
   async listCatalogRevisions(registryID: string) {
     const id = assertRegistryID(registryID, 'registry ID')
-    const prefix = `skill-registries/${id}/catalogs/`
+    const prefix = `skill-registries/${id}/snapshots/`
     const keys = await this.backend.list(prefix)
     const unexpected = keys.find((key) => !key.startsWith(prefix) || !/^[a-f0-9]{64}\.json$/.test(key.slice(prefix.length)))
     if (unexpected) throw new Error(`Unexpected object in Catalog namespace: ${unexpected}`)
@@ -235,19 +241,9 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
   async deleteCatalogRevision(registryID: string, revision: string) {
     const id = assertRegistryID(registryID, 'registry ID')
     const digest = assertDigest(revision)
-    const pointer = await readJSON<{ revision: string }>(this.backend, `skill-registries/${id}/current.json`)
-    if (pointer?.revision === digest) throw new Error(`Cannot delete current Catalog revision: ${id}/${digest}`)
-    await this.backend.delete(`skill-registries/${id}/catalogs/${digest}.json`)
-  }
-
-  getStatus(registryID: string) {
-    assertRegistryID(registryID, 'registry ID')
-    return readJSON<SkillRegistryStatus>(this.backend, `skill-registries/${registryID}/status.json`)
-  }
-
-  async putStatus(status: SkillRegistryStatus) {
-    const id = assertRegistryID(status.registry_id, 'registry ID')
-    await this.backend.put(`skill-registries/${id}/status.json`, jsonBytes(status))
+    const state = await this.getState(id)
+    if (state?.current_revision === digest) throw new Error(`Cannot delete current Catalog revision: ${id}/${digest}`)
+    await this.backend.delete(`skill-registries/${id}/snapshots/${digest}.json`)
   }
 
   // Uploads a digest-addressed object. These keys are immutable: a duplicate or

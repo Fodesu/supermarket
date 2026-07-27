@@ -51,13 +51,13 @@ export class RegistryWriter extends Container {
 function mutableKey(pathname: string) {
   if (!pathname.startsWith('/objects/')) return undefined
   const key = decodeURIComponent(pathname.slice('/objects/'.length))
-  return /^skill-registries\/[^/]+\/(?:definition|current|status)\.json$/.test(key) ? key : undefined
+  return /^skill-registries\/[^/]+\/state\.json$/.test(key) ? key : undefined
 }
 
 function immutableKey(key: string) {
   return /^skill-artifacts\/[a-f0-9]{64}\.(?:json|tar\.gz)$/.test(key)
     || /^skill-images\/[a-f0-9]{64}(?:\.json)?$/.test(key)
-    || /^skill-registries\/[^/]+\/catalogs\/[a-f0-9]{64}\.json$/.test(key)
+    || /^skill-registries\/[^/]+\/snapshots\/[a-f0-9]{64}\.json$/.test(key)
 }
 
 function allowedListPrefix(prefix: string) {
