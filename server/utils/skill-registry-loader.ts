@@ -35,8 +35,10 @@ export async function getEnabledSkillRegistryCatalogs(
 ): Promise<SkillRegistryCatalog[]> {
   const ids = registryID ? [registryID] : await store.listRegistryIDs()
   const values = await Promise.all(ids.map(async (id) => {
-    const [catalog, definition] = await Promise.all([store.getCatalog(id), store.getDefinition(id)])
-    if (!catalog || !(definition?.enabled ?? catalog.registry.enabled)) return null
+    const state = await store.getState(id)
+    if (!state?.definition.enabled || !state.current_revision) return null
+    const catalog = await store.getSnapshot(id, state.current_revision)
+    if (!catalog) throw new Error(`Current Registry snapshot is missing: ${id}/${state.current_revision}`)
     return catalog
   }))
   return values.filter((catalog): catalog is SkillRegistryCatalog => catalog !== null)
@@ -78,11 +80,14 @@ export async function getSkillRegistrySummaries(event: any): Promise<SkillRegist
 }
 
 async function getSkillRegistrySummary(store: SkillRegistryStore, registryID: string): Promise<SkillRegistrySummary | null> {
-  const [catalog, definition, status] = await Promise.all([
-    store.getCatalog(registryID), store.getDefinition(registryID), store.getStatus(registryID),
-  ])
-  const registry = definition ?? catalog?.registry
-  if (!registry) return null
+  const state = await store.getState(registryID)
+  if (!state) return null
+  const registry = state.definition
+  const status = state.status
+  const catalog = state.current_revision
+    ? await store.getSnapshot(registryID, state.current_revision)
+    : null
+  if (state.current_revision && !catalog) throw new Error(`Current Registry snapshot is missing: ${registryID}/${state.current_revision}`)
   const lastSuccess = status?.last_success_at ? Date.parse(status.last_success_at) : Number.NaN
   const nextRefreshAt = Number.isFinite(lastSuccess)
     ? new Date(lastSuccess + registry.refresh_interval_seconds * 1000).toISOString()
@@ -103,10 +108,10 @@ export async function getSkillRegistryDetails(event: any, registryID: string) {
   const store = await getRuntimeSkillRegistryStore(event)
   const summary = await getSkillRegistrySummary(store, registryID)
   if (!summary) return undefined
-  const [catalog, definition, status] = await Promise.all([
-    store.getCatalog(registryID), store.getDefinition(registryID), store.getStatus(registryID),
-  ])
-  return { ...summary, definition, status, source_revision: catalog?.source_revision, diagnostics: catalog?.diagnostics ?? [] }
+  const state = await store.getState(registryID)
+  if (!state) return undefined
+  const catalog = state.current_revision ? await store.getSnapshot(registryID, state.current_revision) : null
+  return { ...summary, definition: state.definition, status: state.status, source_revision: catalog?.source_revision, diagnostics: catalog?.diagnostics ?? [] }
 }
 
 export async function getSkillCategories(event: any, registryID?: string) {

@@ -63,7 +63,7 @@ interface RefreshRunner {
 
 export async function runSkillRegistryRefreshes(input: {
   definitions: SkillRegistryDefinition[]
-  store: Pick<SkillRegistryStore, 'getDefinition' | 'getStatus'>
+  store: Pick<SkillRegistryStore, 'getState'>
   refresher: RefreshRunner
   due?: boolean
   force?: boolean
@@ -74,13 +74,11 @@ export async function runSkillRegistryRefreshes(input: {
   const failures: Array<{ registry: string; error: unknown }> = []
   for (const definition of input.definitions) {
     try {
-      const [storedDefinition, status] = await Promise.all([
-        input.store.getDefinition(definition.id), input.store.getStatus(definition.id),
-      ])
-      const definitionChanged = JSON.stringify(storedDefinition) !== JSON.stringify(definition)
+      const state = await input.store.getState(definition.id)
+      const definitionChanged = JSON.stringify(state?.definition) !== JSON.stringify(definition)
       if (input.due && !input.force && !definitionChanged) {
-        const alreadyDisabled = !definition.enabled && status?.state === 'disabled'
-        if (alreadyDisabled || !isSkillRegistryRefreshDue(definition, status)) {
+        const alreadyDisabled = !definition.enabled && state?.status.state === 'disabled'
+        if (alreadyDisabled || !isSkillRegistryRefreshDue(definition, state?.status ?? null)) {
           results.push({ registry: definition.id, skipped: alreadyDisabled ? 'disabled' : 'not_due' })
           continue
         }

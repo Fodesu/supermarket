@@ -140,10 +140,24 @@ export class SkillRegistryRefresher {
   ) {
     if (options.skill && !options.package) throw new Error('--skill requires --package')
     const attemptedAt = new Date().toISOString()
-    const [current, previousStatus] = await Promise.all([
-      this.store.getCatalog(definition.id),
-      this.store.getStatus(definition.id),
-    ])
+    const previousState = await this.store.getState(definition.id)
+    const previousStatus = previousState?.status ?? null
+    const current = previousState?.current_revision
+      ? await this.store.getSnapshot(definition.id, previousState.current_revision)
+      : null
+    if (previousState?.current_revision && !current) {
+      throw new Error(`Current Registry snapshot is missing: ${definition.id}/${previousState.current_revision}`)
+    }
+    const putState = async (
+      status: SkillRegistryStatus,
+      currentRevision = status.current_revision,
+      stateDefinition = previousState?.definition ?? definition,
+    ) => {
+      await this.store.putState({
+        schema_version: '1', definition: stateDefinition, current_revision: currentRevision,
+        status: { ...status, registry_id: definition.id, current_revision: currentRevision },
+      })
+    }
     if (options.package && current && !sameDefinition(current.registry, definition)) {
       throw new Error(`${definition.id}: scoped refresh requires an unchanged Registry definition; run a full refresh`)
     }
@@ -164,7 +178,7 @@ export class SkillRegistryRefresher {
         this.onProgress({ type: 'source_unchanged', registry: definition.id, revision: upstream })
         const succeededAt = new Date().toISOString()
         this.assertWriterLease()
-        await this.store.putStatus({
+        await putState({
           registry_id: definition.id, state: previousStatus.state, current_revision: current.revision,
           last_attempt_at: attemptedAt, last_success_at: succeededAt, last_source_revision: upstream,
         })
@@ -176,17 +190,15 @@ export class SkillRegistryRefresher {
     }
     if (!definition.enabled) {
       this.assertWriterLease()
-      await this.store.putDefinition(definition)
-      this.assertWriterLease()
-      await this.store.putStatus({
+      await putState({
         registry_id: definition.id, state: 'disabled', current_revision: current?.revision,
         last_attempt_at: attemptedAt, last_success_at: lastSuccessAt,
         last_source_revision: previousStatus?.last_source_revision,
-      })
+      }, undefined, definition)
       return { registry: definition.id, skipped: 'disabled' }
     }
     this.assertWriterLease()
-    await this.store.putStatus({
+    await putState({
       registry_id: definition.id, state: 'refreshing', current_revision: current?.revision,
       last_attempt_at: attemptedAt, last_success_at: lastSuccessAt,
       last_source_revision: previousStatus?.last_source_revision,
@@ -300,13 +312,11 @@ export class SkillRegistryRefresher {
           result: { registry: definition.id, revision: current.revision, skills: skills.length, skipped: 'unchanged' },
         }
         this.assertWriterLease()
-        await this.store.putDefinition(definition)
-        this.assertWriterLease()
-        await this.store.putStatus({
+        await putState({
           registry_id: definition.id, state: completed.state, current_revision: current.revision,
           last_attempt_at: attemptedAt, last_success_at: succeededAt,
           last_source_revision: verifiedSourceRevision,
-        })
+        }, undefined, definition)
         return completed.result
       }
       const revision = options.force
@@ -323,36 +333,36 @@ export class SkillRegistryRefresher {
       }
       this.onProgress({ type: 'publishing', registry: definition.id, revision })
       this.assertWriterLease()
-      await this.store.publishCatalog(catalog, this.assertWriterLease)
-      this.assertWriterLease()
-      await this.store.putDefinition(definition)
-      this.assertWriterLease()
-      await this.store.putStatus({
-        registry_id: definition.id, state: completed.state, current_revision: revision,
-        last_attempt_at: attemptedAt, last_success_at: succeededAt,
-        last_source_revision: verifiedSourceRevision,
-      })
+      await this.store.publishSnapshot(catalog, {
+        schema_version: '1', definition, current_revision: revision,
+        status: {
+          registry_id: definition.id, state: completed.state, current_revision: revision,
+          last_attempt_at: attemptedAt, last_success_at: succeededAt,
+          last_source_revision: verifiedSourceRevision,
+        },
+      }, this.assertWriterLease)
       return completed.result
     } catch (error) {
       if (error instanceof IndeterminateRemoteMutationError) throw error
       this.assertWriterLease()
       if (completed) {
-        const live = await this.store.getCatalog(definition.id)
+        const live = await this.store.getSnapshot(definition.id, completed.revision)
         if (live?.revision === completed.revision) {
           this.assertWriterLease()
-          await this.store.putDefinition(definition)
-          this.assertWriterLease()
-          await this.store.putStatus({
+          await putState({
             registry_id: definition.id, state: completed.state, current_revision: completed.revision,
             last_attempt_at: attemptedAt, last_success_at: completed.succeededAt,
             last_source_revision: completed.lastSourceRevision,
-          })
+          }, undefined, definition)
           return completed.result
         }
       }
-      const live = await this.store.getCatalog(definition.id).catch(() => current)
+      const liveState = await this.store.getState(definition.id).catch(() => previousState)
+      const live = liveState?.current_revision
+        ? await this.store.getSnapshot(definition.id, liveState.current_revision).catch(() => current)
+        : null
       this.assertWriterLease()
-      await this.store.putStatus({
+      await putState({
         registry_id: definition.id, state: live ? 'stale' : 'empty', current_revision: live?.revision,
         last_attempt_at: attemptedAt, last_success_at: lastSuccessAt,
         last_source_revision: previousStatus?.last_source_revision,

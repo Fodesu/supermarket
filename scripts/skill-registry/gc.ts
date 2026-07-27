@@ -63,9 +63,12 @@ export async function garbageCollectSkillRegistries(input: {
 
   for (const registryID of registryIDs) {
     await assertWriterLease()
-    const [catalogs, current] = await Promise.all([
-      input.store.listCatalogRevisions(registryID), input.store.getCatalog(registryID),
+    const [catalogs, state] = await Promise.all([
+      input.store.listCatalogRevisions(registryID), input.store.getState(registryID),
     ])
+    const current = state?.current_revision
+      ? await input.store.getSnapshot(registryID, state.current_revision)
+      : null
     const definition = definitions.get(registryID)
     const sorted = [...catalogs].sort((left, right) => {
       return catalogTime(right) - catalogTime(left) || right.revision.localeCompare(left.revision)
@@ -124,8 +127,8 @@ export async function garbageCollectSkillRegistries(input: {
     }
     for (const [registryID, expectedRevision] of currentRevisions) {
       await assertWriterLease()
-      const live = await input.store.getCatalog(registryID)
-      if (live?.revision !== expectedRevision) {
+      const liveState = await input.store.getState(registryID)
+      if (liveState?.current_revision !== expectedRevision) {
         throw new Error(`Current Catalog changed during garbage collection: ${registryID}`)
       }
     }

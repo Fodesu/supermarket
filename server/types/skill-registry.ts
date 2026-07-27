@@ -126,6 +126,18 @@ export interface SkillRegistryStatus {
   last_error?: string
 }
 
+/**
+ * The only mutable object for one Registry. A state update switches the
+ * complete reader-visible view together: its definition, active snapshot,
+ * and refresh status.
+ */
+export interface SkillRegistryState {
+  schema_version: '1'
+  definition: SkillRegistryDefinition
+  current_revision?: string
+  status: SkillRegistryStatus
+}
+
 export interface SkillRegistrySummary {
   id: string
   name: string

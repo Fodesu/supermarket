@@ -69,7 +69,7 @@ export class WorkerR2BlobBackend implements BlobBackend {
     return [...new Set(keys)].sort()
   }
   private isMutable(key: string) {
-    return /^skill-registries\/[^/]+\/(?:definition|current|status)\.json$/.test(key)
+    return /^skill-registries\/[^/]+\/state\.json$/.test(key)
   }
   private async request(
     path: string,

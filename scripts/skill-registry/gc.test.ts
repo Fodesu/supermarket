@@ -58,11 +58,40 @@ function catalog(definition: SkillRegistryDefinition, revision: string, syncedAt
   }
 }
 
+type FixtureStore = LocalSkillRegistryStore & {
+  putDefinition(value: SkillRegistryDefinition): Promise<void>
+  publishCatalog(value: SkillRegistryCatalog): Promise<void>
+  getCatalog(id: string): Promise<SkillRegistryCatalog | null>
+}
+
+function fixture(store: LocalSkillRegistryStore): FixtureStore {
+  return Object.assign(store, {
+    async putDefinition(value: SkillRegistryDefinition) {
+      const existing = await store.getState(value.id)
+      await store.putState({
+        schema_version: '1', definition: value, current_revision: existing?.current_revision,
+        status: existing?.status ?? { registry_id: value.id, state: 'empty' },
+      })
+    },
+    async publishCatalog(value: SkillRegistryCatalog) {
+      const existing = await store.getState(value.registry.id)
+      await store.publishSnapshot(value, {
+        schema_version: '1', definition: value.registry, current_revision: value.revision,
+        status: { ...(existing?.status ?? { registry_id: value.registry.id, state: 'ready' }), current_revision: value.revision },
+      })
+    },
+    async getCatalog(id: string) {
+      const current = await store.getState(id)
+      return current?.current_revision ? store.getSnapshot(id, current.current_revision) : null
+    },
+  })
+}
+
 describe('Skill Registry garbage collection', () => {
   test('defaults to dry-run and only deletes catalogs and artifacts outside every retained graph', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'skill-registry-gc-'))
     roots.push(root)
-    const store = new LocalSkillRegistryStore(root)
+    const store = fixture(new LocalSkillRegistryStore(root))
     const known = definition('known', 2)
     const unmanaged = definition('unmanaged', 1)
     const oldArtifact = await putArtifact(store, 'old')
@@ -111,7 +140,7 @@ describe('Skill Registry garbage collection', () => {
   test('always retains a current Catalog that was rolled back behind the retention window', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'skill-registry-gc-rollback-'))
     roots.push(root)
-    const store = new LocalSkillRegistryStore(root)
+    const store = fixture(new LocalSkillRegistryStore(root))
     const known = definition('known', 1)
     const oldArtifact = await putArtifact(store, 'rollback')
     const newArtifact = await putArtifact(store, 'new')
@@ -120,7 +149,9 @@ describe('Skill Registry garbage collection', () => {
     await store.putDefinition(known)
     await store.publishCatalog(catalog(known, oldRevision, '2026-01-01T00:00:00.000Z', oldArtifact))
     await store.publishCatalog(catalog(known, newRevision, '2026-01-02T00:00:00.000Z', newArtifact))
-    await Bun.write(path.join(root, 'skill-registries/known/current.json'), JSON.stringify({ revision: oldRevision }))
+    const statePath = path.join(root, 'skill-registries/known/state.json')
+    const state = JSON.parse(await Bun.file(statePath).text())
+    await Bun.write(statePath, JSON.stringify({ ...state, current_revision: oldRevision, status: { ...state.status, current_revision: oldRevision } }))
 
     const result = await garbageCollectSkillRegistries({ store, definitions: [known] })
     const registry = result.registries.find((item) => item.registry_id === 'known')
@@ -132,13 +163,13 @@ describe('Skill Registry garbage collection', () => {
   test('fails closed on unknown Catalog objects and malformed Artifact references', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'skill-registry-gc-invalid-'))
     roots.push(root)
-    const store = new LocalSkillRegistryStore(root)
+    const store = fixture(new LocalSkillRegistryStore(root))
     const known = definition('known', 1)
     const artifact = await putArtifact(store, 'valid')
     const revision = await sha256('valid-catalog')
     await store.putDefinition(known)
     await store.publishCatalog(catalog(known, revision, '2026-01-01T00:00:00.000Z', artifact))
-    const catalogsRoot = path.join(root, 'skill-registries/known/catalogs')
+    const catalogsRoot = path.join(root, 'skill-registries/known/snapshots')
 
     await Bun.write(path.join(catalogsRoot, 'legacy.json'), '{}')
     await expect(garbageCollectSkillRegistries({ store, definitions: [known] }))
@@ -161,7 +192,7 @@ describe('Skill Registry garbage collection', () => {
   test('protects managed history without current and stops before Artifact deletion on Catalog failure', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'skill-registry-gc-failures-'))
     roots.push(root)
-    const store = new LocalSkillRegistryStore(root)
+    const store = fixture(new LocalSkillRegistryStore(root))
     const known = definition('known', 1)
     const oldArtifact = await putArtifact(store, 'failure-old')
     const currentArtifact = await putArtifact(store, 'failure-current')
@@ -172,13 +203,14 @@ describe('Skill Registry garbage collection', () => {
     await store.publishCatalog(catalog(known, oldRevision, '2026-01-01T00:00:00.000Z', oldArtifact))
     await store.publishCatalog(catalog(known, currentRevision, '2026-01-02T00:00:00.000Z', currentArtifact))
 
-    const currentPath = path.join(root, 'skill-registries/known/current.json')
+    const currentPath = path.join(root, 'skill-registries/known/state.json')
     await rm(currentPath)
     const protectedResult = await garbageCollectSkillRegistries({ store, definitions: [known] })
     expect(protectedResult.registries[0]?.protected_reason).toBe('missing_current')
     expect(protectedResult.registries[0]?.deleted_revisions).toEqual([])
     expect(protectedResult.artifacts.deleted).toEqual([orphanArtifact.digest])
-    await Bun.write(currentPath, JSON.stringify({ revision: currentRevision }))
+    await store.putState({ schema_version: '1', definition: known, current_revision: currentRevision,
+      status: { registry_id: known.id, state: 'ready', current_revision: currentRevision } })
 
     const failingStore = new Proxy(store, {
       get(target, property) {
@@ -197,7 +229,7 @@ describe('Skill Registry garbage collection', () => {
   test('rechecks current after Catalog deletion before deleting Artifacts', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'skill-registry-gc-current-race-'))
     roots.push(root)
-    const store = new LocalSkillRegistryStore(root)
+    const store = fixture(new LocalSkillRegistryStore(root))
     const known = definition('known', 2)
     const oldArtifact = await putArtifact(store, 'race-old')
     const retainedArtifact = await putArtifact(store, 'race-retained')
@@ -208,13 +240,14 @@ describe('Skill Registry garbage collection', () => {
     await store.publishCatalog(catalog(known, revisions[0]!, '2026-01-01T00:00:00.000Z', oldArtifact))
     await store.publishCatalog(catalog(known, revisions[1]!, '2026-01-02T00:00:00.000Z', retainedArtifact))
     await store.publishCatalog(catalog(known, revisions[2]!, '2026-01-03T00:00:00.000Z', currentArtifact))
-    const currentPath = path.join(root, 'skill-registries/known/current.json')
+    const currentPath = path.join(root, 'skill-registries/known/state.json')
     const changingStore = new Proxy(store, {
       get(target, property) {
         if (property === 'deleteCatalogRevision') {
           return async (registryID: string, revision: string) => {
             await target.deleteCatalogRevision(registryID, revision)
-            await Bun.write(currentPath, JSON.stringify({ revision: revisions[1] }))
+            const state = await target.getState(known.id)
+            await Bun.write(currentPath, JSON.stringify({ ...state, current_revision: revisions[1], status: { ...state?.status, current_revision: revisions[1] } }))
           }
         }
         const value = Reflect.get(target, property)
