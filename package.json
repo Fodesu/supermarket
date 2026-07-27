@@ -3,19 +3,22 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "bun scripts/verify-registry-bucket.ts && vite build",
     "preview": "vite preview",
     "test": "bun test",
     "registry:refresh": "bun scripts/skill-registry-refresh.ts",
     "registry:gc": "bun scripts/skill-registry-gc.ts",
-    "registry:unlock": "bun scripts/skill-registry-unlock.ts",
     "registry:validate": "bun scripts/skill-registry-validate.ts",
-    "registry:client": "bun client/skill-registry-client.ts"
+    "registry:client": "bun client/skill-registry-client.ts",
+    "registry:writer:dev": "bunx wrangler dev --config writer.wrangler.jsonc --test-scheduled",
+    "registry:writer:deploy": "bun scripts/verify-registry-bucket.ts && bunx wrangler deploy --config writer.wrangler.jsonc",
+    "registry:api:deploy": "bun run build && bunx wrangler deploy --config .output/server/wrangler.json"
   },
   "imports": {
     "#*": "./*"
   },
   "devDependencies": {
+    "@cloudflare/containers": "latest",
     "@vitejs/plugin-vue": "^6.0.5",
     "nitro": "latest",
     "vite": "^8.0.2",

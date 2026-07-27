@@ -14,7 +14,7 @@ import type { SkillRegistryStore } from '../../server/utils/skill-registry-store
 import { IndeterminateRemoteMutationError, sha256 } from '../../server/utils/skill-registry-store'
 import { buildSkillCandidates } from './adapters'
 import { packageSkill } from './files'
-import { materializeSkillRegistrySource } from './source'
+import { materializeSkillRegistrySource, peekSkillRegistrySourceRevision } from './source'
 
 export interface SkillRegistryDefinitionFailure {
   registry: string
@@ -64,12 +64,17 @@ export function isSkillRegistryRefreshDue(
   return !Number.isFinite(lastSuccess) || now >= lastSuccess + definition.refresh_interval_seconds * 1000
 }
 
+// The content revision must ignore WHERE content came from and only hash WHAT
+// is served: artifact digests already capture file bytes exactly, so excluding
+// upstream revision markers keeps unrelated upstream commits (docs, skipped
+// packages) from churning out content-identical Catalog revisions.
 function stableCatalogContent(definition: SkillRegistryDefinition, skills: CatalogSkill[], diagnostics: RegistryDiagnostic[]) {
   return {
     registry: definition,
     skills: skills.map((skill) => ({
       ...skill,
-      artifact: { ...skill.artifact, created_at: undefined },
+      source: { ...skill.source, revision: undefined },
+      artifact: { ...skill.artifact, source_revision: undefined, created_at: undefined },
     })),
     diagnostics,
   }
@@ -87,10 +92,19 @@ export interface SkillRegistryRefreshResult {
   skipped?: string
 }
 
+export type SkillRegistryRefreshProgress =
+  | { type: 'source'; registry: string }
+  | { type: 'source_unchanged'; registry: string; revision: string }
+  | { type: 'source_ready'; registry: string; revision: string }
+  | { type: 'scanned'; registry: string; skills: number; diagnostics: number }
+  | { type: 'skill'; registry: string; index: number; total: number; package_id: string; skill_id: string; uploaded: boolean }
+  | { type: 'publishing'; registry: string; revision: string }
+
 interface CompletedRefresh {
   revision: string
   state: SkillRegistryStatus['state']
   succeededAt: string
+  lastSourceRevision?: string
   result: SkillRegistryRefreshResult
 }
 
@@ -101,6 +115,7 @@ export class SkillRegistryRefresher {
     private readonly store: SkillRegistryStore,
     private readonly projectRoot: string,
     private readonly assertWriterLease: () => void = () => {},
+    private readonly onProgress: (progress: SkillRegistryRefreshProgress) => void = () => {},
   ) {}
 
   async refresh(
@@ -133,6 +148,32 @@ export class SkillRegistryRefresher {
       throw new Error(`${definition.id}: scoped refresh requires an unchanged Registry definition; run a full refresh`)
     }
     const lastSuccessAt = previousStatus?.last_success_at ?? current?.synced_at
+
+    // Fast path: when the last successful refresh already processed the exact
+    // upstream revision ls-remote reports now, a full run could only reproduce
+    // the current Catalog. Requires an unchanged definition (the Catalog embeds
+    // it) and a full, unforced refresh. Any uncertainty falls through to the
+    // full pipeline.
+    if (!options.force && !options.package && definition.enabled && current
+      && sameDefinition(current.registry, definition)
+      && previousStatus?.last_source_revision && previousStatus.last_success_at
+      && previousStatus.current_revision === current.revision
+      && (previousStatus.state === 'ready' || previousStatus.state === 'empty')) {
+      const upstream = await peekSkillRegistrySourceRevision(definition)
+      if (upstream && upstream === previousStatus.last_source_revision) {
+        this.onProgress({ type: 'source_unchanged', registry: definition.id, revision: upstream })
+        const succeededAt = new Date().toISOString()
+        this.assertWriterLease()
+        await this.store.putStatus({
+          registry_id: definition.id, state: previousStatus.state, current_revision: current.revision,
+          last_attempt_at: attemptedAt, last_success_at: succeededAt, last_source_revision: upstream,
+        })
+        return {
+          registry: definition.id, revision: current.revision,
+          skills: current.skills.length, skipped: 'source_unchanged',
+        }
+      }
+    }
     if (!definition.enabled) {
       this.assertWriterLease()
       await this.store.putDefinition(definition)
@@ -140,6 +181,7 @@ export class SkillRegistryRefresher {
       await this.store.putStatus({
         registry_id: definition.id, state: 'disabled', current_revision: current?.revision,
         last_attempt_at: attemptedAt, last_success_at: lastSuccessAt,
+        last_source_revision: previousStatus?.last_source_revision,
       })
       return { registry: definition.id, skipped: 'disabled' }
     }
@@ -147,6 +189,7 @@ export class SkillRegistryRefresher {
     await this.store.putStatus({
       registry_id: definition.id, state: 'refreshing', current_revision: current?.revision,
       last_attempt_at: attemptedAt, last_success_at: lastSuccessAt,
+      last_source_revision: previousStatus?.last_source_revision,
     })
 
     let source
@@ -155,7 +198,9 @@ export class SkillRegistryRefresher {
       if (options.package && !current) {
         throw new Error(`${definition.id}: scoped refresh requires an existing Catalog`)
       }
+      this.onProgress({ type: 'source', registry: definition.id })
       source = await materializeSkillRegistrySource(definition, this.projectRoot)
+      this.onProgress({ type: 'source_ready', registry: definition.id, revision: source.revision })
       this.assertWriterLease()
       const scopeExists = options.package ? Boolean(options.skill
         ? current?.skills.some((skill) => skill.package_id === options.package && skill.skill_id === options.skill)
@@ -169,6 +214,10 @@ export class SkillRegistryRefresher {
       if (options.skill && result.diagnostics.some((item) => item.package_id === options.package)) {
         throw new Error(`${definition.id}/${options.package}: package compatibility changed; refresh the whole package`)
       }
+      this.onProgress({
+        type: 'scanned', registry: definition.id,
+        skills: result.skills.length, diagnostics: result.diagnostics.length,
+      })
       const createdAt = new Date().toISOString()
       const refreshed: CatalogSkill[] = []
       const storedImages = new Set<string>()
@@ -188,13 +237,20 @@ export class SkillRegistryRefresher {
           content_type: 'application/gzip', created_at: existingCreatedAt ?? createdAt,
         }
         this.assertWriterLease()
-        await this.store.putArtifact(descriptor, packaged.bytes)
+        const artifactUploaded = (await this.store.putArtifact(descriptor, packaged.bytes))?.stored === true
+        let imagesUploaded = false
         for (const image of candidate.icon_assets ?? []) {
           if (storedImages.has(image.descriptor.digest)) continue
           this.assertWriterLease()
-          await this.store.putImage(image.descriptor, image.bytes)
+          imagesUploaded = ((await this.store.putImage(image.descriptor, image.bytes))?.stored === true) || imagesUploaded
           storedImages.add(image.descriptor.digest)
         }
+        this.onProgress({
+          type: 'skill', registry: definition.id,
+          index: refreshed.length + 1, total: result.skills.length,
+          package_id: candidate.package_id, skill_id: candidate.skill_id,
+          uploaded: artifactUploaded || imagesUploaded,
+        })
         refreshed.push({
           schema_version: '1', registry_id: definition.id, registry_priority: definition.priority,
           package_id: candidate.package_id, skill_id: candidate.skill_id, install_id: candidate.install_id,
@@ -232,9 +288,15 @@ export class SkillRegistryRefresher {
       const contentRevision = await sha256(JSON.stringify(stableCatalogContent(source.definition, skills, diagnostics)))
       const unchanged = current?.content_revision === contentRevision
       const succeededAt = new Date().toISOString()
+      // Scoped refreshes only revalidate one package, so they must not claim
+      // the whole Catalog reflects the revision they checked out.
+      const verifiedSourceRevision = options.package
+        ? previousStatus?.last_source_revision
+        : source.revision
       if (!options.force && unchanged) {
         completed = {
           revision: current.revision, state: skills.length ? 'ready' : 'empty', succeededAt,
+          lastSourceRevision: verifiedSourceRevision,
           result: { registry: definition.id, revision: current.revision, skills: skills.length, skipped: 'unchanged' },
         }
         this.assertWriterLease()
@@ -243,6 +305,7 @@ export class SkillRegistryRefresher {
         await this.store.putStatus({
           registry_id: definition.id, state: completed.state, current_revision: current.revision,
           last_attempt_at: attemptedAt, last_success_at: succeededAt,
+          last_source_revision: verifiedSourceRevision,
         })
         return completed.result
       }
@@ -255,8 +318,10 @@ export class SkillRegistryRefresher {
       }
       completed = {
         revision, state: skills.length ? 'ready' : 'empty', succeededAt,
+        lastSourceRevision: verifiedSourceRevision,
         result: { registry: definition.id, revision, skills: skills.length, diagnostics: diagnostics.length },
       }
+      this.onProgress({ type: 'publishing', registry: definition.id, revision })
       this.assertWriterLease()
       await this.store.publishCatalog(catalog, this.assertWriterLease)
       this.assertWriterLease()
@@ -265,6 +330,7 @@ export class SkillRegistryRefresher {
       await this.store.putStatus({
         registry_id: definition.id, state: completed.state, current_revision: revision,
         last_attempt_at: attemptedAt, last_success_at: succeededAt,
+        last_source_revision: verifiedSourceRevision,
       })
       return completed.result
     } catch (error) {
@@ -279,6 +345,7 @@ export class SkillRegistryRefresher {
           await this.store.putStatus({
             registry_id: definition.id, state: completed.state, current_revision: completed.revision,
             last_attempt_at: attemptedAt, last_success_at: completed.succeededAt,
+            last_source_revision: completed.lastSourceRevision,
           })
           return completed.result
         }
@@ -288,6 +355,7 @@ export class SkillRegistryRefresher {
       await this.store.putStatus({
         registry_id: definition.id, state: live ? 'stale' : 'empty', current_revision: live?.revision,
         last_attempt_at: attemptedAt, last_success_at: lastSuccessAt,
+        last_source_revision: previousStatus?.last_source_revision,
         last_error: error instanceof Error ? error.message : String(error),
       })
       throw error

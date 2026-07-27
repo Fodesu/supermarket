@@ -119,6 +119,10 @@ export interface SkillRegistryStatus {
   current_revision?: string
   last_attempt_at?: string
   last_success_at?: string
+  // Upstream source revision verified by the most recent successful refresh.
+  // The Catalog may keep an older source_revision when new upstream commits
+  // did not change any Skill content, so due checks compare against this.
+  last_source_revision?: string
   last_error?: string
 }
 

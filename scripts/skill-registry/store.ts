@@ -7,119 +7,93 @@ import {
   type SkillRegistryStore,
 } from '../../server/utils/skill-registry-store'
 
-export class S3BlobBackend implements BlobBackend {
-  private readonly client: any
+/**
+ * R2 access mediated by the Writer Worker outbound handler. This is used in
+ * Cloudflare Containers so S3 credentials never enter the container.
+ */
+export class WorkerR2BlobBackend implements BlobBackend {
   constructor(
-    client?: any,
+    private readonly baseURL: string,
     private readonly fetcher: typeof fetch = fetch,
     private readonly requestTimeoutMs = Number(process.env.REGISTRY_R2_REQUEST_TIMEOUT_MS || 60_000),
   ) {
-    if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs < 1_000) {
-      throw new Error('REGISTRY_R2_REQUEST_TIMEOUT_MS must be at least 1000ms')
-    }
-    if (client) {
-      this.client = client
-      return
-    }
-    const S3Client = (Bun as any).S3Client
-    if (!S3Client) throw new Error('This Bun runtime does not provide S3Client')
-    const accountID = process.env.R2_ACCOUNT_ID!
-    this.client = new S3Client({
-      accessKeyId: process.env.R2_ACCESS_KEY_ID!, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
-      bucket: process.env.R2_BUCKET!, endpoint: process.env.R2_ENDPOINT || `https://${accountID}.r2.cloudflarestorage.com`,
-    })
+    if (!/^http:\/\/[a-z0-9.-]+$/i.test(baseURL)) throw new Error('REGISTRY_R2_INTERNAL_URL must be an HTTP virtual hostname')
   }
   async get(key: string) {
-    return this.withTimeout((async () => {
-      const file = this.client.file(key)
-      if (!await file.exists()) return null
-      return new Uint8Array(await file.arrayBuffer())
-    })(), `S3 read timed out: ${key}`)
+    const response = await this.request(`objects/${encodeURIComponent(key)}`, 'GET')
+    if (response.status === 404) return null
+    if (!response.ok) throw new Error(`Worker R2 read failed (${response.status} ${response.statusText}): ${key}`)
+    return new Uint8Array(await response.arrayBuffer())
   }
   async put(key: string, value: Uint8Array) {
-    const response = await this.request(key, 'PUT', value)
-    if (!response.ok) {
-      throw new IndeterminateRemoteMutationError(`S3 write outcome is unknown (${response.status} ${response.statusText}): ${key}`)
-    }
+    const response = await this.request(`objects/${encodeURIComponent(key)}`, 'PUT', value, undefined, this.isMutable(key))
+    if (!response.ok) throw new IndeterminateRemoteMutationError(`Worker R2 write outcome is unknown (${response.status} ${response.statusText}): ${key}`)
   }
   async delete(key: string) {
-    const response = await this.request(key, 'DELETE')
-    if (!response.ok && response.status !== 404) {
-      throw new IndeterminateRemoteMutationError(`S3 delete outcome is unknown (${response.status} ${response.statusText}): ${key}`)
-    }
+    const response = await this.request(`objects/${encodeURIComponent(key)}`, 'DELETE', undefined, undefined, this.isMutable(key))
+    if (!response.ok && response.status !== 404) throw new IndeterminateRemoteMutationError(`Worker R2 delete outcome is unknown (${response.status} ${response.statusText}): ${key}`)
   }
   async getVersioned(key: string) {
-    const response = await this.request(key, 'GET')
+    const response = await this.request(`objects/${encodeURIComponent(key)}`, 'GET')
     if (response.status === 404) return null
-    if (!response.ok) throw new Error(`Versioned S3 read failed (${response.status} ${response.statusText})`)
+    if (!response.ok) throw new Error(`Versioned Worker R2 read failed (${response.status} ${response.statusText})`)
     const version = normalizeETag(response.headers.get('etag'))
-    if (!version) throw new Error(`S3 object has no ETag: ${key}`)
+    if (!version) throw new Error(`Worker R2 object has no ETag: ${key}`)
     return { value: new Uint8Array(await response.arrayBuffer()), version }
   }
   async putConditional(key: string, value: Uint8Array, expectedVersion: string | null) {
-    const response = await this.request(key, 'PUT', value, expectedVersion === null
+    const response = await this.request(`objects/${encodeURIComponent(key)}`, 'PUT', value, expectedVersion === null
       ? { 'if-none-match': '*' }
       : { 'if-match': `"${normalizeETag(expectedVersion)}"` })
     if (response.status === 409 || response.status === 412) return null
-    if (!response.ok) {
-      throw new IndeterminateRemoteMutationError(`Conditional S3 write outcome is unknown (${response.status} ${response.statusText}): ${key}`)
-    }
+    if (!response.ok) throw new IndeterminateRemoteMutationError(`Conditional Worker R2 write outcome is unknown (${response.status} ${response.statusText}): ${key}`)
     const version = normalizeETag(response.headers.get('etag'))
-    if (!version) throw new Error(`Conditional S3 write returned no ETag: ${key}`)
+    if (!version) throw new Error(`Conditional Worker R2 write returned no ETag: ${key}`)
     return version
   }
-  private async request(key: string, method: 'GET' | 'PUT' | 'DELETE', value?: Uint8Array, headers?: HeadersInit) {
-    const expiresIn = Math.max(60, Math.ceil(this.requestTimeoutMs / 1000) + 30)
+  async list(prefix: string) { return this.listPage(prefix, false) }
+  async listPrefixes(prefix: string) { return this.listPage(prefix, true) }
+  private async listPage(prefix: string, delimiter: boolean) {
+    const keys: string[] = []
+    let cursor: string | undefined
+    do {
+      const query = new URLSearchParams({ prefix })
+      if (delimiter) query.set('delimiter', '/')
+      if (cursor) query.set('cursor', cursor)
+      const response = await this.request(`list?${query}`, 'GET')
+      if (!response.ok) throw new Error(`Worker R2 list failed (${response.status} ${response.statusText}): ${prefix}`)
+      const page = await response.json() as { keys: string[]; cursor?: string }
+      keys.push(...page.keys)
+      cursor = page.cursor
+    } while (cursor)
+    return [...new Set(keys)].sort()
+  }
+  private isMutable(key: string) {
+    return /^skill-registries\/[^/]+\/(?:definition|current|status)\.json$/.test(key)
+  }
+  private async request(
+    path: string,
+    method: 'GET' | 'PUT' | 'DELETE',
+    value?: Uint8Array,
+    headers?: HeadersInit,
+    mutable = false,
+  ) {
     try {
-      return await this.fetcher(this.client.presign(key, { method, expiresIn }), {
-        method, headers,
-        body: value?.slice().buffer as ArrayBuffer | undefined,
+      const requestHeaders = new Headers(headers)
+      const target = mutable ? process.env.REGISTRY_R2_MUTABLE_URL : this.baseURL
+      if (mutable) {
+        const token = process.env.REGISTRY_WRITER_TOKEN
+        if (!target || !token) throw new Error('Mutable Registry writes require REGISTRY_R2_MUTABLE_URL and REGISTRY_WRITER_TOKEN')
+        requestHeaders.set('x-registry-writer-token', token)
+      }
+      return await this.fetcher(new URL(path, `${target}/`).toString(), {
+        method, headers: requestHeaders, body: value?.slice().buffer as ArrayBuffer | undefined,
         signal: AbortSignal.timeout(this.requestTimeoutMs),
       })
     } catch (error) {
-      if (method !== 'GET') {
-        throw new IndeterminateRemoteMutationError(`S3 ${method} outcome is unknown: ${key}`, { cause: error })
-      }
+      if (method !== 'GET') throw new IndeterminateRemoteMutationError(`Worker R2 ${method} outcome is unknown: ${path}`, { cause: error })
       throw error
     }
-  }
-  private async withTimeout<T>(operation: Promise<T>, message: string): Promise<T> {
-    let timeout: ReturnType<typeof setTimeout> | undefined
-    try {
-      return await Promise.race([
-        operation,
-        new Promise<never>((_, reject) => {
-          timeout = setTimeout(() => reject(new Error(message)), this.requestTimeoutMs)
-          timeout.unref?.()
-        }),
-      ])
-    } finally {
-      if (timeout) clearTimeout(timeout)
-    }
-  }
-  async list(prefix: string) {
-    const keys: string[] = []
-    let continuationToken: string | undefined
-    do {
-      const result = await this.withTimeout<any>(
-        this.client.list({ prefix, continuationToken }), `S3 list timed out: ${prefix}`,
-      )
-      keys.push(...(result.contents ?? result.objects ?? []).map((item: any) => item.key))
-      continuationToken = result.isTruncated ? result.nextContinuationToken : undefined
-    } while (continuationToken)
-    return keys.sort()
-  }
-  async listPrefixes(prefix: string) {
-    const prefixes: string[] = []
-    let continuationToken: string | undefined
-    do {
-      const result = await this.withTimeout<any>(
-        this.client.list({ prefix, delimiter: '/', continuationToken }), `S3 prefix list timed out: ${prefix}`,
-      )
-      prefixes.push(...(result.commonPrefixes ?? []).map((item: any) => item.prefix))
-      continuationToken = result.isTruncated ? result.nextContinuationToken : undefined
-    } while (continuationToken)
-    return [...new Set(prefixes)].sort()
   }
 }
 
@@ -130,12 +104,10 @@ function normalizeETag(value: unknown) {
 }
 
 export function createSkillRegistryStore(projectRoot = path.resolve(import.meta.dirname, '../..')): SkillRegistryStore {
-  const variables = ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET']
-  const configured = variables.filter((name) => process.env[name])
-  if (configured.length && configured.length !== variables.length) {
-    throw new Error(`Incomplete R2 configuration; required: ${variables.join(', ')}`)
+  const internalURL = process.env.REGISTRY_R2_INTERNAL_URL
+  if (internalURL) return new BlobSkillRegistryStore(new WorkerR2BlobBackend(internalURL))
+  if (['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET'].some((name) => process.env[name])) {
+    throw new Error('Direct R2 S3 registry writers are not supported; use the Cloudflare Registry Writer')
   }
-  return configured.length
-    ? new BlobSkillRegistryStore(new S3BlobBackend())
-    : new LocalSkillRegistryStore(process.env.REGISTRY_DATA_DIR || path.join(projectRoot, '.data/registries'))
+  return new LocalSkillRegistryStore(process.env.REGISTRY_DATA_DIR || path.join(projectRoot, '.data/registries'))
 }

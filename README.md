@@ -1,77 +1,112 @@
 # Supermarket
 
-Official Plugin & Skill Registry for [Memoh](https://github.com/memohai/Memoh).
+Supermarket is the Plugin and Skill Registry service for [Memoh](https://github.com/memohai/Memoh).
 
-## Project Structure
+Plugins and Registry Skills use separate publication paths:
 
-```
-supermarket/
-├── plugins/               # Plugin registry
-│   └── <plugin-id>/
-│       ├── plugin.yaml    # Required plugin manifest
-│       ├── hooks.json     # Optional plugin-local hooks config
-│       ├── scripts/       # Optional scripts used by plugin hooks
-│       └── skills/        # Optional bundled skills
-├── skills/                # Skill registry
-│   └── <skill-id>/
-│       ├── SKILL.md       # Required entry file
-│       └── ...            # Optional scripts, references, assets
-├── registries/            # Runtime Skill Registry definitions (Catalog data is not committed)
-│   └── <registry-id>/
-│       └── registry.yaml
-├── server/                # Nitro API routes & utilities
-│   ├── api/
-│   │   ├── plugins/
-│   │   └── skills/
-│   ├── utils/
-│   └── types/
-├── src/                   # Vue frontend
-├── nitro.config.ts
-└── vite.config.ts
+- Plugins are repository-owned integration bundles under `plugins/`. A Plugin manifest can describe MCP resources, authentication requirements, install commands, hooks, scripts, and bundled Skills. Nitro includes `plugins/` as a server asset.
+- Registry Skills are instruction packages discovered through Registry Catalogs. The Refresher reads Registry definitions and sources, validates each Skill, creates immutable Artifacts, and publishes them to `RegistryStore`.
+
+`RegistryStore` is the Worker's only runtime source for Registry Skills. The API Worker performs read-only discovery and download operations. Local refresh and garbage collection commands write only the local Store; the deployed Writer is the sole production writer.
+
+The repository's `skills/` directory is the authoring source for the `memoh` Registry. The Refresher publishes it to `RegistryStore`; Nitro does not include `skills/` as a runtime server asset.
+
+## Repository layout
+
+```text
+plugins/<plugin-id>/                 Plugin manifest and optional bundle files
+skills/<skill-id>/SKILL.md           Authoring source for the memoh Registry
+registries/<registry-id>/registry.yaml
+                                     Registry definitions
+server/api/                          Nitro HTTP handlers
+server/utils/                        Plugin and Registry read paths
+scripts/skill-registry/              Refresher, stores, locks, adapters, and GC
+client/                              Reference Registry client and safe extractor
 ```
 
-## API
+Generated Catalogs, status objects, images, and Artifacts are stored under `.data/registries` in local development and in R2 in production. They are not committed to the repository.
 
-Base URL: `https://supermarket.memoh.ai`
+## Development
+
+Requires [Bun](https://bun.sh/). Git is also required when refreshing a Git source.
+
+| Command | Purpose |
+| --- | --- |
+| `bun install` | Install dependencies |
+| `bun run dev` | Start Vite and Nitro on the local development server |
+| `bun run build` | Build the Cloudflare Worker output |
+| `bun run preview` | Run the Vite preview command |
+| `bun test` | Run the Bun test suite |
+| `bun run registry:validate` | Validate every Registry definition without accessing its source |
+| `bun run registry:refresh` | Refresh Registry data |
+| `bun run registry:gc` | Print a garbage collection plan |
+| `bun run registry:gc -- --apply` | Apply a garbage collection plan under the writer lock |
+| `bun run registry:client -- <command>` | Run the reference Registry client |
+| `bun run registry:writer:dev` | Run the Cloudflare Registry writer and expose its scheduled handler locally |
+| `bun run registry:writer:deploy` | Deploy the scheduled Cloudflare Registry writer |
+| `bun run registry:api:deploy` | Build and deploy the read-only API Worker |
+
+For a local Registry API:
+
+```bash
+bun run registry:validate
+bun run registry:refresh -- --registry memoh
+bun run dev
+```
+
+The development server reads `.data/registries` by default. Set `REGISTRY_DATA_DIR` to use another local Store directory.
+
+### Production refresh writer
+
+The API Worker is read-only. Deploy the Registry Writer as a separate Cloudflare Container Worker. It runs every 15 minutes and refreshes only Registries whose configured interval has elapsed. The Coordinator owns production lease renewal and mutable publication; the Container prepares source content and writes immutable Artifacts and Catalog revisions.
+
+The Container does not receive R2 S3 credentials: it reaches the Writer's R2 Binding through a Worker outbound handler, and its public egress is deny-by-default.
+
+`registry-deployment.json` is the canonical R2 bucket setting. API builds and Writer deployments verify it against the Writer binding; a different `R2_BUCKET` fails before deployment.
+
+Deploy the writer:
+
+```bash
+bun run registry:writer:deploy
+```
+
+The first writer deployment builds and uploads a `linux/amd64` Container image, so Docker or a Docker-compatible engine must be running on the deploy host. Cloudflare Containers require a Workers Paid plan and the deploying Cloudflare identity needs Account-level Containers Edit permission. Use `bunx wrangler tail memohai-supermarket-writer` to inspect refresh output.
+
+## HTTP API
+
+Production base URL: `https://supermarket.memoh.ai`
 
 | Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/plugins` | List Plugins. Query: `q`, `tag`, `page`, `limit` |
-| GET | `/api/plugins/:id` | Get Plugin details |
-| GET | `/api/plugins/:id/download` | Download Plugin package (`plugin.yaml` plus allowed bundle assets) |
-| GET | `/api/skills` | List skills. Query: `q`, `tag`, `page`, `limit` |
-| GET | `/api/skills/:id` | Get skill details |
-| GET | `/api/skills/:id/download` | Download skill directory (tar.gz) |
-| GET | `/api/tags` | List all tags (aggregated from Plugins and Skills) |
-| GET | `/api/registries` | List runtime Skill Registries and refresh status |
-| GET | `/api/registries/:id` | Get Registry details and import diagnostics |
-| GET | `/api/registries/:id/categories` | List Registry Skill categories |
-| GET | `/api/registries/:id/skills` | Search Skills in one Registry |
-| GET | `/api/registries/:id/packages/:packageId/skills/:skillId` | Get a namespaced Skill |
-| GET | `/api/registries/:id/packages/:packageId/skills/:skillId/artifact` | Get its immutable Artifact descriptor |
-| GET | `/api/catalog/skills` | Search Skills across all Registries |
-| GET | `/api/artifacts/:digest/download` | Download a content-addressed `memoh_skill_v1` archive |
+| --- | --- | --- |
+| `GET` | `/api/plugins` | List Plugins. Queries: `q`, `tag`, `page`, `limit` |
+| `GET` | `/api/plugins/:id` | Return one Plugin manifest and its bundled Skill metadata |
+| `GET` | `/api/plugins/:id/download` | Download the Plugin bundle as `tar.gz` |
+| `GET` | `/api/mcps` | Return `404`; MCP resources are published as part of Plugins |
+| `GET` | `/api/mcps/*` | Return `404` for standalone MCP Registry paths |
+| `GET` | `/api/tags` | Return tags from Plugins and enabled Registry Skills |
+| `GET` | `/api/skills` | Search the single aggregated Skill collection across enabled Registries |
+| `GET` | `/api/registries` | List Registries, counts, refresh state, and next refresh time |
+| `GET` | `/api/registries/:registryId` | Return Registry definition, status, source revision, and diagnostics |
+| `GET` | `/api/registries/:registryId/categories` | List categories present in one Registry |
+| `GET` | `/api/registries/:registryId/skills` | Search Skills within one Registry |
+| `GET` | `/api/registries/:registryId/packages/:packageId/skills/:skillId` | Return one namespaced Skill |
+| `GET` | `/api/registries/:registryId/packages/:packageId/skills/:skillId/artifact` | Return the current Artifact descriptor |
+| `GET` | `/api/artifacts/:digest/download` | Stream a content-addressed `memoh_skill_v1` archive |
+| `GET` | `/api/skill-images/:digest` | Stream a content-addressed Skill image |
 
-Registry Skill search supports `q`, `registry`, `package`, `category`, `tag`, `os`, `page`, `limit`, and `sort`.
+`GET /api/skills` accepts `q`, `registry`, `package`, `category`, `tag`, `os`, `page`, `limit`, and `sort`. The scoped Registry collection accepts the same queries except `registry`, which is fixed by the path. Supported `os` values are `darwin`, `linux`, and `win32`; supported sort values are `relevance`, `name`, `registry`, and `package`. The default page is `1`, the default limit is `20`, and the maximum limit is `100`.
 
-## Runtime Skill Registries
-
-A Registry is a source namespace, a Package is an upstream synchronization unit, and a Skill is the discovery and installation unit. Skill identity is always:
+Every Registry Skill has a three-part identity:
 
 ```text
 (registry_id, package_id, skill_id)
 ```
 
-Registry definitions are committed, while generated Catalog revisions and Artifacts are stored in `.data/registries` locally or R2 in production. Every Skill in a published Catalog already has a content-addressed Artifact; installation never starts a mirror job and does not access GitHub.
+The `memoh_skill_v1` archive root and the reference client's destination directory use `<registry_id>+<package_id>+<skill_id>`. Consumers can map the three-part identity to their own managed runtime layout.
 
-Supported adapters:
+## Define a Registry
 
-- `skill_directory`: scans first-level directories containing `SKILL.md`.
-- `codex_marketplace_skills`: reads a Codex Marketplace and flattens standalone Skills from its Packages.
-
-Packages declaring Apps, MCP servers, or hooks are deliberately excluded with an import diagnostic. Supermarket does not guess how those runtime components should map to Memoh. Existing hand-written `plugin.yaml` and Plugin/MCP APIs remain unchanged.
-
-Example definition:
+Registry definitions live at `registries/<registry-id>/registry.yaml`.
 
 ```yaml
 schema_version: "1"
@@ -86,150 +121,126 @@ source:
   ref: main
 catalog_path: marketplace.json
 refresh_interval: 12h
+retention:
+  catalog_revisions: 30
 defaults:
   runtime_requirements:
     os: [darwin, linux, win32]
-package_overrides:
-  mac-tools:
-    runtime_requirements:
-      os: [darwin]
 ```
 
-`refresh_interval` is required and accepts `s`, `m`, `h`, or `d` durations. There is no hard-coded refresh interval in the Refresher.
+Supported sources are `local` and `git`. Supported adapters are:
 
-### Refreshing
+- `skill_directory`, which imports first-level directories containing `SKILL.md`
+- `codex_marketplace_skills`, which reads a Codex Marketplace and imports standalone Skills from repository-local Packages
+
+`refresh_interval` is required, accepts `s`, `m`, `h`, or `d`, and must be at least one minute. `retention.catalog_revisions` accepts an integer from 1 to 10,000 and resolves to `30` when omitted.
+
+## Refresh Registry data
 
 ```bash
-bun run registry:validate
+# Refresh every Registry
 bun run registry:refresh
-bun run registry:refresh -- --registry <registry-id>
-bun run registry:refresh -- --registry <registry-id> --package <package-id>
-bun run registry:refresh -- --registry <registry-id> --package <package-id> --skill <skill-id>
+
+# Refresh entries that are due
 bun run registry:refresh -- --due
-bun run registry:refresh -- --force
+
+# Refresh one Registry
+bun run registry:refresh -- --registry openai-api-curated
+
+# Refresh one Package
+bun run registry:refresh -- \
+  --registry openai-api-curated \
+  --package documents
+
+# Refresh one Skill
+bun run registry:refresh -- \
+  --registry openai-api-curated \
+  --package documents \
+  --skill pdf
+
+# Publish a new Catalog revision even when stable content is unchanged
+bun run registry:refresh -- --registry memoh --force
 ```
 
-An external scheduler should invoke `registry:refresh -- --due` at a wake-up cadence no longer than the smallest configured Registry interval. The command reads each Registry's last successful refresh and skips entries that are not due. This keeps refresh policy in `registry.yaml` instead of a fixed workflow cron.
+Use `registry:refresh -- --due` for local development. In production, the deployed Writer runs due refreshes every 15 minutes. A definition change bypasses the due-time check.
 
-The Refresher is a single-writer service. Production scheduling must allow at most one `registry:refresh` invocation at a time; one invocation processes Registries sequentially and continues after an individual Registry failure. The CLI also uses a heartbeat lock at `.data/registry-refresh.lock`. Set `REGISTRY_REFRESH_LOCK_DIR` to a shared filesystem location when multiple scheduler hosts can access the same R2 bucket, and tune stale recovery with `REGISTRY_REFRESH_LOCK_STALE_MS` when required. Definition changes bypass the due-time skip so enable/disable and catalog-affecting configuration are reconciled immediately.
+The local refresher writes to `.data/registries`. Production refreshes run only through the deployed Cloudflare Writer; direct S3 writer credentials are intentionally unsupported. The Writer publishes every immutable object before moving a Registry's `current.json` pointer, so a failed refresh leaves the last complete Catalog available.
 
-Configure the Bun Refresher with `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET`. The Cloudflare Worker uses the `SKILL_REGISTRY_BUCKET` binding for the same bucket. A refresh writes every immutable Artifact and Catalog revision before updating the Registry's `current.json` pointer; failures preserve the last-known-good Catalog.
-
-Storage selection depends on the runtime:
-
-- `bun run registry:refresh` without R2 environment variables writes to `.data/registries`, and `bun run dev` reads the same directory. `REGISTRY_DATA_DIR` can override this location.
-- A deployed Cloudflare Worker reads the `SKILL_REGISTRY_BUCKET` R2 binding. The production Refresher must use credentials for that same bucket.
-- `wrangler dev` supplies a Miniflare R2 binding, so it reads Miniflare's local R2 state instead of `.data/registries`. That isolated preview store must be seeded separately before testing Registry APIs through Wrangler.
-
-R2 is therefore not required for normal local development. It is the shared production Store and the Cloudflare-compatible local preview Store.
-
-### Protocol Client
+Garbage collection is local-only and a dry run unless `--apply` is present:
 
 ```bash
-bun run registry:client -- list --base http://127.0.0.1:5173
-bun run registry:client -- search pdf --registry openai-api-curated
-bun run registry:client -- inspect openai-api-curated documents pdf
-bun run registry:client -- install openai-api-curated documents pdf --destination /tmp/skills
+bun run registry:gc
+bun run registry:gc -- --apply
 ```
 
-The client verifies compressed size, SHA-256, tar checksums, paths, entry types, conflicts, decompression limits, and the required root `SKILL.md` before atomically installing into a namespaced directory.
+## Use the protocol client
 
-## Contributing
+```bash
+bun run registry:client -- list \
+  --base http://127.0.0.1:5173
 
-### Adding a Plugin
+bun run registry:client -- search pdf \
+  --registry openai-api-curated \
+  --base http://127.0.0.1:5173
 
-1. Create a directory under `plugins/` named after your plugin (e.g. `plugins/notion/`).
-2. Add a `plugin.yaml` manifest:
+bun run registry:client -- inspect \
+  openai-api-curated documents pdf \
+  --base http://127.0.0.1:5173
 
-```yaml
-schema_version: "1"
-id: notion
-name: Notion
-version: "0.1.0"
-description: Use Notion pages, databases, and search from Memoh.
-author:
-  name: Memoh
-  email: support@memoh.ai
-icon:
-  kind: builtin | external_url
-  name: notion                 # for builtin
-  url: https://example/icon.svg # for external_url
-homepage: https://example.com
-tags:
-  - productivity
-capabilities:
-  - search_pages
-
-install:
-  - sh scripts/install.sh
-
-auth_requirements:
-  - key: notion_oauth
-    type: none | managed_oauth | user_secret
-    client_ref: notion
-    scopes: []
-
-mcps:
-  - key: notion
-    name: Notion
-    transport: stdio
-    command: npx
-    args:
-      - "-y"
-      - "@notionhq/notion-mcp-server"
-    auth_ref: notion_oauth
-    visibility: hidden
-
-skills: []
+bun run registry:client -- install \
+  openai-api-curated documents pdf \
+  --base http://127.0.0.1:5173 \
+  --destination /tmp/supermarket-skills
 ```
 
-3. Optionally add plugin bundle assets:
+The client verifies the descriptor identity, same-origin download URL, compressed size, SHA-256 digest, tar checksums, entry types, paths, conflicts, decompression limits, and root `SKILL.md`. It installs into a namespaced directory with a final rename.
+
+## Contribute content
+
+### Add a Plugin
+
+Create `plugins/<plugin-id>/plugin.yaml`. Optional bundle files are:
 
 ```text
 plugins/<plugin-id>/hooks.json
-plugins/<plugin-id>/scripts/<name>.py
-plugins/<plugin-id>/skills/<skill-id>/SKILL.md
+plugins/<plugin-id>/scripts/**
+plugins/<plugin-id>/skills/<skill-id>/**
 ```
 
-Plugin download archives include:
+The Plugin download contains the normalized `plugin.yaml` and those allowed bundle files.
 
-- `plugin.yaml`
-- `hooks.json`
-- `scripts/**`
-- `skills/**`
+### Add a Skill
 
-The optional `install` field can be a string or string list. Each item is a shell command executed by Memoh from `/data/.memoh/plugins/<plugin-id>` after bundle extraction, usually calling a script under `scripts/**`.
-
-Memoh uses the Supermarket API response as the source of truth for plugin manifests, MCP resources, OAuth requirements, and install commands. The downloaded `plugin.yaml` is included for package completeness, while runtime bundle assets such as hooks, scripts, and skills are installed into the bot workspace by Memoh.
-
-### Adding a Skill
-
-1. Create a directory under `skills/` named after your skill (e.g. `skills/my-skill/`).
-2. Add a `SKILL.md` file with YAML frontmatter:
+Create `skills/<skill-id>/SKILL.md` with YAML frontmatter:
 
 ```markdown
 ---
 name: my-skill
-description: What this skill does and when to use it.
+description: What this Skill does and when to use it.
 metadata:
   author:
     name: Your Name
     email: you@example.com
-  tags:
-    - tag1
-    - tag2
+  tags: [example]
   homepage: https://example.com
 ---
 
 # My Skill
 
-Instructions and documentation go here...
+Instructions go here.
 ```
+
+Validate the definitions, then refresh the `memoh` Registry to publish the Skill:
+
+```bash
+bun run registry:validate
+bun run registry:refresh -- --registry memoh
+```
+
+### Add a Registry
+
+Add `registries/<registry-id>/registry.yaml`, run `bun run registry:validate`, and run a full refresh for that Registry. Package- or Skill-scoped refreshes require an existing Catalog built from the same normalized definition.
 
 ## License
 
 [Apache-2.0](LICENSE)
-
----
-
-Built with [Nitro](https://nitro.build) and [Cloudflare Workers](https://workers.cloudflare.com).

@@ -6,9 +6,9 @@ import { H3 } from 'h3'
 import { extractSkillArchive, gunzip, parseTarArchive } from '../client/archive'
 import artifactDownload from '../server/api/artifacts/[digest]/download.get'
 import skillImage from '../server/api/skill-images/[digest].get'
-import catalogSearch from '../server/api/catalog/skills.get'
 import registrySkill from '../server/api/registries/[id]/packages/[packageId]/skills/[skillId].get'
 import registries from '../server/api/registries/index.get'
+import skills from '../server/api/skills/index.get'
 import type { CatalogSkill, SkillArtifactDescriptor, SkillRegistryCatalog, SkillRegistryDefinition } from '../server/types/skill-registry'
 import { createTar, gzip } from '../server/utils/tar'
 import { BlobSkillRegistryStore, R2BlobBackend, sha256 } from '../server/utils/skill-registry-store'
@@ -106,7 +106,7 @@ describe('Skill Registry HTTP protocol', () => {
     const app = new H3()
     app.use((event) => { (event.req as any).runtime = { cloudflare: { env: { SKILL_REGISTRY_BUCKET: bucket } } } })
     app.get('/api/registries', registries)
-    app.get('/api/catalog/skills', catalogSearch)
+    app.get('/api/skills', skills)
     app.get('/api/registries/:id/packages/:packageId/skills/:skillId', registrySkill)
     app.get('/api/artifacts/:digest/download', artifactDownload)
     app.get('/api/skill-images/:digest', skillImage)
@@ -115,12 +115,12 @@ describe('Skill Registry HTTP protocol', () => {
     expect(registryResponse.status).toBe(200)
     expect((await registryResponse.json() as any).data[0]).toMatchObject({ id: 'example', skill_count: 1 })
 
-    const searchResponse = await app.fetch(new Request('http://local/api/catalog/skills?q=demo&os=linux'))
+    const searchResponse = await app.fetch(new Request('http://local/api/skills?q=demo&os=linux'))
     expect(searchResponse.status).toBe(200)
     expect((await searchResponse.json() as any).data[0]).toMatchObject({
       registry_id: 'example', package_id: 'tools', skill_id: 'demo',
     })
-    expect((await app.fetch(new Request('http://local/api/catalog/skills?registry=BAD'))).status).toBe(400)
+    expect((await app.fetch(new Request('http://local/api/skills?registry=BAD'))).status).toBe(400)
 
     const detailResponse = await app.fetch(new Request('http://local/api/registries/example/packages/tools/skills/demo'))
     const detail = await detailResponse.json() as any
