@@ -58,9 +58,9 @@ The development server reads `.data/registries` by default. Set `REGISTRY_DATA_D
 
 ### Production refresh writer
 
-The API Worker is read-only. Deploy the Registry Writer as a separate Cloudflare Container Worker. It runs every 15 minutes and refreshes only Registries whose configured interval has elapsed. The Coordinator owns production lease renewal and mutable publication; the Container prepares source content and writes immutable Artifacts and Catalog revisions.
+The API Worker is read-only. Deploy the Registry Writer as a separate Cloudflare Container Worker. It runs every 15 minutes and refreshes only Registries whose configured interval has elapsed. The Coordinator owns production lease renewal, mutable publication, and daily garbage collection; the Container prepares source content and writes immutable Artifacts and Catalog revisions.
 
-The Container does not receive R2 S3 credentials: it reaches the Writer's R2 Binding through a Worker outbound handler, and its public egress is deny-by-default.
+The Container does not receive R2 S3 credentials: it reaches the Writer's R2 Binding through a Worker outbound handler. It uses standard public egress to fetch configured Git sources.
 
 `registry-deployment.json` is the canonical R2 bucket setting. API builds and Writer deployments verify it against the Writer binding; a different `R2_BUCKET` fails before deployment.
 
@@ -166,7 +166,7 @@ Use `registry:refresh -- --due` for local development. In production, the deploy
 
 The local refresher writes to `.data/registries`. Production refreshes run only through the deployed Cloudflare Writer; direct S3 writer credentials are intentionally unsupported. The Writer publishes every immutable object before moving a Registry's `current.json` pointer, so a failed refresh leaves the last complete Catalog available.
 
-Garbage collection is local-only and a dry run unless `--apply` is present:
+Local garbage collection is a dry run unless `--apply` is present. Production garbage collection runs daily through the Coordinator:
 
 ```bash
 bun run registry:gc
