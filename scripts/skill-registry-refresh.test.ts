@@ -4,8 +4,8 @@ import os from 'node:os'
 import path from 'node:path'
 import type { SkillRegistryDefinition, SkillRegistryStatus } from '../server/types/skill-registry'
 import { IndeterminateRemoteMutationError } from '../server/utils/skill-registry-store'
-import { loadSkillRegistryDefinitionResults } from './skill-registry/refresher'
-import { runSkillRegistryRefreshes } from './skill-registry-refresh'
+import { loadSkillRegistryDefinitionResults, type SkillRegistryRefreshProgress } from './skill-registry/refresher'
+import { createSkillRegistryProgressRenderer, runSkillRegistryRefreshes } from './skill-registry-refresh'
 
 function definition(id: string, enabled = true): SkillRegistryDefinition {
   return {
@@ -71,6 +71,40 @@ describe('Skill Registry refresh runner', () => {
       },
     })).rejects.toThrow('unknown remote write')
     expect(calls).toEqual(['first'])
+  })
+
+  test('renders progress lines for phases, uploads, and milestones', () => {
+    const events: SkillRegistryRefreshProgress[] = [
+      { type: 'source', registry: 'openai' },
+      { type: 'source_unchanged', registry: 'memoh', revision: 'e'.repeat(40) },
+      { type: 'source_ready', registry: 'openai', revision: 'f'.repeat(64) },
+      { type: 'scanned', registry: 'openai', skills: 60, diagnostics: 2 },
+      { type: 'skill', registry: 'openai', index: 1, total: 60, package_id: 'pkg', skill_id: 'uploaded-one', uploaded: true },
+      { type: 'skill', registry: 'openai', index: 2, total: 60, package_id: 'pkg', skill_id: 'cached-two', uploaded: false },
+      { type: 'skill', registry: 'openai', index: 25, total: 60, package_id: 'pkg', skill_id: 'milestone', uploaded: false },
+      { type: 'skill', registry: 'openai', index: 60, total: 60, package_id: 'pkg', skill_id: 'last', uploaded: false },
+      { type: 'publishing', registry: 'openai', revision: 'f'.repeat(64) },
+    ]
+
+    const plain: string[] = []
+    const renderPlain = createSkillRegistryProgressRenderer((text) => { plain.push(text) }, false)
+    for (const event of events) renderPlain(event)
+    const output = plain.join('')
+    expect(output).toContain('openai: fetching source')
+    expect(output).toContain(`memoh: source unchanged at ${'e'.repeat(12)}, skipping`)
+    expect(output).toContain(`openai: source revision ${'f'.repeat(12)}`)
+    expect(output).toContain('openai: packaging 60 Skills (2 diagnostics)')
+    expect(output).toContain('[1/60] pkg/uploaded-one (uploaded)')
+    expect(output).not.toContain('cached-two')
+    expect(output).toContain('[25/60] pkg/milestone')
+    expect(output).toContain('[60/60] pkg/last')
+    expect(output).toContain(`openai: publishing revision ${'f'.repeat(12)}`)
+
+    const interactive: string[] = []
+    const renderInteractive = createSkillRegistryProgressRenderer((text) => { interactive.push(text) }, true)
+    for (const event of events) renderInteractive(event)
+    expect(interactive.join('')).toContain('\r\u001B[2K' + 'openai: [2/60] pkg/cached-two')
+    expect(interactive.join('')).toContain('openai: publishing revision')
   })
 
   test('loads valid Registry definitions alongside a malformed file', async () => {

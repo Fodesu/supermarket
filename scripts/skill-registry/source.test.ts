@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import type { SkillRegistryDefinition } from '../../server/types/skill-registry'
 import { buildSkillCandidates } from './adapters'
-import { materializeSkillRegistrySource } from './source'
+import { materializeSkillRegistrySource, peekSkillRegistrySourceRevision } from './source'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
@@ -13,6 +13,11 @@ async function git(cwd: string, ...args: string[]) {
   const child = Bun.spawn(['git', '-C', cwd, ...args], { stdout: 'pipe', stderr: 'pipe' })
   const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited])
   if (exitCode !== 0) throw new Error(stderr)
+}
+
+async function revParseHead(cwd: string) {
+  const child = Bun.spawn(['git', '-C', cwd, 'rev-parse', 'HEAD'], { stdout: 'pipe', stderr: 'pipe' })
+  return (await new Response(child.stdout).text()).trim()
 }
 
 describe('Skill Registry Git sources', () => {
@@ -52,6 +57,21 @@ describe('Skill Registry Git sources', () => {
     } finally {
       await source.cleanup()
     }
+
+    const head = await revParseHead(repository)
+    expect(await peekSkillRegistrySourceRevision(definition)).toBe(head)
+    expect(await peekSkillRegistrySourceRevision({
+      ...definition, source: { type: 'git', url: repository },
+    })).toBe(head)
+    expect(await peekSkillRegistrySourceRevision({
+      ...definition, source: { type: 'git', url: repository, ref: 'a'.repeat(40) },
+    })).toBe('a'.repeat(40))
+    expect(await peekSkillRegistrySourceRevision({
+      ...definition, source: { type: 'git', url: repository, ref: 'missing-branch' },
+    })).toBeNull()
+    expect(await peekSkillRegistrySourceRevision({
+      ...definition, source: { type: 'local', path: 'skills' },
+    })).toBeNull()
 
     const before = new Set((await readdir(os.tmpdir())).filter((name) => name.startsWith('supermarket-skills-git-')))
     await expect(materializeSkillRegistrySource({

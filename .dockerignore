@@ -1,0 +1,6 @@
+.git
+.data
+.output
+.wrangler
+node_modules
+docs

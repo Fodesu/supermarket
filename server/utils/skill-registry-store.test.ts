@@ -5,7 +5,13 @@ import path from 'node:path'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../types/skill-registry'
 import type { SkillArtifactDescriptor, SkillImageAsset, SkillRegistryCatalog, SkillRegistryDefinition } from '../types/skill-registry'
 import { LocalSkillRegistryStore } from './local-skill-registry-store'
-import { BlobSkillRegistryStore, R2BlobBackend, sha256 } from './skill-registry-store'
+import {
+  BlobSkillRegistryStore,
+  IndeterminateRemoteMutationError,
+  R2BlobBackend,
+  sha256,
+  type BlobBackend,
+} from './skill-registry-store'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
@@ -45,7 +51,7 @@ async function exerciseStore(store: LocalSkillRegistryStore | BlobSkillRegistryS
   expect(artifact?.descriptor).toEqual({
     format: 'memoh_skill_v1', digest, size: bytes.length, content_type: 'application/gzip',
   })
-  await expect(store.putArtifact({ ...descriptor, source_revision: 'b'.repeat(64) }, bytes)).resolves.toBeUndefined()
+  await expect(store.putArtifact({ ...descriptor, source_revision: 'b'.repeat(64) }, bytes)).resolves.toEqual({ stored: false })
   await expect(store.putArtifact({ ...descriptor, size: bytes.length + 1 }, bytes)).rejects.toThrow('size')
   await expect(store.putArtifact({ ...descriptor, size: MAX_SKILL_ARTIFACT_COMPRESSED_BYTES + 1 }, bytes))
     .rejects.toThrow('compressed size limit')
@@ -57,6 +63,102 @@ async function exerciseStore(store: LocalSkillRegistryStore | BlobSkillRegistryS
   expect(await store.getImage(image.digest)).toEqual({ descriptor: image, bytes: imageBytes })
   return digest
 }
+
+function memoryBackend() {
+  const objects = new Map<string, Uint8Array>()
+  const gets = new Map<string, number>()
+  const deletes: string[] = []
+  const behavior = { failPuts: 0, landDespiteError: false, failDelete: '' }
+  const backend: BlobBackend = {
+    async get(key) {
+      gets.set(key, (gets.get(key) ?? 0) + 1)
+      return objects.get(key)?.slice() ?? null
+    },
+    async put(key, value) {
+      if (behavior.failPuts > 0) {
+        behavior.failPuts--
+        if (behavior.landDespiteError) objects.set(key, value.slice())
+        throw new IndeterminateRemoteMutationError(`S3 PUT outcome is unknown: ${key}`)
+      }
+      objects.set(key, value.slice())
+    },
+    async delete(key) {
+      deletes.push(key)
+      if (behavior.failDelete === key) throw new Error(`delete failed: ${key}`)
+      objects.delete(key)
+    },
+    async list(prefix) {
+      return [...objects.keys()].filter((key) => key.startsWith(prefix)).sort()
+    },
+  }
+  return { backend, deletes, gets, behavior }
+}
+
+describe('Immutable digest-addressed uploads', () => {
+  test('settles unknown outcomes, retries transient failures, and skips stored archives', async () => {
+    const { backend, deletes, gets, behavior } = memoryBackend()
+    const store = new BlobSkillRegistryStore(backend)
+    const bytes = new TextEncoder().encode('artifact-retry')
+    const digest = await sha256(bytes)
+    const descriptor: SkillArtifactDescriptor = {
+      registry_id: 'example', package_id: 'package', skill_id: 'skill', source_revision: 'a'.repeat(64),
+      format: 'memoh_skill_v1', digest, size: bytes.length, filename: 'skill.tar.gz',
+      content_type: 'application/gzip', created_at: '2026-01-01T00:00:00.000Z',
+    }
+
+    // The PUT reported an unknown outcome but actually landed: reading the key
+    // back settles it without another write.
+    behavior.failPuts = 1
+    behavior.landDespiteError = true
+    await expect(store.putArtifact(descriptor, bytes)).resolves.toEqual({ stored: true })
+    expect((await store.getArtifact(digest))?.bytes).toEqual(bytes)
+
+    // Steady state: matching metadata short-circuits the call and the archive
+    // is never downloaded again.
+    const archiveReads = gets.get(`skill-artifacts/${digest}.tar.gz`) ?? 0
+    await expect(store.putArtifact(descriptor, bytes)).resolves.toEqual({ stored: false })
+    expect(gets.get(`skill-artifacts/${digest}.tar.gz`) ?? 0).toBe(archiveReads)
+
+    // GC removes the metadata commit marker before the archive. If deleting
+    // the archive fails, the next refresh validates the orphaned bytes and
+    // restores metadata instead of mistaking a missing archive for a hit.
+    const metadataKey = `skill-artifacts/${digest}.json`
+    const archiveKey = `skill-artifacts/${digest}.tar.gz`
+    behavior.failDelete = archiveKey
+    await expect(store.deleteArtifact(digest)).rejects.toThrow('delete failed')
+    expect(deletes.slice(-2)).toEqual([metadataKey, archiveKey])
+    behavior.failDelete = ''
+    await expect(store.putArtifact(descriptor, bytes)).resolves.toEqual({ stored: false })
+    expect((await store.getArtifact(digest))?.bytes).toEqual(bytes)
+
+    // A transient failure that did not land is retried and succeeds.
+    const secondBytes = new TextEncoder().encode('artifact-retry-second')
+    const secondDescriptor: SkillArtifactDescriptor = {
+      ...descriptor, digest: await sha256(secondBytes), size: secondBytes.length,
+    }
+    behavior.failPuts = 1
+    behavior.landDespiteError = false
+    await expect(store.putArtifact(secondDescriptor, secondBytes)).resolves.toEqual({ stored: true })
+
+    // A failure that never lands surfaces a PLAIN error after retries: a late
+    // duplicate PUT of identical bytes is harmless, so the writer lease must
+    // not be poisoned by Artifact or image uploads.
+    const imageBytes = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><title>retry</title></svg>')
+    const image: SkillImageAsset = {
+      digest: await sha256(imageBytes), size: imageBytes.length, content_type: 'image/svg+xml',
+    }
+    behavior.failPuts = Number.POSITIVE_INFINITY
+    const failure = await store.putImage(image, imageBytes).catch((error) => error)
+    expect(failure).toBeInstanceOf(Error)
+    expect(failure).not.toBeInstanceOf(IndeterminateRemoteMutationError)
+    expect(String(failure)).toContain('upload did not complete')
+
+    // Once the network recovers, the same upload succeeds cleanly.
+    behavior.failPuts = 0
+    await expect(store.putImage(image, imageBytes)).resolves.toEqual({ stored: true })
+    expect((await store.getImage(image.digest))?.bytes).toEqual(imageBytes)
+  }, 15_000)
+})
 
 describe('SkillRegistryStore contract', () => {
   test('Local store publishes catalogs before pointers and stores content-addressed artifacts', async () => {
@@ -122,24 +224,5 @@ describe('SkillRegistryStore contract', () => {
     if (!(corrupt?.body instanceof ReadableStream)) throw new Error('Expected a corrupt R2 Artifact stream')
     await expect(new Response(corrupt.body).arrayBuffer()).rejects.toThrow('corrupt')
 
-    const firstLease = await store.acquireWriterLease({ leaseMs: 10_000, heartbeatMs: 1_000 })
-    expect(firstLease.owner).toMatch(/^[a-f0-9-]{36}$/)
-    await expect(store.acquireWriterLease({ leaseMs: 10_000, heartbeatMs: 1_000 })).rejects.toThrow('already held')
-    await expect(store.breakWriterLease(firstLease.owner)).rejects.toThrow('has not expired')
-    await firstLease.release()
-    const secondLease = await store.acquireWriterLease({ leaseMs: 10_000, heartbeatMs: 1_000 })
-    secondLease.assertActive()
-    await secondLease.release()
-
-    const leaseKey = 'skill-registry-maintenance/writer-lease.json'
-    const staleOwner = '00000000-0000-4000-8000-000000000000'
-    objects.set(leaseKey, new TextEncoder().encode(JSON.stringify({
-      owner: staleOwner, renewed_at: '2020-01-01T00:00:00.000Z', expires_at: '2020-01-01T00:00:01.000Z',
-    })))
-    versions.set(leaseKey, `version-${++version}`)
-    await expect(store.acquireWriterLease({ leaseMs: 10_000, heartbeatMs: 1_000 })).rejects.toThrow('registry:unlock')
-    await store.breakWriterLease(staleOwner)
-    const recoveredLease = await store.acquireWriterLease({ leaseMs: 10_000, heartbeatMs: 1_000 })
-    await recoveredLease.release()
   })
 })

@@ -52,7 +52,7 @@ switch (command) {
       const value = option(`--${name}`)
       if (value) query.set(name, value)
     }
-    console.log(JSON.stringify(await json(`${base}/api/catalog/skills?${query}`), null, 2))
+    console.log(JSON.stringify(await json(`${base}/api/skills?${query}`), null, 2))
     break
   }
   case 'inspect':

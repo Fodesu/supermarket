@@ -1,9 +1,58 @@
 import path from 'node:path'
 import type { SkillRegistryDefinition } from '../server/types/skill-registry'
 import { IndeterminateRemoteMutationError, type SkillRegistryStore } from '../server/utils/skill-registry-store'
-import { isSkillRegistryRefreshDue, loadSkillRegistryDefinitionResults, SkillRegistryRefresher } from './skill-registry/refresher'
+import {
+  isSkillRegistryRefreshDue,
+  loadSkillRegistryDefinitionResults,
+  SkillRegistryRefresher,
+  type SkillRegistryRefreshProgress,
+} from './skill-registry/refresher'
 import { createSkillRegistryStore } from './skill-registry/store'
 import { acquireRegistryWriterLock } from './skill-registry/writer-lock'
+
+export function createSkillRegistryProgressRenderer(
+  write: (text: string) => void = (text) => process.stderr.write(text),
+  interactive = process.stderr.isTTY === true,
+) {
+  let openLine = false
+  const line = (text: string) => {
+    if (openLine) {
+      write('\n')
+      openLine = false
+    }
+    write(`${text}\n`)
+  }
+  return (progress: SkillRegistryRefreshProgress) => {
+    switch (progress.type) {
+      case 'source':
+        line(`${progress.registry}: fetching source`)
+        break
+      case 'source_unchanged':
+        line(`${progress.registry}: source unchanged at ${progress.revision.slice(0, 12)}, skipping`)
+        break
+      case 'source_ready':
+        line(`${progress.registry}: source revision ${progress.revision.slice(0, 12)}`)
+        break
+      case 'scanned':
+        line(`${progress.registry}: packaging ${progress.skills} Skills (${progress.diagnostics} diagnostics)`)
+        break
+      case 'skill': {
+        const text = `${progress.registry}: [${progress.index}/${progress.total}] ${progress.package_id}/${progress.skill_id}${progress.uploaded ? ' (uploaded)' : ''}`
+        if (interactive) {
+          write(`\r\u001B[2K${text}`)
+          openLine = progress.index !== progress.total
+          if (!openLine) write('\n')
+        } else if (progress.uploaded || progress.index % 25 === 0 || progress.index === progress.total) {
+          line(text)
+        }
+        break
+      }
+      case 'publishing':
+        line(`${progress.registry}: publishing revision ${progress.revision.slice(0, 12)}`)
+        break
+    }
+  }
+}
 
 interface RefreshRunner {
   refresh(
@@ -62,7 +111,7 @@ if (import.meta.main) {
 
   const lockPath = process.env.REGISTRY_REFRESH_LOCK_DIR || path.join(projectRoot, '.data/registry-refresh.lock')
   const store = createSkillRegistryStore(projectRoot)
-  const writerLock = await acquireRegistryWriterLock(store, lockPath, `registry:refresh pid=${process.pid}`)
+  const writerLock = await acquireRegistryWriterLock(lockPath)
   try {
     const loaded = await loadSkillRegistryDefinitionResults(projectRoot)
     const selected = registryID ? loaded.definitions.filter((definition) => definition.id === registryID) : loaded.definitions
@@ -72,7 +121,9 @@ if (import.meta.main) {
     if (registryID && selected.length === 0 && definitionFailures.length === 0) throw new Error(`Registry not found: ${registryID}`)
     const outcome = await runSkillRegistryRefreshes({
       definitions: selected, store,
-      refresher: new SkillRegistryRefresher(store, projectRoot, () => writerLock.assertActive()),
+      refresher: new SkillRegistryRefresher(
+        store, projectRoot, () => writerLock.assertActive(), createSkillRegistryProgressRenderer(),
+      ),
       due: process.argv.includes('--due'), force: process.argv.includes('--force'),
       package: packageID, skill: skillID,
     })
@@ -90,13 +141,6 @@ if (import.meta.main) {
     const indeterminate = failures.find((failure) => failure.error instanceof IndeterminateRemoteMutationError)
     if (indeterminate) throw indeterminate.error
     if (failures.length) process.exitCode = 1
-  } catch (error) {
-    if (error instanceof IndeterminateRemoteMutationError) {
-      const owner = writerLock.owner
-      writerLock.abandon()
-      throw new Error(`${error.message}; writer lease ${owner} remains active until it expires, the remote request is confirmed finished, and registry:unlock -- --owner ${owner} --confirm-owner-stopped is run`, { cause: error })
-    }
-    throw error
   } finally {
     await writerLock.release()
   }

@@ -31,13 +31,6 @@ export interface BlobBackend {
   putConditional?(key: string, value: Uint8Array, expectedVersion: string | null): Promise<string | null>
 }
 
-export interface SkillRegistryWriterLease {
-  owner: string
-  assertActive(): void
-  abandon(): void
-  release(): Promise<void>
-}
-
 export interface SkillRegistryStore {
   listRegistryIDs(): Promise<string[]>
   getDefinition(registryID: string): Promise<SkillRegistryDefinition | null>
@@ -46,20 +39,18 @@ export interface SkillRegistryStore {
   publishCatalog(catalog: SkillRegistryCatalog, assertWriterLease?: () => void): Promise<void>
   getStatus(registryID: string): Promise<SkillRegistryStatus | null>
   putStatus(status: SkillRegistryStatus): Promise<void>
-  putArtifact(descriptor: SkillArtifactDescriptor, bytes: Uint8Array): Promise<void>
+  putArtifact(descriptor: SkillArtifactDescriptor, bytes: Uint8Array): Promise<{ stored: boolean }>
   getArtifact(digest: string): Promise<{ descriptor: SkillArtifactBlob; bytes: Uint8Array } | null>
   getArtifactStream?(digest: string): Promise<{
     descriptor: SkillArtifactBlob
     body: ReadableStream<Uint8Array> | Uint8Array
   } | null>
-  putImage(descriptor: SkillImageAsset, bytes: Uint8Array): Promise<void>
+  putImage(descriptor: SkillImageAsset, bytes: Uint8Array): Promise<{ stored: boolean }>
   getImage(digest: string): Promise<{ descriptor: SkillImageAsset; bytes: Uint8Array } | null>
   getImageStream?(digest: string): Promise<{
     descriptor: SkillImageAsset
     body: ReadableStream<Uint8Array> | Uint8Array
   } | null>
-  acquireWriterLease?(options?: { leaseMs?: number; heartbeatMs?: number; holder?: string }): Promise<SkillRegistryWriterLease>
-  breakWriterLease?(owner: string): Promise<void>
   listCatalogRevisions?(registryID: string): Promise<SkillRegistryCatalog[]>
   deleteCatalogRevision?(registryID: string, revision: string): Promise<void>
   listArtifactDigests?(): Promise<string[]>
@@ -75,20 +66,6 @@ function assertDigest(value: string): string {
 
 function jsonBytes(value: unknown): Uint8Array {
   return encoder.encode(`${JSON.stringify(value, null, 2)}\n`)
-}
-
-function parseLease(value: Uint8Array) {
-  const lease = JSON.parse(decoder.decode(value)) as Record<string, unknown>
-  const owner = typeof lease.owner === 'string' ? lease.owner : ''
-  const expiresAt = typeof lease.expires_at === 'string' ? Date.parse(lease.expires_at) : Number.NaN
-  if (!owner || !Number.isFinite(expiresAt)) throw new Error('Stored Registry writer lease is malformed')
-  return {
-    owner,
-    holder: typeof lease.holder === 'string' ? lease.holder : undefined,
-    renewedAt: typeof lease.renewed_at === 'string' ? lease.renewed_at : undefined,
-    expiresAt,
-    released: typeof lease.released_at === 'string',
-  }
 }
 
 function validateArtifactBlob(descriptor: SkillArtifactBlob, digest: string) {
@@ -169,133 +146,6 @@ export async function sha256(value: Uint8Array | string): Promise<string> {
 
 export class BlobSkillRegistryStore implements SkillRegistryStore {
   constructor(private readonly backend: BlobBackend) {}
-
-  async acquireWriterLease(options: { leaseMs?: number; heartbeatMs?: number; holder?: string } = {}) {
-    if (!this.backend.getVersioned || !this.backend.putConditional) {
-      throw new Error('Registry Store backend does not support distributed writer leases')
-    }
-    const leaseMs = options.leaseMs ?? 15 * 60 * 1000
-    const heartbeatMs = options.heartbeatMs ?? Math.min(30_000, Math.max(1_000, Math.floor(leaseMs / 3)))
-    if (!Number.isFinite(leaseMs) || leaseMs < 10_000) throw new Error('Registry writer lease must be at least 10000ms')
-    if (!Number.isFinite(heartbeatMs) || heartbeatMs < 1_000 || heartbeatMs >= leaseMs / 2) {
-      throw new Error('Registry writer lease heartbeat must be at least 1000ms and less than half the lease duration')
-    }
-
-    const key = 'skill-registry-maintenance/writer-lease.json'
-    const backend = this.backend
-    const owner = crypto.randomUUID()
-    const holder = options.holder?.slice(0, 200)
-    const acquiredAt = new Date().toISOString()
-    let version: string | undefined
-    let expiresAt = 0
-    try {
-      for (let attempt = 0; attempt < 8 && !version; attempt++) {
-        const current = await backend.getVersioned!(key)
-        const now = Date.now()
-        if (current) {
-          const lease = parseLease(current.value)
-          if (!lease.released) {
-            const detail = [lease.holder, lease.renewedAt].filter(Boolean).join(', ')
-            throw new Error(`Registry writer lease is already held by ${lease.owner}${detail ? ` (${detail})` : ''}; confirm the owner has stopped before using registry:unlock`)
-          }
-        }
-        expiresAt = now + leaseMs
-        version = await backend.putConditional!(key, jsonBytes({
-          owner, holder, acquired_at: acquiredAt, renewed_at: new Date(now).toISOString(),
-          expires_at: new Date(expiresAt).toISOString(),
-        }), current?.version ?? null) ?? undefined
-      }
-    } catch (error) {
-      if (error instanceof IndeterminateRemoteMutationError) {
-        throw new IndeterminateRemoteMutationError(
-          `${error.message}; writer lease owner ${owner} may need registry:unlock after the request is confirmed finished`,
-          { cause: error },
-        )
-      }
-      throw error
-    }
-    if (!version) throw new Error('Could not acquire Registry writer lease')
-
-    let released = false
-    let lost: Error | undefined
-    let renewal = Promise.resolve()
-    const renew = async () => {
-      if (released || lost) return
-      const now = Date.now()
-      const nextExpiresAt = now + leaseMs
-      const nextVersion = await backend.putConditional!(key, jsonBytes({
-        owner, holder, acquired_at: acquiredAt, renewed_at: new Date(now).toISOString(),
-        expires_at: new Date(nextExpiresAt).toISOString(),
-      }), version!)
-      if (!nextVersion) throw new Error('Registry writer lease was lost during renewal')
-      version = nextVersion
-      expiresAt = nextExpiresAt
-    }
-    const heartbeat = setInterval(() => {
-      renewal = renewal.then(renew).catch((error) => {
-        lost = error instanceof IndeterminateRemoteMutationError
-          ? new IndeterminateRemoteMutationError(`${error.message}; writer lease owner ${owner}`, { cause: error })
-          : error instanceof Error ? error : new Error(String(error))
-      })
-    }, heartbeatMs)
-    heartbeat.unref?.()
-
-    return {
-      owner,
-      assertActive() {
-        if (lost) throw lost
-        if (released) throw new Error('Registry writer lease has been released')
-        if (Date.now() + heartbeatMs >= expiresAt) throw new Error('Registry writer lease is too close to expiration')
-      },
-      abandon() {
-        if (released) return
-        released = true
-        clearInterval(heartbeat)
-      },
-      async release() {
-        if (released) return
-        released = true
-        clearInterval(heartbeat)
-        await renewal
-        if (lost) throw lost
-        const now = new Date().toISOString()
-        let releasedVersion: string | null
-        try {
-          releasedVersion = await backend.putConditional!(key, jsonBytes({
-            owner, holder, acquired_at: acquiredAt, renewed_at: now, expires_at: now, released_at: now,
-          }), version!)
-        } catch (error) {
-          if (error instanceof IndeterminateRemoteMutationError) {
-            throw new IndeterminateRemoteMutationError(`${error.message}; writer lease owner ${owner}`, { cause: error })
-          }
-          throw error
-        }
-        if (!releasedVersion) throw new Error('Registry writer lease was lost before release')
-      },
-    } satisfies SkillRegistryWriterLease
-  }
-
-  async breakWriterLease(owner: string) {
-    if (!this.backend.getVersioned || !this.backend.putConditional) {
-      throw new Error('Registry Store backend does not support distributed writer leases')
-    }
-    if (!/^[a-f0-9-]{36}$/.test(owner)) throw new Error('Invalid Registry writer lease owner')
-    const key = 'skill-registry-maintenance/writer-lease.json'
-    const current = await this.backend.getVersioned(key)
-    if (!current) throw new Error('Registry writer lease does not exist')
-    const lease = parseLease(current.value)
-    if (lease.owner !== owner) throw new Error(`Registry writer lease owner changed to ${lease.owner}`)
-    if (lease.released) return
-    if (lease.expiresAt > Date.now()) {
-      throw new Error(`Registry writer lease ${owner} has not expired; stop the owner and wait until expires_at before unlocking`)
-    }
-    const now = new Date().toISOString()
-    const releasedVersion = await this.backend.putConditional(key, jsonBytes({
-      owner, holder: lease.holder, renewed_at: now, expires_at: now, released_at: now,
-      manually_released: true,
-    }), current.version)
-    if (!releasedVersion) throw new Error('Registry writer lease changed while it was being unlocked')
-  }
 
   async listRegistryIDs(): Promise<string[]> {
     if (this.backend.listPrefixes) {
@@ -400,6 +250,29 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     await this.backend.put(`skill-registries/${id}/status.json`, jsonBytes(status))
   }
 
+  // Uploads a digest-addressed object. These keys are immutable: a duplicate or
+  // late-landing PUT writes identical bytes, so an unknown outcome is safe to
+  // settle by reading the key back, and safe to retry while it is still absent.
+  // Exhausted retries throw a plain Error on purpose — unlike mutable pointer
+  // writes, an in-flight PUT that lands later cannot corrupt anything, so the
+  // writer lease does not need to survive this failure for safety.
+  private async putImmutableObject(key: string, bytes: Uint8Array, label: string) {
+    const expected = await sha256(bytes)
+    let lastError: unknown
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      if (attempt > 1) await new Promise((resolve) => setTimeout(resolve, attempt === 2 ? 500 : 1_500))
+      try {
+        await this.backend.put(key, bytes)
+        return
+      } catch (error) {
+        lastError = error
+        const stored = await this.backend.get(key).catch(() => null)
+        if (stored && stored.length === bytes.length && await sha256(stored) === expected) return
+      }
+    }
+    throw new Error(`${label} upload did not complete: ${key}`, { cause: lastError })
+  }
+
   async putArtifact(descriptor: SkillArtifactDescriptor, bytes: Uint8Array) {
     assertRegistryID(descriptor.registry_id, 'registry ID')
     assertRegistryID(descriptor.package_id, 'package ID')
@@ -417,17 +290,28 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     }
     const metadataKey = `skill-artifacts/${descriptor.digest}.json`
     const archiveKey = `skill-artifacts/${descriptor.digest}.tar.gz`
-    const [storedMetadata, storedArchive] = await Promise.all([
-      this.backend.get(metadataKey), this.backend.get(archiveKey),
-    ])
-    if (storedMetadata && decoder.decode(storedMetadata) !== decoder.decode(jsonBytes(blob))) {
-      throw new Error(`Artifact ${descriptor.digest} metadata is immutable`)
+    const metadata = jsonBytes(blob)
+    const storedMetadata = await this.backend.get(metadataKey)
+    if (storedMetadata) {
+      if (decoder.decode(storedMetadata) !== decoder.decode(metadata)) {
+        throw new Error(`Artifact ${descriptor.digest} metadata is immutable`)
+      }
+      // Metadata is only written after its archive, both keys embed the digest,
+      // and every read path re-verifies content hashes — so a matching metadata
+      // object proves the archive is already stored. Skipping the archive read
+      // keeps steady-state refreshes from re-downloading every Artifact.
+      return { stored: false }
     }
-    if (storedArchive && await sha256(storedArchive) !== descriptor.digest) {
-      throw new Error(`Artifact ${descriptor.digest} content is immutable`)
+    const storedArchive = await this.backend.get(archiveKey)
+    if (storedArchive) {
+      if (await sha256(storedArchive) !== descriptor.digest) {
+        throw new Error(`Artifact ${descriptor.digest} content is immutable`)
+      }
+    } else {
+      await this.putImmutableObject(archiveKey, bytes, 'Artifact')
     }
-    if (!storedArchive) await this.backend.put(archiveKey, bytes)
-    if (!storedMetadata) await this.backend.put(metadataKey, jsonBytes(blob))
+    await this.putImmutableObject(metadataKey, metadata, 'Artifact metadata')
+    return { stored: !storedArchive }
   }
 
   async listArtifactDigests() {
@@ -440,10 +324,11 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
 
   async deleteArtifact(digest: string) {
     const value = assertDigest(digest)
-    await Promise.all([
-      this.backend.delete(`skill-artifacts/${value}.json`),
-      this.backend.delete(`skill-artifacts/${value}.tar.gz`),
-    ])
+    // Refresh uses metadata as the committed marker for the archive. Remove
+    // that marker first so an interrupted GC can only leave an unreferenced
+    // archive behind, never metadata that points to a missing archive.
+    await this.backend.delete(`skill-artifacts/${value}.json`)
+    await this.backend.delete(`skill-artifacts/${value}.tar.gz`)
   }
 
   async getArtifact(digest: string) {
@@ -485,16 +370,23 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     }
     const metadataKey = `skill-images/${digest}.json`
     const imageKey = `skill-images/${digest}`
-    const [storedMetadata, storedImage] = await Promise.all([
-      this.backend.get(metadataKey), this.backend.get(imageKey),
-    ])
     const metadata = jsonBytes(descriptor)
-    if (storedMetadata && decoder.decode(storedMetadata) !== decoder.decode(metadata)) {
-      throw new Error(`Skill image ${digest} metadata is immutable`)
+    const storedMetadata = await this.backend.get(metadataKey)
+    if (storedMetadata) {
+      if (decoder.decode(storedMetadata) !== decoder.decode(metadata)) {
+        throw new Error(`Skill image ${digest} metadata is immutable`)
+      }
+      // Same ordering invariant as putArtifact: metadata follows the image.
+      return { stored: false }
     }
-    if (storedImage && await sha256(storedImage) !== digest) throw new Error(`Skill image ${digest} content is immutable`)
-    if (!storedImage) await this.backend.put(imageKey, bytes)
-    if (!storedMetadata) await this.backend.put(metadataKey, metadata)
+    const storedImage = await this.backend.get(imageKey)
+    if (storedImage) {
+      if (await sha256(storedImage) !== digest) throw new Error(`Skill image ${digest} content is immutable`)
+    } else {
+      await this.putImmutableObject(imageKey, bytes, 'Skill image')
+    }
+    await this.putImmutableObject(metadataKey, metadata, 'Skill image metadata')
+    return { stored: !storedImage }
   }
 
   async getImage(digest: string) {
@@ -534,10 +426,8 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
 
   async deleteImage(digest: string) {
     const value = assertDigest(digest)
-    await Promise.all([
-      this.backend.delete(`skill-images/${value}.json`),
-      this.backend.delete(`skill-images/${value}`),
-    ])
+    await this.backend.delete(`skill-images/${value}.json`)
+    await this.backend.delete(`skill-images/${value}`)
   }
 }
 
