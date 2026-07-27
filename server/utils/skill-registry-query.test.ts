@@ -4,10 +4,10 @@ import { parseSkillRegistryQuery, requireSkillRegistryID } from './skill-registr
 describe('Skill Registry query parsing', () => {
   test('normalizes valid filters and pagination', () => {
     expect(parseSkillRegistryQuery({
-      registry: 'openai-api-curated', package: 'documents', category: 'Developer-Tools',
+      registry: 'openai', package: 'documents', category: 'Developer-Tools',
       os: 'LINUX', page: '2', limit: '50', sort: 'name',
     })).toEqual({
-      registry: 'openai-api-curated', q: undefined, package: 'documents', category: 'developer-tools',
+      registry: 'openai', q: undefined, package: 'documents', category: 'developer-tools',
       tag: undefined, os: 'linux', page: 2, limit: 50, sort: 'name',
     })
   })

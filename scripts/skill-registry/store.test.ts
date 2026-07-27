@@ -30,6 +30,18 @@ describe('Worker Registry blob backend', () => {
     expect(requests[1]?.headers.has('x-registry-writer-token')).toBeFalse()
   })
 
+  test('uses create-only writes for immutable objects', async () => {
+    const requests: Request[] = []
+    const backend = new WorkerR2BlobBackend('http://registry-r2', async (input, init) => {
+      requests.push(new Request(input, init))
+      return new Response(null, { status: 201, headers: { etag: 'created' } })
+    })
+    const key = `skill-artifacts/${'a'.repeat(64)}.json`
+
+    await expect(backend.putConditional(key, new Uint8Array(), null)).resolves.toBe('created')
+    expect(requests[0]?.headers.get('if-none-match')).toBe('*')
+  })
+
   test('rejects legacy direct S3 writer configuration', () => {
     process.env.R2_ACCOUNT_ID = 'account'
     expect(() => createSkillRegistryStore()).toThrow('Direct R2 S3 registry writers are not supported')

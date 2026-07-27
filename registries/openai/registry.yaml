@@ -1,6 +1,6 @@
 schema_version: "1"
-id: openai-api-curated
-name: OpenAI API Curated Skills
+id: openai
+name: OpenAi
 enabled: true
 priority: 100
 adapter: codex_marketplace_skills
