@@ -1,9 +1,5 @@
 import { Container, ContainerProxy, getContainer } from '@cloudflare/containers'
 import { DurableObject } from 'cloudflare:workers'
-import { garbageCollectSkillRegistries } from '../../scripts/skill-registry/gc'
-import type { SkillRegistryDefinition } from '../../server/types/skill-registry'
-import { BlobSkillRegistryStore, R2BlobBackend } from '../../server/utils/skill-registry-store'
-import { isRegistryGcDue } from './maintenance'
 
 interface WriterEnv {
   SKILL_REGISTRY_BUCKET: R2Bucket
@@ -20,14 +16,6 @@ interface ActiveLease {
   token: string
   owner: string
   etag: string
-}
-
-interface RegistryGcRun {
-  applied: boolean
-  skipped?: 'not_due' | 'refresh_active'
-  deleted_catalogs?: number
-  deleted_artifacts?: number
-  deleted_images?: number
 }
 
 const outputDecoder = new TextDecoder()
@@ -82,17 +70,12 @@ async function r2Mutation(request: Request, env: WriterEnv, key: string) {
     if (!object) return new Response(null, { status: 412 })
     return new Response(null, { status: 201, headers: { etag: object.httpEtag } })
   }
-  if (request.method === 'DELETE') {
-    await env.SKILL_REGISTRY_BUCKET.delete(key)
-    return new Response(null, { status: 204 })
-  }
   return new Response('Method not allowed', { status: 405 })
 }
 
 export class RegistryCoordinator extends DurableObject<WriterEnv> {
   private mutationChain = Promise.resolve()
   private activeRefresh: Promise<RefreshResult> | undefined
-  private activeGc: Promise<RegistryGcRun> | undefined
   private readonly leaseKey = 'skill-registry-maintenance/writer-lease.json'
 
   private async serialized<T>(operation: () => Promise<T>) {
@@ -133,59 +116,8 @@ export class RegistryCoordinator extends DurableObject<WriterEnv> {
     }
   }
 
-  async runScheduled(): Promise<{ refresh: RefreshResult; gc: RegistryGcRun }> {
-    const refresh = await this.refreshDue()
-    const gc = await this.garbageCollectIfDue()
-    return { refresh, gc }
-  }
-
-  async garbageCollectIfDue(): Promise<RegistryGcRun> {
-    if (this.activeRefresh) return { applied: false, skipped: 'refresh_active' }
-    if (this.activeGc) return this.activeGc
-    const lastRunAt = await this.ctx.storage.get<string>('last-gc-at')
-    if (!isRegistryGcDue(lastRunAt)) return { applied: false, skipped: 'not_due' }
-    const gc = this.runGarbageCollection()
-    this.activeGc = gc
-    try {
-      return await gc
-    } finally {
-      if (this.activeGc === gc) this.activeGc = undefined
-    }
-  }
-
-  private async runGarbageCollection(): Promise<RegistryGcRun> {
-    const token = crypto.randomUUID()
-    await this.serialized(() => this.acquireLease(token))
-    const heartbeat = this.startHeartbeat(token)
-    try {
-      const store = new BlobSkillRegistryStore(new R2BlobBackend(this.env.SKILL_REGISTRY_BUCKET))
-      const registryIDs = await store.listRegistryIDs()
-      const definitions = (await Promise.all(registryIDs.map((id) => store.getDefinition(id))))
-        .filter((value): value is SkillRegistryDefinition => value !== null)
-      const result = await garbageCollectSkillRegistries({
-        store,
-        definitions,
-        apply: true,
-        assertWriterLease: () => this.renewLease(token),
-      })
-      heartbeat.assertActive()
-      await this.ctx.storage.put('last-gc-at', new Date().toISOString())
-      return {
-        applied: true,
-        deleted_catalogs: result.registries.reduce((total, registry) => total + registry.deleted_revisions.length, 0),
-        deleted_artifacts: result.artifacts.deleted.length,
-        deleted_images: result.images.deleted.length,
-      }
-    } finally {
-      heartbeat.stop()
-      await this.serialized(async () => {
-        const activeLease = await this.ctx.storage.get<ActiveLease>('active-lease')
-        if (activeLease?.token === token) {
-          await this.ctx.storage.delete('active-lease')
-          await this.releaseLease(activeLease)
-        }
-      })
-    }
+  async runScheduled(): Promise<RefreshResult> {
+    return this.refreshDue()
   }
 
   private startHeartbeat(token: string) {
@@ -290,7 +222,10 @@ RegistryWriter.outboundByHost = {
       return new Response(object.body, { headers: { etag: object.httpEtag } })
     }
     if (request.method === 'PUT') {
-      const object = await env.SKILL_REGISTRY_BUCKET.put(key, request.body, { onlyIf: request.headers })
+      if (request.headers.get('if-none-match') !== '*') {
+        return new Response('Immutable Registry keys require If-None-Match: *', { status: 428 })
+      }
+      const object = await env.SKILL_REGISTRY_BUCKET.put(key, request.body, { onlyIf: { etagDoesNotMatch: '*' } })
       if (!object) return new Response(null, { status: 412 })
       return new Response(null, { status: 201, headers: { etag: object.httpEtag } })
     }
@@ -316,8 +251,7 @@ export default {
     try {
       const coordinator = env.REGISTRY_COORDINATOR.getByName('singleton')
       const result = await coordinator.runScheduled()
-      console.log(result.refresh.output || 'Registry refresh completed without output')
-      console.log(JSON.stringify({ registry_gc: result.gc }))
+      console.log(result.output || 'Registry refresh completed without output')
     } catch (error) {
       console.error('Registry scheduled run failed', error)
       throw error

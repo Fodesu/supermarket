@@ -145,16 +145,16 @@ bun run registry:refresh
 bun run registry:refresh -- --due
 
 # Refresh one Registry
-bun run registry:refresh -- --registry openai-api-curated
+bun run registry:refresh -- --registry openai
 
 # Refresh one Package
 bun run registry:refresh -- \
-  --registry openai-api-curated \
+  --registry openai \
   --package documents
 
 # Refresh one Skill
 bun run registry:refresh -- \
-  --registry openai-api-curated \
+  --registry openai \
   --package documents \
   --skill pdf
 
@@ -166,7 +166,7 @@ Use `registry:refresh -- --due` for local development. In production, the deploy
 
 The local refresher writes to `.data/registries`. Production refreshes run only through the deployed Cloudflare Writer; direct S3 writer credentials are intentionally unsupported. The Writer publishes every immutable object before moving a Registry's `current.json` pointer, so a failed refresh leaves the last complete Catalog available.
 
-Local garbage collection is a dry run unless `--apply` is present. Production garbage collection runs daily through the Coordinator:
+Local garbage collection is a dry run unless `--apply` is present. It is a local maintenance command; the deployed Writer only refreshes Registry content.
 
 ```bash
 bun run registry:gc
@@ -180,15 +180,15 @@ bun run registry:client -- list \
   --base http://127.0.0.1:5173
 
 bun run registry:client -- search pdf \
-  --registry openai-api-curated \
+  --registry openai \
   --base http://127.0.0.1:5173
 
 bun run registry:client -- inspect \
-  openai-api-curated documents pdf \
+  openai documents pdf \
   --base http://127.0.0.1:5173
 
 bun run registry:client -- install \
-  openai-api-curated documents pdf \
+  openai documents pdf \
   --base http://127.0.0.1:5173 \
   --destination /tmp/supermarket-skills
 ```

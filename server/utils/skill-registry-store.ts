@@ -262,13 +262,18 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     for (let attempt = 1; attempt <= 3; attempt++) {
       if (attempt > 1) await new Promise((resolve) => setTimeout(resolve, attempt === 2 ? 500 : 1_500))
       try {
-        await this.backend.put(key, bytes)
-        return
+        if (this.backend.putConditional) {
+          const created = await this.backend.putConditional(key, bytes, null)
+          if (created) return
+        } else {
+          await this.backend.put(key, bytes)
+          return
+        }
       } catch (error) {
         lastError = error
-        const stored = await this.backend.get(key).catch(() => null)
-        if (stored && stored.length === bytes.length && await sha256(stored) === expected) return
       }
+      const stored = await this.backend.get(key).catch(() => null)
+      if (stored && stored.length === bytes.length && await sha256(stored) === expected) return
     }
     throw new Error(`${label} upload did not complete: ${key}`, { cause: lastError })
   }

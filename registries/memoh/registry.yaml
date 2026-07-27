@@ -1,6 +1,6 @@
 schema_version: "1"
 id: memoh
-name: Memoh Skills
+name: Memoh
 enabled: true
 priority: 1000
 adapter: skill_directory
