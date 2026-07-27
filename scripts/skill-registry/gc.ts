@@ -46,7 +46,7 @@ export async function garbageCollectSkillRegistries(input: {
   store: SkillRegistryStore
   definitions: SkillRegistryDefinition[]
   apply?: boolean
-  assertWriterLease?: () => void
+  assertWriterLease?: () => void | Promise<void>
 }): Promise<SkillRegistryGarbageCollectionResult> {
   requireMaintenanceStore(input.store)
   if (input.apply && !input.assertWriterLease) {
@@ -62,7 +62,7 @@ export async function garbageCollectSkillRegistries(input: {
   const registries: SkillRegistryGarbageCollectionResult['registries'] = []
 
   for (const registryID of registryIDs) {
-    assertWriterLease()
+    await assertWriterLease()
     const [catalogs, current] = await Promise.all([
       input.store.listCatalogRevisions(registryID), input.store.getCatalog(registryID),
     ])
@@ -118,23 +118,23 @@ export async function garbageCollectSkillRegistries(input: {
   if (input.apply) {
     for (const registry of registries) {
       for (const revision of registry.deleted_revisions) {
-        assertWriterLease()
+        await assertWriterLease()
         await input.store.deleteCatalogRevision(registry.registry_id, revision)
       }
     }
     for (const [registryID, expectedRevision] of currentRevisions) {
-      assertWriterLease()
+      await assertWriterLease()
       const live = await input.store.getCatalog(registryID)
       if (live?.revision !== expectedRevision) {
         throw new Error(`Current Catalog changed during garbage collection: ${registryID}`)
       }
     }
     for (const digest of deletedArtifacts) {
-      assertWriterLease()
+      await assertWriterLease()
       await input.store.deleteArtifact(digest)
     }
     for (const digest of deletedImages) {
-      assertWriterLease()
+      await assertWriterLease()
       await input.store.deleteImage(digest)
     }
   }
