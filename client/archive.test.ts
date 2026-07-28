@@ -2,23 +2,35 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { packTar } from 'modern-tar'
 import { createTar, gzip } from '#archive/tar'
-import { extractSkillArchive, gunzip, parseTarArchive, validateSkillArchive } from './archive'
+import { extractSkillArchive, parseGzipTarArchive, parseTarArchive, validateSkillArchive } from './archive'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
 
 describe('Skill Registry client archives', () => {
+  test('creates deterministic content-addressed archives', async () => {
+    const files = {
+      'SKILL.md': new TextEncoder().encode('---\nname: deterministic\n---\n'),
+      'scripts/run.sh': { bytes: new TextEncoder().encode('#!/bin/sh\n'), mode: 0o755 as const },
+    }
+    const first = await createTar(files, '')
+    const second = await createTar(files, '')
+    expect(second).toEqual(first)
+    expect(await gzip(second)).toEqual(await gzip(first))
+  })
+
   test('round-trips long USTAR paths and installs a namespaced Skill', async () => {
     const installID = 'openai--documents--pdf'
     const longPath = `references/${'nested/'.repeat(12)}guide.md`
-    const compressed = await gzip(createTar({
+    const compressed = await gzip(await createTar({
       'SKILL.md': new TextEncoder().encode('---\nname: pdf\n---\n'),
       [longPath]: new TextEncoder().encode('guide'),
       'references/note ': new TextEncoder().encode('spacing'),
       'scripts/run.sh': { bytes: new TextEncoder().encode('#!/bin/sh\n'), mode: 0o755 },
     }, ''))
-    const files = parseTarArchive(await gunzip(compressed))
+    const files = await parseGzipTarArchive(compressed)
     validateSkillArchive(files)
     expect(files.has('SKILL.md')).toBe(true)
     expect([...files.keys()].some((name) => name.startsWith(`${installID}/`))).toBe(false)
@@ -31,7 +43,7 @@ describe('Skill Registry client archives', () => {
   })
 
   test('uses install identity only to select the destination', async () => {
-    const files = parseTarArchive(createTar({
+    const files = await parseTarArchive(await createTar({
       'SKILL.md': new TextEncoder().encode('---\nname: shared\n---\n'),
     }, ''))
     const root = await mkdtemp(path.join(os.tmpdir(), 'skill-client-install-identity-'))
@@ -45,7 +57,7 @@ describe('Skill Registry client archives', () => {
   })
 
   test('rejects install identities that escape the destination', async () => {
-    const files = parseTarArchive(createTar({
+    const files = await parseTarArchive(await createTar({
       'SKILL.md': new TextEncoder().encode('---\nname: shared\n---\n'),
     }, ''))
     const root = await mkdtemp(path.join(os.tmpdir(), 'skill-client-install-escape-'))
@@ -56,20 +68,29 @@ describe('Skill Registry client archives', () => {
   })
 
   test('rejects traversal, unsupported entry types, conflicts and decompression bombs', async () => {
-    expect(() => createTar({ '../private': new Uint8Array() }, 'skill')).toThrow('Unsafe tar path')
-    expect(() => createTar({ 'references\\private': new Uint8Array() }, 'skill')).toThrow('Unsafe tar path')
-    const tar = createTar({ 'SKILL.md': new Uint8Array() }, '')
+    await expect(createTar({ '../private': new Uint8Array() }, 'skill')).rejects.toThrow('Unsafe tar path')
+    await expect(createTar({ 'references\\private': new Uint8Array() }, 'skill')).rejects.toThrow('Unsafe tar path')
+    const traversal = await packTar([{
+      header: { name: '../private', size: 1, type: 'file' },
+      body: new Uint8Array([1]),
+    }])
+    await expect(parseTarArchive(traversal)).rejects.toThrow('Unsafe archive path')
+    const symlink = await packTar([{
+      header: { name: 'link', size: 0, type: 'symlink', linkname: 'SKILL.md' },
+    }])
+    await expect(parseTarArchive(symlink)).rejects.toThrow('Unsupported archive entry type')
+    const tar = await createTar({ 'SKILL.md': new Uint8Array() }, '')
     tar[156] = 0x32
-    expect(() => parseTarArchive(tar)).toThrow(/checksum|entry type/)
-    const conflict = createTar({ 'file': new Uint8Array(), 'file/child': new Uint8Array() }, '')
-    expect(() => parseTarArchive(conflict)).toThrow('conflicting path')
+    await expect(parseTarArchive(tar)).rejects.toThrow(/checksum|entry type/i)
+    const conflict = await createTar({ 'file': new Uint8Array(), 'file/child': new Uint8Array() }, '')
+    await expect(parseTarArchive(conflict)).rejects.toThrow('conflicting path')
     const compressed = await gzip(new Uint8Array(1024))
-    await expect(gunzip(compressed, 100)).rejects.toThrow('decompression limit')
+    await expect(parseGzipTarArchive(compressed, 100)).rejects.toThrow('decompression limit')
   })
 
   test('serializes concurrent installs for the same identity', async () => {
     const installID = 'registry+package+skill'
-    const files = parseTarArchive(createTar({
+    const files = await parseTarArchive(await createTar({
       'SKILL.md': new TextEncoder().encode('---\nname: skill\n---\n'),
     }, ''))
     const root = await mkdtemp(path.join(os.tmpdir(), 'skill-client-concurrent-install-'))

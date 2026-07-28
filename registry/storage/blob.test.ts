@@ -34,7 +34,7 @@ function catalog(revision: string): SkillRegistryCatalog {
 async function exerciseStore(store: LocalSkillRegistryStore | BlobSkillRegistryStore) {
   const revision = 'a'.repeat(64)
   const readyState = {
-    schema_version: '2' as const, definition, current_snapshot: revision, current_summary: summarizeCurrentCatalog(catalog(revision)),
+    schema_version: '1' as const, definition, current_snapshot: revision, current_summary: summarizeCurrentCatalog(catalog(revision)),
     status: { state: 'ready' as const },
   }
   await store.publishSnapshot(catalog(revision), readyState)
@@ -197,8 +197,6 @@ describe('SkillRegistryStore contract', () => {
     const state = JSON.parse(await readFile(path.join(root, 'skill-registries/example/state.json'), 'utf8'))
     expect(state.current_snapshot).toBe('a'.repeat(64))
     expect(state.current_summary).toMatchObject({ revision: 'a'.repeat(64), skill_count: 0 })
-    await Bun.write(path.join(root, 'skill-registries/example/state.json'), JSON.stringify({ ...state, schema_version: '1' }))
-    await expect(store.getState('example')).rejects.toThrow('Invalid Registry state')
     await Bun.write(path.join(root, 'skill-registries/example/state.json'), JSON.stringify({ ...state, current_snapshot: '../invalid' }))
     await expect(store.getState('example')).rejects.toThrow('digest')
     await Bun.write(path.join(root, 'skill-registries/example/state.json'), JSON.stringify(state))

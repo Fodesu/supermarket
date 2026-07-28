@@ -27,7 +27,7 @@ export const MAX_REGISTRY_STATE_BYTES = 256 * 1024
 export const MAX_REGISTRY_SNAPSHOT_BYTES = 8 * 1024 * 1024
 
 function validateState(state: SkillRegistryState, id: string) {
-  if (state.schema_version !== '2' || state.definition?.id !== id || !state.status?.state) {
+  if (state.schema_version !== '1' || state.definition?.id !== id || !state.status?.state) {
     throw new Error(`Invalid Registry state: ${id}`)
   }
   if (!state.current_snapshot) {

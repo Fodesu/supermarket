@@ -116,7 +116,7 @@ export interface SkillRegistryStatus {
  * and refresh status.
  */
 export interface SkillRegistryState {
-  schema_version: '2'
+  schema_version: '1'
   definition: SkillRegistryDefinition
   current_snapshot?: string
   current_summary?: SkillRegistryCurrentSummary

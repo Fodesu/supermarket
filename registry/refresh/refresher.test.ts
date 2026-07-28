@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { gunzip, parseTarArchive } from '../../client/archive'
+import { parseGzipTarArchive } from '../../client/archive'
 import type { SkillRegistryDefinition } from '../types'
 import { LocalSkillRegistryStore } from '../storage/local'
 import type { SkillRegistryStore } from '../storage/contracts'
@@ -68,7 +68,7 @@ describe('SkillRegistryRefresher', () => {
     for (const skill of initial!.skills) {
       const artifact = await store.getArtifact(skill.artifact.digest)
       expect(artifact).not.toBeNull()
-      const files = parseTarArchive(await gunzip(artifact!.bytes))
+      const files = await parseGzipTarArchive(artifact!.bytes)
       expect(files.has('SKILL.md')).toBe(true)
       expect([...files.keys()].some((name) => name.startsWith(`${skill.install_id}/`))).toBe(false)
     }

@@ -12,7 +12,7 @@ export default defineHandler(async (event) => {
   }
 
   const files = await getPluginFiles(id)
-  const tar = createTar(files, id)
+  const tar = await createTar(files, id)
   const compressed = await gzip(tar)
 
   setResponseHeader(event, 'content-type', 'application/gzip')

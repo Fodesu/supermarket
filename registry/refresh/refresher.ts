@@ -116,7 +116,7 @@ export class SkillRegistryRefresher {
         throw new Error(`Current Registry snapshot is missing: ${definition.id}/${currentSnapshot}`)
       }
       await this.store.putState({
-        schema_version: '2', definition: stateDefinition, current_snapshot: currentSnapshot,
+        schema_version: '1', definition: stateDefinition, current_snapshot: currentSnapshot,
         current_summary: activeCatalog ? summarizeCurrentCatalog(activeCatalog) : undefined, status,
       })
     }
@@ -250,7 +250,7 @@ export class SkillRegistryRefresher {
       this.onProgress({ type: 'publishing', registry: definition.id, revision })
       this.assertWriterActive()
       await this.store.publishSnapshot(catalog, {
-        schema_version: '2', definition, current_snapshot: revision, current_summary: summarizeCurrentCatalog(catalog),
+        schema_version: '1', definition, current_snapshot: revision, current_summary: summarizeCurrentCatalog(catalog),
         status: {
           state: completed.state, last_attempt_at: attemptedAt, last_success_at: succeededAt,
         },

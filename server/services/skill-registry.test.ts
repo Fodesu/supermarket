@@ -37,13 +37,13 @@ describe('Skill Registry loader', () => {
       source_revision: revision, synced_at: '2026-01-01T00:00:00.000Z', skills: [], diagnostics: [],
     }
     await store.publishSnapshot(catalog, {
-      schema_version: '2', definition, current_snapshot: revision, current_summary: summarizeCurrentCatalog(catalog),
+      schema_version: '1', definition, current_snapshot: revision, current_summary: summarizeCurrentCatalog(catalog),
       status: { state: 'ready' },
     })
     expect(await getEnabledSkillRegistryCatalogs(store)).toEqual([catalog])
 
     await store.putState({
-      schema_version: '2', definition: { ...definition, enabled: false }, current_snapshot: revision, current_summary: summarizeCurrentCatalog(catalog),
+      schema_version: '1', definition: { ...definition, enabled: false }, current_snapshot: revision, current_summary: summarizeCurrentCatalog(catalog),
       status: { state: 'disabled' },
     })
     expect(await getEnabledSkillRegistryCatalogs(store)).toEqual([])
@@ -63,7 +63,7 @@ describe('Skill Registry loader', () => {
       async getState() {
         stateReads++
         return {
-          schema_version: '2' as const,
+          schema_version: '1' as const,
           definition,
           current_snapshot: revision,
           current_summary: summarizeCurrentCatalog(catalog),
@@ -102,7 +102,7 @@ describe('Skill Registry loader', () => {
         activeStateReads--
         const current = id === 'example' ? firstCatalog : secondCatalog
         return {
-          schema_version: '2' as const,
+          schema_version: '1' as const,
           definition: current.registry,
           current_snapshot: current.revision,
           current_summary: summarizeCurrentCatalog(current),
