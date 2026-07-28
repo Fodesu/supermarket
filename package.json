@@ -3,7 +3,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "bun run registry:validate && vite build",
     "preview": "vite preview",
     "test": "bun test",
     "typecheck": "bun run types && bun run typecheck:server && bun run typecheck:app",

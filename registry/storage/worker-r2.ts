@@ -36,11 +36,18 @@ export class WorkerR2BlobBackend implements BlobBackend {
     return version
   }
   async list(prefix: string) {
+    return this.listObjects(prefix)
+  }
+  async listPrefixes(prefix: string) {
+    return this.listObjects(prefix, '/')
+  }
+  private async listObjects(prefix: string, delimiter?: string) {
     const keys: string[] = []
     let cursor: string | undefined
     do {
       const query = new URLSearchParams({ prefix })
       if (cursor) query.set('cursor', cursor)
+      if (delimiter) query.set('delimiter', delimiter)
       const response = await this.request(`list?${query}`, 'GET')
       if (!response.ok) throw new Error(`Worker R2 list failed (${response.status} ${response.statusText}): ${prefix}`)
       const page = await response.json() as { keys: string[]; cursor?: string }

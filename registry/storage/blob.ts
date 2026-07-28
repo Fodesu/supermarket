@@ -1,128 +1,59 @@
-import { createHash } from 'node:crypto'
 import type {
-  SkillArtifactDescriptor,
   SkillArtifactBlob,
+  SkillArtifactDescriptor,
   SkillImageAsset,
   SkillRegistryCatalog,
   SkillRegistryState,
 } from '../types'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../types'
-import { assertRegistryID, isSkillRuntimeOS, skillInstallID } from '../definition'
+import { assertRegistryID } from '../definition'
 import { sha256 } from '../digest'
 import {
   type BlobBackend,
   type SkillRegistryStore,
 } from './contracts'
+import {
+  assertDigest,
+  validateArtifactBlob,
+  validateImageAsset,
+  validateStoredCatalog,
+  verifiedAssetStream,
+} from './validation'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
-
-export function assertDigest(value: string): string {
-  if (!/^[a-f0-9]{64}$/.test(value)) throw new Error(`Invalid artifact digest: ${value}`)
-  return value
-}
+export const MAX_REGISTRY_STATE_BYTES = 256 * 1024
+export const MAX_REGISTRY_SNAPSHOT_BYTES = 8 * 1024 * 1024
 
 function jsonBytes(value: unknown): Uint8Array {
   return encoder.encode(`${JSON.stringify(value, null, 2)}\n`)
 }
 
-function validateArtifactBlob(descriptor: SkillArtifactBlob, digest: string) {
-  if (descriptor.format !== 'memoh_skill_v1' || descriptor.content_type !== 'application/gzip'
-    || descriptor.digest !== digest || !Number.isSafeInteger(descriptor.size) || descriptor.size < 0
-    || descriptor.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) {
-    throw new Error(`Invalid stored Artifact metadata: ${digest}`)
-  }
-}
-
-function validateImageAsset(descriptor: SkillImageAsset, digest: string) {
-  const supported = new Set(['image/svg+xml', 'image/png', 'image/jpeg', 'image/webp'])
-  if (!supported.has(descriptor.content_type) || descriptor.digest !== digest
-    || !Number.isSafeInteger(descriptor.size) || descriptor.size < 1 || descriptor.size > 512 * 1024) {
-    throw new Error(`Invalid stored Skill image metadata: ${digest}`)
-  }
-}
-
-export function validateStoredCatalog(
-  catalog: SkillRegistryCatalog,
-  registryID: string,
-  revision: string,
-  key: string,
-) {
-  if (!catalog || catalog.schema_version !== '1' || catalog.registry?.id !== registryID
-    || catalog.revision !== revision || !Array.isArray(catalog.skills) || !Array.isArray(catalog.diagnostics)) {
-    throw new Error(`Invalid stored Catalog: ${key}`)
-  }
-  for (const skill of catalog.skills) {
-    if (!skill || skill.schema_version !== '1' || skill.registry_id !== registryID || !skill.artifact) {
-      throw new Error(`Invalid stored Catalog Skill: ${key}`)
-    }
-    try {
-      assertRegistryID(skill.package_id, 'package ID')
-      assertRegistryID(skill.skill_id, 'skill ID')
-      if (skill.install_id !== skillInstallID(registryID, skill.package_id, skill.skill_id)) {
-        throw new Error('Catalog Skill install identity does not match its coordinates')
-      }
-      if (skill.runtime_requirements && (
-        !Array.isArray(skill.runtime_requirements.os)
-        || skill.runtime_requirements.os.length === 0
-        || skill.runtime_requirements.os.some((os) => !isSkillRuntimeOS(os))
-      )) {
-        throw new Error('Catalog Skill contains invalid runtime requirements')
-      }
-      assertDigest(skill.artifact.digest)
-      for (const image of [skill.icon?.card, skill.icon?.detail, skill.icon?.dark]) {
-        if (image) {
-          assertDigest(image.digest)
-          validateImageAsset(image, image.digest)
-        }
-      }
-    } catch {
-      throw new Error(`Invalid stored Catalog Artifact reference: ${key}`)
-    }
-  }
-}
-
-function verifiedAssetStream(
-  body: ReadableStream<Uint8Array>,
-  descriptor: { digest: string; size: number },
-  label = 'Artifact',
-) {
-  const hash = createHash('sha256')
-  let size = 0
-  return body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
-    transform(chunk, controller) {
-      size += chunk.length
-      if (size > descriptor.size) throw new Error(`Stored ${label} size is corrupt: ${descriptor.digest}`)
-      hash.update(chunk)
-      controller.enqueue(chunk)
-    },
-    flush() {
-      if (size !== descriptor.size || hash.digest('hex') !== descriptor.digest) {
-        throw new Error(`Stored ${label} content is corrupt: ${descriptor.digest}`)
-      }
-    },
-  }))
-}
-
-async function readJSON<T>(backend: BlobBackend, key: string): Promise<T | null> {
+async function readJSON<T>(backend: BlobBackend, key: string, maxBytes: number): Promise<T | null> {
   const value = await backend.get(key)
-  return value ? JSON.parse(decoder.decode(value)) as T : null
+  if (!value) return null
+  if (value.length > maxBytes) throw new Error(`Stored JSON object exceeds ${maxBytes} bytes: ${key}`)
+  return JSON.parse(decoder.decode(value)) as T
 }
 
 export class BlobSkillRegistryStore implements SkillRegistryStore {
   constructor(protected readonly backend: BlobBackend) {}
 
   async listRegistryIDs(): Promise<string[]> {
-    const keys = await this.backend.list('skill-registries/')
-    return [...new Set(keys.flatMap((key): string[] => {
-      const match = key.match(/^skill-registries\/([^/]+)\/state\.json$/)
+    const prefixes = await this.backend.listPrefixes('skill-registries/')
+    return [...new Set(prefixes.flatMap((prefix): string[] => {
+      const match = prefix.match(/^skill-registries\/([^/]+)\/$/)
       return match?.[1] ? [match[1]] : []
     }))].sort()
   }
 
   async getState(registryID: string) {
     const id = assertRegistryID(registryID, 'registry ID')
-    const state = await readJSON<SkillRegistryState>(this.backend, `skill-registries/${id}/state.json`)
+    const state = await readJSON<SkillRegistryState>(
+      this.backend,
+      `skill-registries/${id}/state.json`,
+      MAX_REGISTRY_STATE_BYTES,
+    )
     if (!state) return null
     if (state.schema_version !== '1' || state.definition?.id !== id || !state.status?.state) {
       throw new Error(`Invalid Registry state: ${id}`)
@@ -135,14 +66,16 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     const id = assertRegistryID(state.definition.id, 'registry ID')
     if (state.schema_version !== '1' || !state.status?.state) throw new Error(`Invalid Registry state: ${id}`)
     if (state.current_snapshot) assertDigest(state.current_snapshot)
-    await this.backend.put(`skill-registries/${id}/state.json`, jsonBytes(state))
+    const bytes = jsonBytes(state)
+    if (bytes.length > MAX_REGISTRY_STATE_BYTES) throw new Error(`Registry state exceeds ${MAX_REGISTRY_STATE_BYTES} bytes: ${id}`)
+    await this.backend.put(`skill-registries/${id}/state.json`, bytes)
   }
 
   async getSnapshot(registryID: string, revision: string) {
     const id = assertRegistryID(registryID, 'registry ID')
     const digest = assertDigest(revision)
     const key = `skill-registries/${id}/snapshots/${digest}.json`
-    const catalog = await readJSON<SkillRegistryCatalog>(this.backend, key)
+    const catalog = await readJSON<SkillRegistryCatalog>(this.backend, key, MAX_REGISTRY_SNAPSHOT_BYTES)
     if (!catalog) return null
     validateStoredCatalog(catalog, id, digest, key)
     return catalog
@@ -156,6 +89,9 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     }
     const key = `skill-registries/${id}/snapshots/${revision}.json`
     const bytes = jsonBytes(catalog)
+    if (bytes.length > MAX_REGISTRY_SNAPSHOT_BYTES) {
+      throw new Error(`Registry snapshot exceeds ${MAX_REGISTRY_SNAPSHOT_BYTES} bytes: ${id}/${revision}`)
+    }
     let existing = await this.backend.get(key)
     if (existing) {
       const stored = JSON.parse(decoder.decode(existing)) as SkillRegistryCatalog
@@ -192,7 +128,13 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
       try {
         if (this.backend.putConditional) {
           const created = await this.backend.putConditional(key, bytes, null)
-          return Boolean(created)
+          if (created) return true
+          const stored = await this.backend.get(key)
+          if (!stored) throw new Error(`${label} appeared but could not be read: ${key}`)
+          if (stored.length !== bytes.length || await sha256(stored) !== expected) {
+            throw new Error(`${label} is immutable: ${key}`)
+          }
+          return false
         } else {
           const stored = await this.backend.get(key)
           if (stored) {
@@ -205,6 +147,7 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
           return true
         }
       } catch (error) {
+        if (error instanceof Error && error.message === `${label} is immutable: ${key}`) throw error
         lastError = error
       }
       const stored = await this.backend.get(key).catch(() => null)
@@ -266,7 +209,14 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
       if (decoder.decode(storedMetadata) !== decoder.decode(metadata)) {
         throw new Error(`Skill image ${digest} metadata is immutable`)
       }
-      // Same ordering invariant as putArtifact: metadata follows the image.
+      const storedImage = await this.backend.get(imageKey)
+      if (!storedImage) {
+        await this.putImmutableObject(imageKey, bytes, 'Skill image')
+        return { stored: true }
+      }
+      if (storedImage.length !== bytes.length || await sha256(storedImage) !== digest) {
+        throw new Error(`Skill image is immutable: ${imageKey}`)
+      }
       return { stored: false }
     }
     const storedImage = await this.backend.get(imageKey)
@@ -282,7 +232,7 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
   async getImage(digest: string) {
     assertDigest(digest)
     const [descriptor, bytes] = await Promise.all([
-      readJSON<SkillImageAsset>(this.backend, `skill-images/${digest}.json`),
+      readJSON<SkillImageAsset>(this.backend, `skill-images/${digest}.json`, MAX_REGISTRY_STATE_BYTES),
       this.backend.get(`skill-images/${digest}`),
     ])
     if (!descriptor || !bytes) return null
@@ -293,7 +243,11 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
 
   async getImageStream(digest: string) {
     assertDigest(digest)
-    const descriptor = await readJSON<SkillImageAsset>(this.backend, `skill-images/${digest}.json`)
+    const descriptor = await readJSON<SkillImageAsset>(
+      this.backend,
+      `skill-images/${digest}.json`,
+      MAX_REGISTRY_STATE_BYTES,
+    )
     if (!descriptor) return null
     validateImageAsset(descriptor, digest)
     if (this.backend.getStream) {

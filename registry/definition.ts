@@ -10,6 +10,12 @@ export const supportedSkillRuntimeOS: SkillRuntimeOS[] = ['darwin', 'linux', 'wi
 const runtimeOS = new Set<string>(supportedSkillRuntimeOS)
 const safeIDPattern = /^[a-z0-9][a-z0-9._-]*$/
 
+function assertSupportedFields(data: Record<string, unknown>, fields: readonly string[], label: string) {
+  const allowed = new Set(fields)
+  const unsupported = Object.keys(data).find((field) => !allowed.has(field))
+  if (unsupported) throw new Error(`${label} contains unsupported field ${unsupported}`)
+}
+
 export function assertRegistryID(value: string, label = 'ID'): string {
   if (!safeIDPattern.test(value)) throw new Error(`Invalid ${label}: ${value}`)
   return value
@@ -124,15 +130,19 @@ export function parseSkillRegistryDefinition(raw: unknown): SkillRegistryDefinit
   }
 
   const sourceData = data.source
-  if (!sourceData || typeof sourceData !== 'object') throw new Error(`${id}: source is required`)
+  if (!sourceData || typeof sourceData !== 'object' || Array.isArray(sourceData)) {
+    throw new Error(`${id}: source must be an object`)
+  }
   let source: SkillRegistrySource
   if (sourceData.type === 'local') {
+    assertSupportedFields(sourceData, ['type', 'path'], `${id}: local source`)
     if (typeof sourceData.path !== 'string' || !sourceData.path.trim()) {
       throw new Error(`${id}: local source.path is required`)
     }
     const localPath = sourceData.path.trim()
     source = { type: 'local', path: localPath === '.' ? '' : safeRelativePath(localPath, 'local source path') }
   } else if (sourceData.type === 'git') {
+    assertSupportedFields(sourceData, ['type', 'url', 'ref', 'path'], `${id}: git source`)
     const url = String(sourceData.url ?? '').trim()
     if (!/^https:\/\//.test(url)) {
       throw new Error(`${id}: git source URL must use HTTPS`)

@@ -17,6 +17,7 @@ export interface BlobBackend {
   get(key: string): Promise<Uint8Array | null>
   put(key: string, value: Uint8Array): Promise<void>
   list(prefix: string): Promise<string[]>
+  listPrefixes(prefix: string): Promise<string[]>
   getStream?(key: string): Promise<{ body: ReadableStream<Uint8Array>; size?: number } | null>
   putConditional?(key: string, value: Uint8Array, expectedVersion: string | null): Promise<string | null>
 }

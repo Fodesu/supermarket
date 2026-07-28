@@ -9,38 +9,27 @@ import { searchCatalogSkills, summarizeSkillCategories } from '#registry/catalog
 import { R2BlobBackend } from '#registry/storage/r2'
 import { BlobSkillRegistryStore } from '#registry/storage/blob'
 import type { SkillRegistryStore } from '#registry/storage/contracts'
+import { RegistrySnapshotCache } from './registry-snapshot-cache'
 
 let localStore: Promise<SkillRegistryStore> | undefined
 const r2Stores = new WeakMap<object, SkillRegistryStore>()
-const snapshotCaches = new WeakMap<object, Map<string, Promise<SkillRegistryCatalog | null>>>()
-const maxCachedSnapshotsPerStore = 64
+const snapshotCaches = new WeakMap<object, RegistrySnapshotCache>()
 
 interface RuntimeEvent {
   req: { runtime?: unknown }
 }
 
-function cachedSnapshot(store: SkillRegistryStore, registryID: string, revision: string) {
+function snapshotCache(store: SkillRegistryStore) {
   let cache = snapshotCaches.get(store)
   if (!cache) {
-    cache = new Map()
+    cache = new RegistrySnapshotCache()
     snapshotCaches.set(store, cache)
   }
-  const key = `${registryID}/${revision}`
-  const existing = cache.get(key)
-  if (existing) {
-    cache.delete(key)
-    cache.set(key, existing)
-    return existing
-  }
-  const pending = store.getSnapshot(registryID, revision).catch((error) => {
-    cache!.delete(key)
-    throw error
-  })
-  cache.set(key, pending)
-  while (cache.size > maxCachedSnapshotsPerStore) {
-    cache.delete(cache.keys().next().value!)
-  }
-  return pending
+  return cache
+}
+
+function cachedSnapshot(store: SkillRegistryStore, registryID: string, revision: string) {
+  return snapshotCache(store).get(store, registryID, revision)
 }
 
 export async function getRuntimeSkillRegistryStore(event?: RuntimeEvent): Promise<SkillRegistryStore> {
@@ -67,14 +56,17 @@ export async function getEnabledSkillRegistryCatalogs(
   registryID?: string,
 ): Promise<SkillRegistryCatalog[]> {
   const ids = registryID ? [registryID] : await store.listRegistryIDs()
-  const values = await Promise.all(ids.map(async (id) => {
+  const values: SkillRegistryCatalog[] = []
+  const cache = snapshotCache(store)
+  for (const id of ids) {
     const state = await store.getState(id)
-    if (!state?.definition.enabled || !state.current_snapshot) return null
+    if (!state?.definition.enabled || !state.current_snapshot) continue
     const catalog = await cachedSnapshot(store, id, state.current_snapshot)
     if (!catalog) throw new Error(`Current Registry snapshot is missing: ${id}/${state.current_snapshot}`)
-    return catalog
-  }))
-  return values.filter((catalog): catalog is SkillRegistryCatalog => catalog !== null)
+    values.push(catalog)
+    cache.assertRequestBudget(values)
+  }
+  return values
 }
 
 function artifactResponse(descriptor: SkillArtifactDescriptor) {

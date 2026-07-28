@@ -60,8 +60,10 @@ interface RefreshRunner {
 
 export async function runSkillRegistryRefreshes(input: {
   definitions: SkillRegistryDefinition[]
-  store: Pick<SkillRegistryStore, 'getState'>
+  store: Pick<SkillRegistryStore, 'getState' | 'listRegistryIDs'>
   refresher: RefreshRunner
+  reconcileRemoved?: boolean
+  knownRegistryIDs?: Iterable<string>
   due?: boolean
   force?: boolean
   package?: string
@@ -86,6 +88,23 @@ export async function runSkillRegistryRefreshes(input: {
     } catch (error) {
       if (error instanceof IndeterminateRemoteMutationError) throw error
       failures.push({ registry: definition.id, error })
+    }
+  }
+  if (input.reconcileRemoved) {
+    const known = new Set(input.knownRegistryIDs ?? input.definitions.map((definition) => definition.id))
+    for (const registryID of await input.store.listRegistryIDs()) {
+      if (known.has(registryID)) continue
+      try {
+        const state = await input.store.getState(registryID)
+        if (!state || !state.definition.enabled || state.status.state === 'disabled') continue
+        results.push(await input.refresher.refresh({
+          ...state.definition,
+          enabled: false,
+        }, {}))
+      } catch (error) {
+        if (error instanceof IndeterminateRemoteMutationError) throw error
+        failures.push({ registry: registryID, error })
+      }
     }
   }
   return { results, failures }
@@ -128,6 +147,11 @@ if (import.meta.main) {
       ),
       due: process.argv.includes('--due'), force: process.argv.includes('--force'),
       package: packageID, skill: skillID,
+      reconcileRemoved: !registryID,
+      knownRegistryIDs: [
+        ...loaded.definitions.map((definition) => definition.id),
+        ...loaded.failures.map((failure) => failure.registry),
+      ],
     })
     for (const result of outcome.results) console.log(result)
     const failures = [

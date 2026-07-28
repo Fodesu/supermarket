@@ -11,8 +11,9 @@ interface R2BucketLike {
   put(key: string, value: Uint8Array, options?: {
     onlyIf?: { etagMatches?: string; etagDoesNotMatch?: string }
   }): Promise<{ etag?: string } | null | void>
-  list(options?: { prefix?: string; cursor?: string }): Promise<{
+  list(options?: { prefix?: string; cursor?: string; delimiter?: string }): Promise<{
     objects: Array<{ key: string }>
+    delimitedPrefixes?: string[]
     truncated: boolean
     cursor?: string
   }>
@@ -56,5 +57,16 @@ export class R2BlobBackend implements BlobBackend {
       cursor = page.truncated ? page.cursor : undefined
     } while (cursor)
     return keys.sort()
+  }
+
+  async listPrefixes(prefix: string) {
+    const prefixes: string[] = []
+    let cursor: string | undefined
+    do {
+      const page = await this.bucket.list({ prefix, cursor, delimiter: '/' })
+      prefixes.push(...page.delimitedPrefixes ?? [])
+      cursor = page.truncated ? page.cursor : undefined
+    } while (cursor)
+    return [...new Set(prefixes)].sort()
   }
 }

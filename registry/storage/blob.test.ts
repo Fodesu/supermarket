@@ -7,7 +7,11 @@ import type { SkillArtifactDescriptor, SkillImageAsset, SkillRegistryCatalog, Sk
 import { LocalSkillRegistryStore } from './local'
 import { R2BlobBackend } from './r2'
 import { sha256 } from '../digest'
-import { BlobSkillRegistryStore, validateStoredCatalog } from './blob'
+import {
+  BlobSkillRegistryStore,
+  MAX_REGISTRY_STATE_BYTES,
+} from './blob'
+import { validateStoredCatalog } from './validation'
 import { IndeterminateRemoteMutationError, type BlobBackend } from './contracts'
 
 const roots: string[] = []
@@ -82,8 +86,15 @@ function memoryBackend() {
     async list(prefix) {
       return [...objects.keys()].filter((key) => key.startsWith(prefix)).sort()
     },
+    async listPrefixes(prefix) {
+      return [...new Set([...objects.keys()].flatMap((key) => {
+        if (!key.startsWith(prefix)) return []
+        const separator = key.indexOf('/', prefix.length)
+        return separator >= 0 ? [key.slice(0, separator + 1)] : []
+      }))].sort()
+    },
   }
-  return { backend, gets, behavior }
+  return { backend, gets, behavior, objects }
 }
 
 describe('Immutable digest-addressed uploads', () => {
@@ -122,7 +133,7 @@ describe('Immutable digest-addressed uploads', () => {
   })
 
   test('settles unknown outcomes, retries transient failures, and skips stored archives', async () => {
-    const { backend, gets, behavior } = memoryBackend()
+    const { backend, gets, behavior, objects } = memoryBackend()
     const store = new BlobSkillRegistryStore(backend)
     const bytes = new TextEncoder().encode('artifact-retry')
     const digest = await sha256(bytes)
@@ -168,6 +179,11 @@ describe('Immutable digest-addressed uploads', () => {
     behavior.failPuts = 0
     await expect(store.putImage(image, imageBytes)).resolves.toEqual({ stored: true })
     expect((await store.getImage(image.digest))?.bytes).toEqual(imageBytes)
+
+    objects.delete(`skill-images/${image.digest}`)
+    await expect(store.putImage(image, imageBytes)).resolves.toEqual({ stored: true })
+    objects.set(`skill-images/${image.digest}`, new TextEncoder().encode('corrupt'))
+    await expect(store.putImage(image, imageBytes)).rejects.toThrow('immutable')
   }, 15_000)
 })
 
@@ -182,6 +198,10 @@ describe('SkillRegistryStore contract', () => {
     await Bun.write(path.join(root, 'skill-registries/example/state.json'), JSON.stringify({ ...state, current_snapshot: '../invalid' }))
     await expect(store.getState('example')).rejects.toThrow('digest')
     await Bun.write(path.join(root, 'skill-registries/example/state.json'), JSON.stringify(state))
+    await expect(store.putState({
+      ...state,
+      status: { ...state.status, last_error: 'x'.repeat(MAX_REGISTRY_STATE_BYTES) },
+    })).rejects.toThrow('state exceeds')
     await Bun.write(path.join(root, `skill-artifacts/${digest}.tar.gz`), 'corrupt')
     await expect(store.getArtifact(digest)).rejects.toThrow('corrupt')
   })
@@ -231,6 +251,10 @@ describe('SkillRegistryStore contract', () => {
     expect(new Uint8Array(await new Response(streamed.body).arrayBuffer()))
       .toEqual(new TextEncoder().encode('artifact'))
     objects.set(`skill-artifacts/${digest}.tar.gz`, new TextEncoder().encode('corrupt!'))
+    const original = new TextEncoder().encode('artifact')
+    await expect(store.putArtifact({
+      format: 'memoh_skill_v1', digest, size: original.length, content_type: 'application/gzip',
+    }, original)).rejects.toThrow('immutable')
     const corrupt = await store.getArtifactStream(digest)
     if (!(corrupt?.body instanceof ReadableStream)) throw new Error('Expected a corrupt R2 Artifact stream')
     await expect(new Response(corrupt.body).arrayBuffer()).rejects.toThrow('corrupt')

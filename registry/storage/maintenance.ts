@@ -1,6 +1,7 @@
 import { assertRegistryID } from '../definition'
 import type { SkillRegistryCatalog } from '../types'
-import { assertDigest, BlobSkillRegistryStore, validateStoredCatalog } from './blob'
+import { BlobSkillRegistryStore } from './blob'
+import { assertDigest, validateStoredCatalog } from './validation'
 import type {
   MaintenanceBlobBackend,
   SkillRegistryMaintenanceStore,

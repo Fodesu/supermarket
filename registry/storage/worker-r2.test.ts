@@ -41,4 +41,16 @@ describe('Worker Registry blob backend', () => {
     await expect(backend.putConditional(key, new Uint8Array(), null)).resolves.toBe('created')
     expect(requests[0]?.headers.get('if-none-match')).toBe('*')
   })
+
+  test('requests delimiter-based Registry prefix discovery', async () => {
+    const requests: Request[] = []
+    const backend = new WorkerR2BlobBackend('http://registry-r2', async (input, init) => {
+      requests.push(new Request(input, init))
+      return Response.json({ keys: ['skill-registries/memoh/'] })
+    })
+
+    await expect(backend.listPrefixes('skill-registries/'))
+      .resolves.toEqual(['skill-registries/memoh/'])
+    expect(new URL(requests[0]!.url).searchParams.get('delimiter')).toBe('/')
+  })
 })
