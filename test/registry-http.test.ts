@@ -9,10 +9,11 @@ import skillImage from '../server/api/skill-images/[digest].get'
 import registrySkill from '../server/api/registries/[id]/packages/[packageId]/skills/[skillId].get'
 import registries from '../server/api/registries/index.get'
 import skills from '../server/api/skills/index.get'
-import type { CatalogSkill, SkillArtifactDescriptor, SkillRegistryCatalog, SkillRegistryDefinition } from '../server/types/skill-registry'
-import { createTar, gzip } from '../server/utils/tar'
-import { R2BlobBackend } from '../server/utils/r2-blob-backend'
-import { BlobSkillRegistryStore, sha256 } from '../server/utils/skill-registry-store'
+import type { CatalogSkill, SkillArtifactDescriptor, SkillRegistryCatalog, SkillRegistryDefinition } from '#registry/types'
+import { createTar, gzip } from '#archive/tar'
+import { R2BlobBackend } from '#registry/storage/r2'
+import { sha256 } from '#registry/digest'
+import { BlobSkillRegistryStore } from '#registry/storage/blob'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
@@ -69,7 +70,7 @@ describe('Skill Registry HTTP protocol', () => {
     const definition: SkillRegistryDefinition = {
       schema_version: '1', id: 'example', name: 'Example', enabled: true, priority: 10,
       adapter: 'skill_directory', source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
-      retention: { catalog_revisions: 30 },
+      retention: { snapshots: 30 },
     }
     const installID = 'example+tools+demo'
     const archive = await gzip(createTar({

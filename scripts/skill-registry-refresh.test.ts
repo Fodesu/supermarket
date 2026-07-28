@@ -2,16 +2,16 @@ import { describe, expect, test } from 'bun:test'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import type { SkillRegistryDefinition, SkillRegistryStatus } from '../server/types/skill-registry'
-import { IndeterminateRemoteMutationError } from '../server/utils/skill-registry-store'
-import { loadSkillRegistryDefinitionResults, type SkillRegistryRefreshProgress } from './skill-registry/refresher'
+import type { SkillRegistryDefinition, SkillRegistryStatus } from '#registry/types'
+import { IndeterminateRemoteMutationError } from '#registry/storage/contracts'
+import { loadSkillRegistryDefinitionResults, type SkillRegistryRefreshProgress } from '#registry/refresh/refresher'
 import { createSkillRegistryProgressRenderer, runSkillRegistryRefreshes } from './skill-registry-refresh'
 
 function definition(id: string, enabled = true): SkillRegistryDefinition {
   return {
     schema_version: '1', id, name: id, enabled, priority: 10,
     adapter: 'skill_directory', source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
-    retention: { catalog_revisions: 30 },
+    retention: { snapshots: 30 },
   }
 }
 
@@ -111,7 +111,7 @@ describe('Skill Registry refresh runner', () => {
     try {
       await mkdir(path.join(root, 'registries/valid'), { recursive: true })
       await mkdir(path.join(root, 'registries/broken'), { recursive: true })
-      await writeFile(path.join(root, 'registries/valid/registry.yaml'), `schema_version: "1"\nid: valid\nname: Valid\nadapter: skill_directory\nsource:\n  type: local\n  path: skills\nrefresh_interval: 12h\nretention:\n  catalog_revisions: 30\n`)
+      await writeFile(path.join(root, 'registries/valid/registry.yaml'), `schema_version: "1"\nid: valid\nname: Valid\nadapter: skill_directory\nsource:\n  type: local\n  path: skills\nrefresh_interval: 12h\nretention:\n  snapshots: 30\n`)
       await writeFile(path.join(root, 'registries/broken/registry.yaml'), 'schema_version: [')
       const result = await loadSkillRegistryDefinitionResults(root)
       expect(result.definitions.map((item) => item.id)).toEqual(['valid'])

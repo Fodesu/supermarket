@@ -1,6 +1,6 @@
 import { defineHandler } from 'nitro'
 import { getQuery } from 'h3'
-import { getAllPlugins } from '../../utils/plugin-loader'
+import { getAllPlugins } from '#server/services/plugin'
 
 export default defineHandler(async (event) => {
   const query = getQuery(event)
@@ -12,4 +12,3 @@ export default defineHandler(async (event) => {
     limit: query.limit ? Number(query.limit) : undefined,
   })
 })
-

@@ -12,18 +12,22 @@ supermarket/
 │   └── <skill-id>/SKILL.md
 ├── registries/
 │   └── <registry-id>/registry.yaml  # Registry definitions
-├── server/                          # Nitro API routes & Registry read utilities
-├── scripts/skill-registry/          # Refresh, validation, local GC, and adapters
-├── writer/                          # Cloudflare Container refresh writer
+├── archive/                         # Shared TAR and gzip primitives
+├── registry/                        # Registry model, sources, adapters, storage, refresh, and maintenance
+├── server/                          # Nitro API routes and HTTP-facing services
+├── scripts/                         # Registry CLI entrypoints
+├── workers/
+│   ├── api/wrangler.jsonc           # API Worker environments and bindings
+│   └── writer/                      # Container Writer source and deployment
+│       ├── src/
+│       ├── Dockerfile
+│       └── wrangler.jsonc
 ├── client/                          # Reference Registry client and safe extractor
-├── api.wrangler.jsonc               # API Worker environments and bindings
-├── writer.wrangler.jsonc            # Writer environments, cron, Container, and bindings
-├── writer.Dockerfile
 ├── nitro.config.mjs
 └── vite.config.ts
 ```
 
-Plugins are repository-owned bundles. Registry Skills are published from Registry definitions into immutable Catalogs and Artifacts stored under `.data/registries` locally or R2 in production. Generated Registry data is not committed.
+Plugins are repository-owned bundles. Registry Skills are published from Registry definitions into immutable Snapshots and Artifacts stored under `.data/registries` locally or R2 in production. Generated Registry data is not committed.
 
 ## API
 
@@ -138,12 +142,12 @@ source:
   ref: main
 refresh_interval: 12h
 retention:
-  catalog_revisions: 30
+  snapshots: 30
 ```
 
 Supported sources are `local` and `git`; adapters are `skill_directory` and `codex_marketplace_skills`. Run `bun run registry:validate` before refreshing.
 
-The API Worker is read-only. The separate Writer runs every 15 minutes and publishes immutable Snapshots and Artifacts before switching a Registry's `state.json` pointer. Test and production resources are declared under the matching environments in `api.wrangler.jsonc` and `writer.wrangler.jsonc`; both Workers must bind the same R2 bucket within an environment.
+The API Worker is read-only. The production Writer runs every 15 minutes and publishes immutable Snapshots and Artifacts before switching a Registry's `state.json` pointer. Test and production resources are declared under the matching environments in `workers/api/wrangler.jsonc` and `workers/writer/wrangler.jsonc`; both Workers must bind the same R2 bucket within an environment. The test Writer has no deployed cron. To exercise its scheduled handler locally, run `bun run registry:writer:dev`, then request `http://127.0.0.1:8787/__scheduled`.
 
 ```bash
 # Test
@@ -155,7 +159,7 @@ bun run registry:writer:deploy:production
 bun run registry:api:deploy:production
 ```
 
-Local garbage collection remains available with `bun run registry:gc` (add `-- --apply` to apply it). The deployed Writer does not run GC.
+Local garbage collection remains available with `bun run registry:gc` (add `-- --apply` to apply it), and applies each Registry's `retention.snapshots` setting. The deployed Writer does not run GC, so production currently retains all immutable Snapshots, Artifacts, and images.
 
 ## License
 

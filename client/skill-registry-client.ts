@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../server/types/skill-registry'
+import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '#registry/types'
 import { extractSkillArchive, gunzip, parseTarArchive, validateSkillArchive } from './archive'
 import {
   MAX_REGISTRY_JSON_BYTES,

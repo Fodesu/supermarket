@@ -1,7 +1,7 @@
 import { defineHandler, HTTPError } from 'nitro'
 import { getRouterParam, setResponseHeader } from 'h3'
-import { getPluginById, getPluginFiles } from '../../../utils/plugin-loader'
-import { createTar, gzip } from '../../../utils/tar'
+import { getPluginById, getPluginFiles } from '#server/services/plugin'
+import { createTar, gzip } from '#archive/tar'
 
 export default defineHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
@@ -19,4 +19,3 @@ export default defineHandler(async (event) => {
   setResponseHeader(event, 'content-disposition', `attachment; filename="${id}.tar.gz"`)
   return compressed
 })
-

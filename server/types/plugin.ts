@@ -15,7 +15,7 @@ export interface PluginAuthRequirement {
   variables?: string[]
 }
 
-export interface PluginMcpResource extends McpConfig {
+export type PluginMcpResource = McpConfig & {
   key: string
   auth_ref?: string
   visibility?: 'hidden' | 'visible'
