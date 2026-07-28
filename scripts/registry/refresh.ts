@@ -7,7 +7,7 @@ import {
   SkillRegistryRefresher,
   type SkillRegistryRefreshProgress,
 } from '#registry/refresh/refresher'
-import { createSkillRegistryStore } from './skill-registry-runtime'
+import { createSkillRegistryStore } from './runtime'
 import { acquireRegistryWriterLock } from '#registry/maintenance/writer-lock'
 
 export function createSkillRegistryProgressRenderer(
@@ -97,7 +97,7 @@ function option(name: string) {
 }
 
 if (import.meta.main) {
-  const projectRoot = path.resolve(import.meta.dirname, '..')
+  const projectRoot = path.resolve(import.meta.dirname, '../..')
   const registryID = option('--registry')
   const packageID = option('--package')
   const skillID = option('--skill')

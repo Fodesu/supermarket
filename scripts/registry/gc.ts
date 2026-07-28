@@ -9,7 +9,7 @@ if (import.meta.main) {
   const unsupported = process.argv.slice(2).filter((argument) => argument.startsWith('--') && !supported.has(argument))
   if (unsupported.length) throw new Error(`Unsupported registry:gc option: ${unsupported[0]}`)
 
-  const projectRoot = path.resolve(import.meta.dirname, '..')
+  const projectRoot = path.resolve(import.meta.dirname, '../..')
   if (process.env.REGISTRY_R2_INTERNAL_URL) {
     throw new Error('registry:gc is local-only and cannot use the deployed Writer Store')
   }
