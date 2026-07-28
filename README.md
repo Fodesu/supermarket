@@ -13,6 +13,7 @@ supermarket/
 │   │   └── skills/<skill-id>/       # Repository-owned Skill sources
 │   └── openai/registry.yaml         # External Registry definition
 ├── archive/                         # Shared TAR and gzip primitives
+├── plugin/                          # Plugin manifest parsing and repository validation
 ├── registry/                        # Registry model, sources, adapters, storage, refresh, and maintenance
 ├── server/                          # Nitro API routes and HTTP-facing services
 ├── scripts/registry/                # Registry CLI entrypoints and deployment checks
@@ -146,7 +147,7 @@ retention:
   snapshots: 30
 ```
 
-Supported sources are `local` and HTTPS `git`; adapters are `skill_directory` and `codex_marketplace_skills`. A local source path is relative to the directory containing its `registry.yaml`. Run `bun run registry:validate` before refreshing.
+Supported sources are `local` and HTTPS `git`; adapters are `skill_directory` and `codex_marketplace_skills`. A local source path is relative to the directory containing its `registry.yaml`. `retention.snapshots` currently controls only explicit local maintenance; production retains all immutable history until reference-aware GC is introduced. Run `bun run registry:validate` before refreshing.
 
 The API Worker is read-only. The production Writer runs every 15 minutes and publishes immutable Snapshots and Artifacts before switching a Registry's `state.json` pointer. Test and production resources are declared under the matching environments in `workers/api/wrangler.jsonc` and `workers/writer/wrangler.jsonc`; both Workers must bind the same R2 bucket within an environment. The test Writer has no deployed cron. To exercise its scheduled handler locally, run `bun run registry:writer:dev`, then request `http://127.0.0.1:8787/__scheduled`.
 

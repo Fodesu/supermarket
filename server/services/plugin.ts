@@ -1,35 +1,13 @@
 import { useStorage } from 'nitro/storage'
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
-import type { McpAuthor } from '../types/mcp'
-import type { PluginEntry, PluginIcon } from '../types/plugin'
-import type { SkillConfig } from '../types/skill'
+import { stringify as stringifyYaml } from 'yaml'
+import { parseBundledSkillDocument, parsePluginManifest } from '#plugin/manifest'
+import type { BundledPluginSkill, PluginEntry } from '#plugin/types'
 
 let cache: PluginEntry[] | null = null
 
 const bundledPluginAssetPrefixes = ['skills:', 'scripts:']
 
-function normalizeAuthor(raw: any): McpAuthor {
-  if (raw && typeof raw === 'object' && 'name' in raw) {
-    return { name: String(raw.name ?? ''), email: String(raw.email ?? '') }
-  }
-  return { name: String(raw ?? ''), email: '' }
-}
-
-function normalizeIcon(raw: any): PluginIcon | undefined {
-  if (!raw) return undefined
-  if (typeof raw === 'string') return { kind: 'external_url', url: raw }
-  if (typeof raw !== 'object') return undefined
-  const kind = String(raw.kind ?? '').trim()
-  if (kind === 'builtin' && raw.name) {
-    return { kind, name: String(raw.name) }
-  }
-  if (kind === 'external_url' && raw.url) {
-    return { kind, url: String(raw.url) }
-  }
-  return undefined
-}
-
-async function readBundledSkills(pluginID: string): Promise<SkillConfig[]> {
+async function readBundledSkills(pluginID: string) {
   const storage = useStorage('assets/plugins')
   const allKeys = await storage.getKeys()
   const prefix = `${pluginID}:skills:`
@@ -41,31 +19,16 @@ async function readBundledSkills(pluginID: string): Promise<SkillConfig[]> {
     if (parts[0]) skillIds.add(parts[0])
   }
 
-  const skills: SkillConfig[] = []
+  const skills: BundledPluginSkill[] = []
   for (const skillID of skillIds) {
     const baseKey = `${prefix}${skillID}:`
     const skillMdKey = `${baseKey}SKILL.md`
     const text = (await storage.getItem(skillMdKey)) as string
-    if (!text) continue
-    const frontmatter = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/)
-    const data = frontmatter ? (parseYaml(frontmatter[1] ?? '') as Record<string, any>) : {}
-    const content = frontmatter?.[2] ?? text
+    if (!text) throw new Error(`${pluginID}/${skillID}: missing SKILL.md`)
     const files = allKeys
       .filter((key) => key.startsWith(baseKey))
       .map((key) => key.substring(baseKey.length).replaceAll(':', '/'))
-    const author = normalizeAuthor(data.metadata?.author)
-    skills.push({
-      id: skillID,
-      name: data.name ?? skillID,
-      description: data.description ?? '',
-      metadata: {
-        author,
-        tags: data.metadata?.tags,
-        homepage: data.metadata?.homepage,
-      },
-      content: content.trim(),
-      files,
-    })
+    skills.push({ ...parseBundledSkillDocument(`${pluginID}/${skillID}`, text), id: skillID, files })
   }
   return skills
 }
@@ -77,26 +40,14 @@ async function scanExplicitPlugins(): Promise<PluginEntry[]> {
   const plugins: PluginEntry[] = []
 
   for (const key of manifestKeys) {
-    try {
-      const id = key.replace(':plugin.yaml', '').replace('plugin.yaml', '')
-      if (!id) continue
-      const text = (await storage.getItem(key)) as string
-      if (!text) continue
-      const data = parseYaml(text) as Record<string, any>
-      const author = normalizeAuthor(data.author)
-      const entry: PluginEntry = {
-        ...data,
-        id: data.id ?? id,
-        schema_version: String(data.schema_version ?? '1'),
-        version: String(data.version ?? '0.1.0'),
-        author,
-        icon: normalizeIcon(data.icon),
-        bundled_skills: await readBundledSkills(id),
-      } as PluginEntry
-      plugins.push(entry)
-    } catch {
-      // skip invalid plugin entries
-    }
+    const id = key.replace(/:plugin\.yaml$/, '')
+    if (!id) throw new Error(`Invalid Plugin manifest asset key: ${key}`)
+    const text = (await storage.getItem(key)) as string
+    if (!text) throw new Error(`${id}: missing plugin.yaml`)
+    plugins.push({
+      ...parsePluginManifest(text, id),
+      bundled_skills: await readBundledSkills(id),
+    })
   }
 
   return plugins
@@ -112,10 +63,6 @@ async function getCache(): Promise<PluginEntry[]> {
     cache = await scanPlugins()
   }
   return cache
-}
-
-export function invalidatePluginCache() {
-  cache = null
 }
 
 export async function getAllPlugins(options?: {

@@ -43,6 +43,14 @@ describe('Skill Registry definitions', () => {
       refresh_interval: '12h', retention: { snapshots: 30 },
     })).toThrow('local source.path is required')
     expect(() => parseSkillRegistryDefinition({
+      schema_version: '1', id: 'bad', name: 'Bad', adapter: { type: 'skill_directory' },
+      source: { type: 'local', path: 'skills', pathh: 'ignored' }, refresh_interval: '12h',
+    })).toThrow('local source contains unsupported field pathh')
+    expect(() => parseSkillRegistryDefinition({
+      schema_version: '1', id: 'bad', name: 'Bad', adapter: { type: 'skill_directory' },
+      source: { type: 'git', url: 'https://example.test/skills.git', branch: 'main' }, refresh_interval: '12h',
+    })).toThrow('git source contains unsupported field branch')
+    expect(() => parseSkillRegistryDefinition({
       schema_version: '1', id: 'bad', name: 'Bad', adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' },
     })).toThrow('refresh_interval')
     expect(() => parseSkillRegistryDefinition({

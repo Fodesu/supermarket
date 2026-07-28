@@ -62,6 +62,21 @@ export class LocalBlobBackend implements MaintenanceBlobBackend {
     return keys
   }
 
+  async listPrefixes(prefix: string) {
+    const normalized = prefix.replaceAll('\\', '/').replace(/\/?$/, '/')
+    const base = this.resolve(normalized)
+    try {
+      const entries = await readdir(base, { withFileTypes: true })
+      return entries
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => `${normalized}${entry.name}/`)
+        .sort()
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+      throw error
+    }
+  }
+
 }
 
 export class LocalSkillRegistryStore extends BlobSkillRegistryMaintenanceStore {

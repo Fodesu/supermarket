@@ -23,6 +23,7 @@ describe('Skill Registry refresh runner', () => {
     const outcome = await runSkillRegistryRefreshes({
       definitions, due: true,
       store: {
+        listRegistryIDs: async () => [],
         getState: async (id) => ({
           schema_version: '1' as const,
           definition: id === 'first' ? definition('first', true) : definition(id),
@@ -47,6 +48,7 @@ describe('Skill Registry refresh runner', () => {
     const outcome = await runSkillRegistryRefreshes({
       definitions: [item], due: true,
       store: {
+        listRegistryIDs: async () => [],
         getState: async () => ({
           schema_version: '1' as const, definition: item,
           status: { state: 'disabled' as const },
@@ -62,6 +64,7 @@ describe('Skill Registry refresh runner', () => {
     await expect(runSkillRegistryRefreshes({
       definitions: [definition('first'), definition('second')],
       store: {
+        listRegistryIDs: async () => [],
         getState: async (id) => ({
           schema_version: '1' as const, definition: definition(id),
           status: { state: 'empty' as const },
@@ -75,6 +78,35 @@ describe('Skill Registry refresh runner', () => {
       },
     })).rejects.toThrow('unknown remote write')
     expect(calls).toEqual(['first'])
+  })
+
+  test('disables published Registries removed from the committed definitions', async () => {
+    const refreshed: SkillRegistryDefinition[] = []
+    const outcome = await runSkillRegistryRefreshes({
+      definitions: [definition('current')],
+      reconcileRemoved: true,
+      knownRegistryIDs: ['current', 'invalid-definition'],
+      store: {
+        listRegistryIDs: async () => ['current', 'removed', 'invalid-definition'],
+        getState: async (id) => ({
+          schema_version: '1' as const,
+          definition: definition(id),
+          status: { state: 'ready' as const, last_success_at: '2026-01-01T00:00:00.000Z' },
+        }),
+      },
+      refresher: {
+        refresh: async (item) => {
+          refreshed.push(item)
+          return { registry: item.id, skipped: item.enabled ? 'unchanged' : 'disabled' }
+        },
+      },
+    })
+
+    expect(refreshed.map((item) => [item.id, item.enabled])).toEqual([
+      ['current', true],
+      ['removed', false],
+    ])
+    expect(outcome.failures).toEqual([])
   })
 
   test('renders progress lines for phases, uploads, and milestones', () => {

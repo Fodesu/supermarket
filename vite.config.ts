@@ -42,26 +42,6 @@ function nitroRawHtmlFix(): Plugin {
         }
       }
 
-      if (buildHtml.generateBundle) {
-        const origGenerate =
-          typeof buildHtml.generateBundle === 'function'
-            ? buildHtml.generateBundle
-            : (buildHtml.generateBundle as any).handler
-        if (origGenerate) {
-          const wrappedGenerate = function (this: any, ...args: any[]) {
-            try {
-              return origGenerate.apply(this, args)
-            } catch {
-              return
-            }
-          }
-          if (typeof buildHtml.generateBundle === 'function') {
-            buildHtml.generateBundle = wrappedGenerate as any
-          } else {
-            ;(buildHtml.generateBundle as any).handler = wrappedGenerate
-          }
-        }
-      }
     },
     resolveId(id) {
       if (id.includes('html-proxy') && /skills[/\\]/.test(id)) {
