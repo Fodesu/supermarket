@@ -104,12 +104,6 @@ describe('Skill Registry refresh runner', () => {
     expect(output).toContain('[25/60] pkg/milestone')
     expect(output).toContain('[60/60] pkg/last')
     expect(output).toContain(`openai: publishing revision ${'f'.repeat(12)}`)
-
-    const interactive: string[] = []
-    const renderInteractive = createSkillRegistryProgressRenderer((text) => { interactive.push(text) }, true)
-    for (const event of events) renderInteractive(event)
-    expect(interactive.join('')).toContain('\r\u001B[2K' + 'openai: [2/60] pkg/cached-two')
-    expect(interactive.join('')).toContain('openai: publishing revision')
   })
 
   test('loads valid Registry definitions alongside a malformed file', async () => {

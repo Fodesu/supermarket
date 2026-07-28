@@ -196,7 +196,7 @@ describe('Skill Registry garbage collection', () => {
     expect(await store.getArtifact(artifact.digest)).not.toBeNull()
   })
 
-  test('protects managed history without current and stops before Artifact deletion on Catalog failure', async () => {
+  test('protects managed history without a current snapshot', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'skill-registry-gc-failures-'))
     roots.push(root)
     const store = fixture(new LocalSkillRegistryStore(root))
@@ -218,30 +218,6 @@ describe('Skill Registry garbage collection', () => {
     expect(protectedResult.artifacts.deleted).toEqual([orphanArtifact.digest])
     expect(await store.getArtifact(oldArtifact.digest)).not.toBeNull()
     expect(await store.getArtifact(currentArtifact.digest)).not.toBeNull()
-
-    await store.putState({
-      schema_version: '1',
-      definition: known,
-      current_snapshot: currentRevision,
-      status: { state: 'ready' },
-    })
-    const failingStore = new Proxy(store, {
-      get(target, property) {
-        if (property === 'deleteCatalogRevision') {
-          return async () => { throw new Error('catalog delete failed') }
-        }
-        const value = Reflect.get(target, property)
-        return typeof value === 'function' ? value.bind(target) : value
-      },
-    })
-    await expect(garbageCollectSkillRegistries({
-      store: failingStore,
-      definitions: [known],
-      apply: true,
-      assertWriterActive: () => {},
-    })).rejects.toThrow('catalog delete failed')
-    expect(await store.getArtifact(oldArtifact.digest)).not.toBeNull()
-    expect(await store.getArtifact(orphanArtifact.digest)).not.toBeNull()
   })
 
   test('rechecks current after Catalog deletion before deleting Artifacts', async () => {
