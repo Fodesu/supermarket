@@ -51,14 +51,11 @@ export class WorkerR2BlobBackend implements BlobBackend {
     if (!version) throw new Error(`Conditional Worker R2 write returned no ETag: ${key}`)
     return version
   }
-  async list(prefix: string) { return this.listPage(prefix, false) }
-  async listPrefixes(prefix: string) { return this.listPage(prefix, true) }
-  private async listPage(prefix: string, delimiter: boolean) {
+  async list(prefix: string) {
     const keys: string[] = []
     let cursor: string | undefined
     do {
       const query = new URLSearchParams({ prefix })
-      if (delimiter) query.set('delimiter', '/')
       if (cursor) query.set('cursor', cursor)
       const response = await this.request(`list?${query}`, 'GET')
       if (!response.ok) throw new Error(`Worker R2 list failed (${response.status} ${response.statusText}): ${prefix}`)

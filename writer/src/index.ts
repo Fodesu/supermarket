@@ -28,13 +28,9 @@ function clippedOutput(stdout: ArrayBuffer, stderr: ArrayBuffer) {
 
 export class RegistryWriter extends Container {
   sleepAfter = '1m'
-  envVars = {
-    REGISTRY_R2_INTERNAL_URL: 'http://registry-r2',
-    REGISTRY_R2_MUTABLE_URL: 'http://registry-mutable',
-  }
 
   async refreshDue(token: string): Promise<RefreshResult> {
-    if (!this.ctx.container.running) await this.start()
+    await this.start()
     const process = await this.ctx.container.exec(
       ['env', `REGISTRY_WRITER_TOKEN=${token}`, 'bun', 'scripts/skill-registry-refresh.ts', '--due'],
       { cwd: '/app' },

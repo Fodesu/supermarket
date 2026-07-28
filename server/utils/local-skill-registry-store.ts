@@ -61,18 +61,6 @@ export class LocalBlobBackend implements BlobBackend {
     return keys
   }
 
-  async listPrefixes(prefix: string) {
-    const base = this.resolve(prefix)
-    try {
-      const entries = await readdir(base, { withFileTypes: true })
-      return entries.filter((entry) => entry.isDirectory())
-        .map((entry) => `${prefix.replace(/\/?$/, '/')}${entry.name}/`)
-        .sort()
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
-      throw error
-    }
-  }
 }
 
 export class LocalSkillRegistryStore extends BlobSkillRegistryStore {
