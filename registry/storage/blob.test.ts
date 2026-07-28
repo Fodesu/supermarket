@@ -7,7 +7,7 @@ import type { SkillArtifactDescriptor, SkillImageAsset, SkillRegistryCatalog, Sk
 import { LocalSkillRegistryStore } from './local'
 import { R2BlobBackend } from './r2'
 import { sha256 } from '../digest'
-import { BlobSkillRegistryStore } from './blob'
+import { BlobSkillRegistryStore, validateStoredCatalog } from './blob'
 import { IndeterminateRemoteMutationError, type BlobBackend } from './contracts'
 
 const roots: string[] = []
@@ -15,7 +15,7 @@ afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recur
 
 const definition: SkillRegistryDefinition = {
   schema_version: '1', id: 'example', name: 'Example', enabled: true, priority: 10,
-  adapter: 'skill_directory', source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
+  adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
   retention: { snapshots: 30 },
 }
 
@@ -87,6 +87,40 @@ function memoryBackend() {
 }
 
 describe('Immutable digest-addressed uploads', () => {
+  test('rejects Catalog install identities that disagree with Skill coordinates', () => {
+    const revision = 'a'.repeat(64)
+    const stored = catalog(revision)
+    stored.skills.push({
+      schema_version: '1',
+      registry_id: 'example',
+      registry_priority: 10,
+      package_id: 'package',
+      skill_id: 'skill',
+      install_id: '../escaped',
+      name: 'Skill',
+      description: '',
+      author: { name: '', email: '' },
+      tags: [],
+      category: 'other',
+      category_name: 'Other',
+      runtime_requirements: { os: ['linux'] },
+      source: { type: 'local', revision: 'source', path: 'skill' },
+      files: ['SKILL.md'],
+      artifact: {
+        format: 'memoh_skill_v1',
+        digest: 'b'.repeat(64),
+        size: 1,
+        content_type: 'application/gzip',
+      },
+    })
+    expect(() => validateStoredCatalog(
+      stored,
+      'example',
+      revision,
+      `skill-registries/example/snapshots/${revision}.json`,
+    )).toThrow('Catalog Artifact reference')
+  })
+
   test('settles unknown outcomes, retries transient failures, and skips stored archives', async () => {
     const { backend, gets, behavior } = memoryBackend()
     const store = new BlobSkillRegistryStore(backend)

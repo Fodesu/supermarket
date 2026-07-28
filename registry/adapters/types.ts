@@ -6,7 +6,7 @@ import type {
   SkillRegistryDefinition,
   SkillRuntimeRequirements,
 } from '../types'
-import type { SkillSourceFile } from '../artifacts/build'
+import type { SkillSourceFile } from '../filesystem'
 
 export interface SkillCandidate {
   package_id: string
@@ -20,7 +20,7 @@ export interface SkillCandidate {
   category: string
   category_name: string
   source_category?: string
-  runtime_requirements: SkillRuntimeRequirements
+  runtime_requirements?: SkillRuntimeRequirements
   source_path: string
   files: Record<string, SkillSourceFile>
   icon?: SkillIcon

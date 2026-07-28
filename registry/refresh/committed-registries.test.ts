@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { access, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { buildSkillCandidates } from '../adapters/index'
-import { loadSkillRegistryDefinitions } from './refresher'
+import { loadSkillRegistryDefinitions } from '../definitions/repository'
 import { materializeSkillRegistrySource } from '../sources/index'
 
 describe('Committed Skill Registries', () => {

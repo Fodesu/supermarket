@@ -12,6 +12,7 @@ import {
   objectKey,
   type ActiveRegistryRun,
 } from './registry-access'
+import { processOutputWithTimeout, SingleFlight, startRunHeartbeat } from './run-control'
 
 interface RefreshResult {
   exitCode: number
@@ -20,7 +21,9 @@ interface RefreshResult {
 }
 
 const activeRunStorageKey = 'active-run'
-const activeRunTtlMs = 6 * 60 * 60 * 1000
+const activeRunTtlMs = 2 * 60 * 1000
+const activeRunHeartbeatMs = 30 * 1000
+const refreshExecutionTimeoutMs = 45 * 60 * 1000
 const outputDecoder = new TextDecoder()
 const maxLoggedOutputChars = 12_000
 
@@ -88,7 +91,7 @@ export class RegistryWriter extends Container<WriterEnv> {
   override sleepAfter = '1m'
 
   private mutationChain = Promise.resolve()
-  private activeRefresh: Promise<RefreshResult> | undefined
+  private readonly refreshFlight = new SingleFlight<RefreshResult>()
 
   private async serialized<T>(operation: () => Promise<T>) {
     const next = this.mutationChain.then(operation, operation)
@@ -97,19 +100,13 @@ export class RegistryWriter extends Container<WriterEnv> {
   }
 
   async refreshDue(): Promise<RefreshResult> {
-    if (this.activeRefresh) return this.activeRefresh
-    const refresh = this.runRefreshDue()
-    this.activeRefresh = refresh
-    try {
-      return await refresh
-    } finally {
-      if (this.activeRefresh === refresh) this.activeRefresh = undefined
-    }
+    return this.refreshFlight.run(() => this.runRefreshDue())
   }
 
   private async beginRun() {
     return this.serialized(async () => {
-      const stored = activeRegistryRun(await this.ctx.storage.get(activeRunStorageKey))
+      const raw = await this.ctx.storage.get(activeRunStorageKey)
+      const stored = activeRegistryRun(raw)
       if (stored) return null
       const now = Date.now()
       const run: ActiveRegistryRun = {
@@ -118,7 +115,19 @@ export class RegistryWriter extends Container<WriterEnv> {
         expires_at: new Date(now + activeRunTtlMs).toISOString(),
       }
       await this.ctx.storage.put(activeRunStorageKey, run)
-      return run
+      return { run, replacedExpiredRun: raw != null }
+    })
+  }
+
+  private async renewRun(token: string) {
+    return this.serialized(async () => {
+      const stored = await this.ctx.storage.get<ActiveRegistryRun>(activeRunStorageKey)
+      if (!stored || stored.token !== token) return false
+      await this.ctx.storage.put(activeRunStorageKey, {
+        ...stored,
+        expires_at: new Date(Date.now() + activeRunTtlMs).toISOString(),
+      })
+      return true
     })
   }
 
@@ -130,17 +139,31 @@ export class RegistryWriter extends Container<WriterEnv> {
   }
 
   private async runRefreshDue(): Promise<RefreshResult> {
-    const run = await this.beginRun()
-    if (!run) {
+    const started = await this.beginRun()
+    if (!started) {
       return { exitCode: 0, output: 'Registry refresh already running', skipped: 'already_running' }
     }
+    const { run, replacedExpiredRun } = started
+    let heartbeatFailure: Error | undefined
+    let process: ExecProcess | undefined
     try {
+      if (replacedExpiredRun && this.ctx.container?.running) await this.stop('SIGKILL')
       await this.start()
-      const process = await this.ctx.container!.exec(
+      process = await this.ctx.container!.exec(
         ['env', `REGISTRY_WRITER_TOKEN=${run.token}`, 'bun', 'scripts/registry/refresh.ts', '--due'],
         { cwd: '/app' },
       )
-      const result = await process.output()
+      const stopHeartbeat = startRunHeartbeat(
+        () => this.renewRun(run.token),
+        (error) => {
+          heartbeatFailure = error
+          process?.kill(15)
+        },
+        activeRunHeartbeatMs,
+      )
+      const result = await processOutputWithTimeout(process, refreshExecutionTimeoutMs)
+        .finally(stopHeartbeat)
+      if (heartbeatFailure) throw heartbeatFailure
       const output = clippedOutput(result.stdout, result.stderr)
       if (result.exitCode !== 0) {
         throw new Error(`Registry refresh failed with exit code ${result.exitCode}${output ? `:\n${output}` : ''}`)

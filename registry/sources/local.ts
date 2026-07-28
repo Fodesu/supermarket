@@ -3,7 +3,7 @@ import { createReadStream } from 'node:fs'
 import { lstat, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import type { SkillRegistryDefinition } from '../types'
-import { resolveRealInside } from '../artifacts/build'
+import { resolveRealInside } from '../filesystem'
 import type { MaterializedSkillRegistrySource } from './types'
 
 const maxRegistryRevisionFiles = 100_000

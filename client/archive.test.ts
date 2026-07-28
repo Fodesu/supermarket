@@ -44,6 +44,17 @@ describe('Skill Registry client archives', () => {
     expect(await readFile(path.join(second, 'SKILL.md'), 'utf8')).toContain('name: shared')
   })
 
+  test('rejects install identities that escape the destination', async () => {
+    const files = parseTarArchive(createTar({
+      'SKILL.md': new TextEncoder().encode('---\nname: shared\n---\n'),
+    }, ''))
+    const root = await mkdtemp(path.join(os.tmpdir(), 'skill-client-install-escape-'))
+    roots.push(root)
+
+    await expect(extractSkillArchive(files, root, '../escaped')).rejects.toThrow('escapes destination')
+    await expect(extractSkillArchive(files, root, path.join(root, 'absolute'))).rejects.toThrow('escapes destination')
+  })
+
   test('rejects traversal, unsupported entry types, conflicts and decompression bombs', async () => {
     expect(() => createTar({ '../private': new Uint8Array() }, 'skill')).toThrow('Unsafe tar path')
     expect(() => createTar({ 'references\\private': new Uint8Array() }, 'skill')).toThrow('Unsafe tar path')

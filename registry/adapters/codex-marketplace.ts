@@ -8,7 +8,7 @@ import type {
 } from '../types'
 import { MAX_SKILL_IMAGE_BYTES } from '../types'
 import { assertRegistryID, safeRelativePath } from '../definition'
-import { resolveRealInside } from '../artifacts/build'
+import { resolveRealInside } from '../filesystem'
 import { sha256 } from '../digest'
 import { buildSkillCandidate, hasComponent } from './common'
 import type { SkillAdapterInput, SkillAdapterResult, SkillCandidate } from './types'
@@ -60,6 +60,33 @@ const imageTypes: Record<string, SkillImageContentType> = {
   '.webp': 'image/webp',
 }
 
+export function detectSkillImageContentType(bytes: Uint8Array): SkillImageContentType | undefined {
+  if (bytes.length >= 8
+    && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
+    && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a) {
+    return 'image/png'
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'image/jpeg'
+  }
+  if (bytes.length >= 12
+    && new TextDecoder().decode(bytes.subarray(0, 4)) === 'RIFF'
+    && new TextDecoder().decode(bytes.subarray(8, 12)) === 'WEBP') {
+    return 'image/webp'
+  }
+  try {
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+      .replace(/^\uFEFF/, '')
+      .trimStart()
+    if (/^(?:<\?xml[\s\S]*?\?>\s*)?(?:<!--[\s\S]*?-->\s*)*<svg(?:\s|>)/i.test(text)) {
+      return 'image/svg+xml'
+    }
+  } catch {
+    // Binary data is not SVG.
+  }
+  return undefined
+}
+
 function declaredImagePath(value: unknown, field: string) {
   if (value == null || value === '') return undefined
   if (typeof value !== 'string') throw new Error(`${field} must be a relative image path`)
@@ -73,10 +100,15 @@ async function readImageAsset(packageRoot: string, relativePath: string) {
   if (!bytes.length || bytes.length > MAX_SKILL_IMAGE_BYTES) {
     throw new Error(`Skill image ${relativePath} must be between 1 and ${MAX_SKILL_IMAGE_BYTES} bytes`)
   }
+  const contentType = detectSkillImageContentType(bytes)
+  const declaredType = imageTypes[path.extname(relativePath).toLowerCase()]!
+  if (!contentType || contentType !== declaredType) {
+    throw new Error(`Skill image ${relativePath} content does not match its file extension`)
+  }
   const descriptor: SkillImageAsset = {
     digest: await sha256(bytes),
     size: bytes.length,
-    content_type: imageTypes[path.extname(relativePath).toLowerCase()]!,
+    content_type: contentType,
   }
   return { descriptor, bytes }
 }
@@ -130,7 +162,10 @@ async function discoverSkillRoots(packageRoot: string, declaredPath: string) {
 
 export async function readCodexMarketplace(input: SkillAdapterInput): Promise<SkillAdapterResult> {
   const { definition, sourceRoot, ensurePaths, packageFilter, skillFilter, allowMissingScope } = input
-  const catalogPath = await resolveRealInside(sourceRoot, definition.catalog_path!)
+  if (definition.adapter.type !== 'codex_marketplace_skills') {
+    throw new Error(`${definition.id}: expected codex_marketplace_skills adapter`)
+  }
+  const catalogPath = await resolveRealInside(sourceRoot, definition.adapter.catalog_path)
   const entries = parseMarketplace(JSON.parse(await readFile(catalogPath, 'utf8')))
     .filter((entry) => !packageFilter || entry.name === packageFilter)
   if (packageFilter && !entries.length) {

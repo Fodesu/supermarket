@@ -7,7 +7,7 @@ import type {
   SkillRegistryState,
 } from '../types'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../types'
-import { assertRegistryID } from '../definition'
+import { assertRegistryID, isSkillRuntimeOS, skillInstallID } from '../definition'
 import { sha256 } from '../digest'
 import {
   type BlobBackend,
@@ -59,6 +59,16 @@ export function validateStoredCatalog(
     try {
       assertRegistryID(skill.package_id, 'package ID')
       assertRegistryID(skill.skill_id, 'skill ID')
+      if (skill.install_id !== skillInstallID(registryID, skill.package_id, skill.skill_id)) {
+        throw new Error('Catalog Skill install identity does not match its coordinates')
+      }
+      if (skill.runtime_requirements && (
+        !Array.isArray(skill.runtime_requirements.os)
+        || skill.runtime_requirements.os.length === 0
+        || skill.runtime_requirements.os.some((os) => !isSkillRuntimeOS(os))
+      )) {
+        throw new Error('Catalog Skill contains invalid runtime requirements')
+      }
       assertDigest(skill.artifact.digest)
       for (const image of [skill.icon?.card, skill.icon?.detail, skill.icon?.dark]) {
         if (image) {

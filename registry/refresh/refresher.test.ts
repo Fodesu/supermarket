@@ -34,7 +34,7 @@ describe('SkillRegistryRefresher', () => {
   test('uses each Registry refresh interval to determine whether it is due', () => {
     const definition: SkillRegistryDefinition = {
       schema_version: '1', id: 'memoh', name: 'Memoh', enabled: true, priority: 100,
-      adapter: 'skill_directory', source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 7_200,
+      adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 7_200,
       retention: { snapshots: 30 },
     }
     const lastSuccess = '2026-01-01T00:00:00.000Z'
@@ -51,7 +51,7 @@ describe('SkillRegistryRefresher', () => {
     await writeSkill(projectRoot, 'beta', '1')
     const definition: SkillRegistryDefinition = {
       schema_version: '1', id: 'memoh', name: 'Memoh', enabled: true, priority: 100,
-      adapter: 'skill_directory', source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
+      adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
       retention: { snapshots: 30 },
     }
     const store = new LocalSkillRegistryStore(dataRoot)
@@ -128,7 +128,7 @@ describe('SkillRegistryRefresher', () => {
 
     const definition: SkillRegistryDefinition = {
       schema_version: '1', id: 'gitreg', name: 'Git Registry', enabled: true, priority: 100,
-      adapter: 'skill_directory', source: { type: 'git', url: repository, ref: 'main' },
+      adapter: { type: 'skill_directory' }, source: { type: 'git', url: repository, ref: 'main' },
       refresh_interval_seconds: 43_200, retention: { snapshots: 30 },
     }
     const store = new LocalSkillRegistryStore(dataRoot)
@@ -170,7 +170,7 @@ describe('SkillRegistryRefresher', () => {
     await writeSkill(projectRoot, 'alpha', '1')
     const definition: SkillRegistryDefinition = {
       schema_version: '1', id: 'memoh', name: 'Memoh', enabled: true, priority: 100,
-      adapter: 'skill_directory', source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
+      adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
       retention: { snapshots: 30 },
     }
     const events: SkillRegistryRefreshProgress[] = []
@@ -216,7 +216,7 @@ describe('SkillRegistryRefresher', () => {
     }
     const definition: SkillRegistryDefinition = {
       schema_version: '1', id: 'memoh', name: 'Memoh', enabled: true, priority: 100,
-      adapter: 'skill_directory', source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
+      adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
       retention: { snapshots: 30 },
     }
     const result = await new SkillRegistryRefresher(store, projectRoot).refresh(definition)

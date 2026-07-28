@@ -3,10 +3,10 @@ import type { SkillRegistryDefinition } from '#registry/types'
 import { IndeterminateRemoteMutationError, type SkillRegistryStore } from '#registry/storage/contracts'
 import {
   isSkillRegistryRefreshDue,
-  loadSkillRegistryDefinitionResults,
   SkillRegistryRefresher,
   type SkillRegistryRefreshProgress,
 } from '#registry/refresh/refresher'
+import { loadSkillRegistryDefinitionResults } from '#registry/definitions/repository'
 import { createSkillRegistryStore } from './runtime'
 import { acquireRegistryWriterLock } from '#registry/maintenance/writer-lock'
 
@@ -104,9 +104,16 @@ if (import.meta.main) {
   if (skillID && !packageID) throw new Error('--skill requires --package')
   if ((packageID || skillID) && !registryID) throw new Error('--package and --skill require --registry')
 
+  const coordinatedWriter = Boolean(
+    process.env.REGISTRY_WRITER_TOKEN
+    && process.env.REGISTRY_R2_INTERNAL_URL
+    && process.env.REGISTRY_R2_MUTABLE_URL,
+  )
   const lockPath = process.env.REGISTRY_REFRESH_LOCK_DIR || path.join(projectRoot, '.data/registry-refresh.lock')
   const store = createSkillRegistryStore(projectRoot)
-  const writerLock = await acquireRegistryWriterLock(lockPath)
+  const writerLock = coordinatedWriter
+    ? { assertActive() {}, async release() {} }
+    : await acquireRegistryWriterLock(lockPath)
   try {
     const loaded = await loadSkillRegistryDefinitionResults(projectRoot)
     const selected = registryID ? loaded.definitions.filter((definition) => definition.id === registryID) : loaded.definitions

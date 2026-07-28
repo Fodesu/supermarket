@@ -69,7 +69,7 @@ describe('Skill Registry HTTP protocol', () => {
     const store = new BlobSkillRegistryStore(new R2BlobBackend(bucket))
     const definition: SkillRegistryDefinition = {
       schema_version: '1', id: 'example', name: 'Example', enabled: true, priority: 10,
-      adapter: 'skill_directory', source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
+      adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
       retention: { snapshots: 30 },
     }
     const installID = 'example+tools+demo'

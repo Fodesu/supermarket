@@ -1,25 +1,21 @@
 import type { CatalogSkill, SkillCategorySummary, SkillRuntimeOS } from './types'
 
-const categoryNames: Record<string, string> = {
-  productivity: 'Productivity', communication: 'Communication', 'developer-tools': 'Developer Tools',
-  'data-analytics': 'Data & Analytics', 'business-operations': 'Business & Operations', finance: 'Finance',
-  creativity: 'Creativity', 'education-research': 'Education & Research', security: 'Security', travel: 'Travel', other: 'Other',
-}
-const categoryAliases: Record<string, string> = {
-  'developer tools': 'developer-tools', 'data & analytics': 'data-analytics',
-  'business & operations': 'business-operations', 'education & research': 'education-research',
-}
-
 function slugify(value: string) {
-  return value.normalize('NFKD').toLowerCase().trim().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  return value.normalize('NFKD').toLowerCase().trim().replace(/&/g, ' ').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
 }
 
-export function normalizeSkillCategory(value?: string, mappings: Record<string, string> = {}) {
+function categoryName(value: string) {
+  if (!/^[a-z0-9-]+$/.test(value)) return value
+  return value.split('-').filter(Boolean)
+    .map((part) => `${part[0]!.toUpperCase()}${part.slice(1)}`)
+    .join(' ')
+}
+
+export function normalizeSkillCategory(value?: string) {
   const sourceName = value?.trim() || undefined
-  if (!sourceName) return { id: 'other', name: categoryNames.other! }
-  const mapped = mappings[sourceName] ?? categoryAliases[sourceName.toLowerCase()] ?? slugify(sourceName)
-  const id = mapped || 'other'
-  return { id, name: categoryNames[id] ?? sourceName, sourceName }
+  if (!sourceName) return { id: 'other', name: 'Other' }
+  const id = slugify(sourceName) || 'other'
+  return { id, name: categoryName(sourceName), sourceName }
 }
 
 function searchScore(skill: CatalogSkill, rawQuery: string) {
@@ -57,7 +53,7 @@ export function searchCatalogSkills(all: CatalogSkill[], options: SkillCatalogSe
     if (options.registry && skill.registry_id !== options.registry) return false
     if (options.package && skill.package_id !== options.package) return false
     if (options.category && skill.category !== options.category.toLowerCase()) return false
-    if (options.os && !skill.runtime_requirements.os.includes(options.os)) return false
+    if (options.os && !skill.runtime_requirements?.os.includes(options.os)) return false
     if (options.tag && !skill.tags.some((tag) => tag.toLowerCase() === options.tag!.toLowerCase())) return false
     return true
   }).map((skill) => ({ skill, score: options.q ? searchScore(skill, options.q) : 0 }))

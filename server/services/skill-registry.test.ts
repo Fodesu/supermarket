@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import type { SkillRegistryCatalog, SkillRegistryDefinition } from '#registry/types'
 import { LocalSkillRegistryStore } from '#registry/storage/local'
+import type { SkillRegistryStore } from '#registry/storage/contracts'
 import { getEnabledSkillRegistryCatalogs, getRuntimeSkillRegistryStore } from './skill-registry'
 
 const roots: string[] = []
@@ -11,7 +12,7 @@ afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recur
 
 const definition: SkillRegistryDefinition = {
   schema_version: '1', id: 'example', name: 'Example', enabled: true, priority: 10,
-  adapter: 'skill_directory', source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
+  adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
   retention: { snapshots: 30 },
 }
 
@@ -42,5 +43,36 @@ describe('Skill Registry loader', () => {
     })
     expect(await getEnabledSkillRegistryCatalogs(store)).toEqual([])
     expect(await getEnabledSkillRegistryCatalogs(store, definition.id)).toEqual([])
+  })
+
+  test('reuses immutable Snapshots while still reading mutable state', async () => {
+    const revision = 'b'.repeat(64)
+    const catalog: SkillRegistryCatalog = {
+      schema_version: '1', registry: definition, revision,
+      source_revision: revision, synced_at: '2026-01-01T00:00:00.000Z', skills: [], diagnostics: [],
+    }
+    let stateReads = 0
+    let snapshotReads = 0
+    const store = {
+      async listRegistryIDs() { return ['example'] },
+      async getState() {
+        stateReads++
+        return {
+          schema_version: '1' as const,
+          definition,
+          current_snapshot: revision,
+          status: { state: 'ready' as const },
+        }
+      },
+      async getSnapshot() {
+        snapshotReads++
+        return catalog
+      },
+    } as unknown as SkillRegistryStore
+
+    await getEnabledSkillRegistryCatalogs(store)
+    await getEnabledSkillRegistryCatalogs(store)
+    expect(stateReads).toBe(2)
+    expect(snapshotReads).toBe(1)
   })
 })

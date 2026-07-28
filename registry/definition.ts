@@ -1,13 +1,11 @@
 import path from 'node:path'
 import type {
-  SkillRegistryAdapter,
   SkillRegistryDefinition,
   SkillRegistrySource,
   SkillRuntimeOS,
   SkillRuntimeRequirements,
 } from './types'
 
-const adapters = new Set<SkillRegistryAdapter>(['skill_directory', 'codex_marketplace_skills'])
 export const supportedSkillRuntimeOS: SkillRuntimeOS[] = ['darwin', 'linux', 'win32']
 const runtimeOS = new Set<string>(supportedSkillRuntimeOS)
 const safeIDPattern = /^[a-z0-9][a-z0-9._-]*$/
@@ -15,6 +13,14 @@ const safeIDPattern = /^[a-z0-9][a-z0-9._-]*$/
 export function assertRegistryID(value: string, label = 'ID'): string {
   if (!safeIDPattern.test(value)) throw new Error(`Invalid ${label}: ${value}`)
   return value
+}
+
+export function skillInstallID(registryID: string, packageID: string, skillID: string): string {
+  return [
+    assertRegistryID(registryID, 'registry ID'),
+    assertRegistryID(packageID, 'package ID'),
+    assertRegistryID(skillID, 'skill ID'),
+  ].join('+')
 }
 
 export function isSkillRuntimeOS(value: string): value is SkillRuntimeOS {
@@ -69,74 +75,53 @@ function parseRetention(raw: unknown, registryID: string): SkillRegistryDefiniti
   return { snapshots }
 }
 
-function parseOverrides(raw: unknown, registryID: string, kind: 'package' | 'skill') {
-  if (raw == null) return undefined
-  if (!raw || typeof raw !== 'object') throw new Error(`${registryID}.${kind}_overrides must be an object`)
-  const overrides: Record<string, { runtime_requirements?: SkillRuntimeRequirements }> = {}
-  for (const [key, value] of Object.entries(raw as Record<string, any>)) {
-    const parts = kind === 'skill' ? key.split('/') : [key]
-    if (parts.length !== (kind === 'skill' ? 2 : 1) || parts.some((part) => !safeIDPattern.test(part))) {
-      throw new Error(`${registryID}: invalid ${kind} override id: ${key}`)
-    }
-    if (!value || typeof value !== 'object' || Array.isArray(value)
-      || !Object.hasOwn(value, 'runtime_requirements')
-      || Object.keys(value).some((field) => field !== 'runtime_requirements')) {
-      throw new Error(`${registryID}.${kind}_overrides.${key} must contain only runtime_requirements`)
-    }
-    overrides[key] = {
-      runtime_requirements: parseRuntimeRequirements(
-        value?.runtime_requirements,
-        `${registryID}.${kind}_overrides.${key}.runtime_requirements`,
-      ),
-    }
-  }
-  return Object.keys(overrides).length ? overrides : undefined
-}
-
-function parseTaxonomy(raw: unknown, registryID: string): SkillRegistryDefinition['taxonomy'] {
-  if (raw == null) return undefined
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error(`${registryID}.taxonomy must be an object`)
-  }
-  const mappingsRaw = (raw as Record<string, unknown>).mappings
-  if (mappingsRaw == null) return undefined
-  if (!mappingsRaw || typeof mappingsRaw !== 'object' || Array.isArray(mappingsRaw)) {
-    throw new Error(`${registryID}.taxonomy.mappings must be an object`)
-  }
-  const mappings: Record<string, string> = {}
-  for (const [source, target] of Object.entries(mappingsRaw as Record<string, unknown>)) {
-    const sourceName = source.trim()
-    const categoryID = typeof target === 'string' ? target.trim() : ''
-    if (!sourceName || !safeIDPattern.test(categoryID)) {
-      throw new Error(`${registryID}: invalid taxonomy mapping ${source}: ${String(target)}`)
-    }
-    mappings[sourceName] = categoryID
-  }
-  return Object.keys(mappings).length ? { mappings } : undefined
-}
-
 export function resolveSkillRuntimeRequirements(
   definition: SkillRegistryDefinition,
   packageID: string,
   skillID: string,
   declared?: unknown,
-): SkillRuntimeRequirements {
-  return definition.skill_overrides?.[`${packageID}/${skillID}`]?.runtime_requirements
-    ?? definition.package_overrides?.[packageID]?.runtime_requirements
-    ?? parseRuntimeRequirements(declared, `${definition.id}/${packageID}/${skillID}.runtime_requirements`)
-    ?? definition.defaults?.runtime_requirements
-    ?? { os: [...supportedSkillRuntimeOS] }
+): SkillRuntimeRequirements | undefined {
+  return parseRuntimeRequirements(declared, `${definition.id}/${packageID}/${skillID}.runtime_requirements`)
 }
 
 export function parseSkillRegistryDefinition(raw: unknown): SkillRegistryDefinition {
   if (!raw || typeof raw !== 'object') throw new Error('Registry definition must be an object')
   const data = raw as Record<string, any>
   const id = assertRegistryID(String(data.id ?? '').trim(), 'registry ID')
+  const supportedFields = new Set([
+    'schema_version', 'id', 'name', 'enabled', 'priority', 'adapter',
+    'source', 'refresh_interval', 'retention',
+  ])
+  const unsupportedField = Object.keys(data).find((field) => !supportedFields.has(field))
+  if (unsupportedField) throw new Error(`${id}: unsupported Registry field ${unsupportedField}`)
   if (data.schema_version !== '1') throw new Error(`${id}: unsupported schema_version ${String(data.schema_version)}`)
   const name = String(data.name ?? '').trim()
-  const adapter = String(data.adapter ?? '') as SkillRegistryAdapter
   if (!name) throw new Error(`${id}: name is required`)
-  if (!adapters.has(adapter)) throw new Error(`${id}: unsupported adapter ${adapter}`)
+  const adapterData = data.adapter
+  if (!adapterData || typeof adapterData !== 'object' || Array.isArray(adapterData)) {
+    throw new Error(`${id}: adapter must be an object`)
+  }
+  const adapterType = String(adapterData.type ?? '')
+  let adapter: SkillRegistryDefinition['adapter']
+  if (adapterType === 'skill_directory') {
+    if (Object.keys(adapterData).some((field) => field !== 'type')) {
+      throw new Error(`${id}: skill_directory adapter contains unsupported fields`)
+    }
+    adapter = { type: 'skill_directory' }
+  } else if (adapterType === 'codex_marketplace_skills') {
+    if (Object.keys(adapterData).some((field) => !['type', 'catalog_path'].includes(field))) {
+      throw new Error(`${id}: codex_marketplace_skills adapter contains unsupported fields`)
+    }
+    if (typeof adapterData.catalog_path !== 'string' || !adapterData.catalog_path.trim()) {
+      throw new Error(`${id}: adapter.catalog_path is required for ${adapterType}`)
+    }
+    adapter = {
+      type: 'codex_marketplace_skills',
+      catalog_path: safeRelativePath(adapterData.catalog_path, 'catalog path'),
+    }
+  } else {
+    throw new Error(`${id}: unsupported adapter ${adapterType}`)
+  }
 
   const sourceData = data.source
   if (!sourceData || typeof sourceData !== 'object') throw new Error(`${id}: source is required`)
@@ -149,8 +134,8 @@ export function parseSkillRegistryDefinition(raw: unknown): SkillRegistryDefinit
     source = { type: 'local', path: localPath === '.' ? '' : safeRelativePath(localPath, 'local source path') }
   } else if (sourceData.type === 'git') {
     const url = String(sourceData.url ?? '').trim()
-    if (!/^https:\/\//.test(url) && !/^ssh:\/\//.test(url) && !/^git@/.test(url)) {
-      throw new Error(`${id}: invalid git source URL`)
+    if (!/^https:\/\//.test(url)) {
+      throw new Error(`${id}: git source URL must use HTTPS`)
     }
     source = {
       type: 'git', url,
@@ -161,24 +146,12 @@ export function parseSkillRegistryDefinition(raw: unknown): SkillRegistryDefinit
     throw new Error(`${id}: unsupported source type ${String(sourceData.type)}`)
   }
 
-  const catalogPath = data.catalog_path ? safeRelativePath(String(data.catalog_path), 'catalog path') : undefined
-  if (adapter === 'codex_marketplace_skills' && !catalogPath) {
-    throw new Error(`${id}: catalog_path is required for ${adapter}`)
-  }
-  const defaultRequirements = parseRuntimeRequirements(
-    data.defaults?.runtime_requirements,
-    `${id}.defaults.runtime_requirements`,
-  )
   return {
     schema_version: '1', id, name,
     enabled: data.enabled !== false,
     priority: Number.isFinite(Number(data.priority)) ? Number(data.priority) : 0,
-    adapter, source, catalog_path: catalogPath,
+    adapter, source,
     refresh_interval_seconds: parseRefreshInterval(data.refresh_interval, `${id}.refresh_interval`),
     retention: parseRetention(data.retention, id),
-    taxonomy: parseTaxonomy(data.taxonomy, id),
-    defaults: defaultRequirements ? { runtime_requirements: defaultRequirements } : undefined,
-    package_overrides: parseOverrides(data.package_overrides, id, 'package'),
-    skill_overrides: parseOverrides(data.skill_overrides, id, 'skill'),
   }
 }
