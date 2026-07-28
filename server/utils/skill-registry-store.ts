@@ -24,7 +24,6 @@ export interface BlobBackend {
   put(key: string, value: Uint8Array): Promise<void>
   delete(key: string): Promise<void>
   list(prefix: string): Promise<string[]>
-  listPrefixes?(prefix: string): Promise<string[]>
   getStream?(key: string): Promise<{ body: ReadableStream<Uint8Array>; size?: number } | null>
   getVersioned?(key: string): Promise<{ value: Uint8Array; version: string } | null>
   putConditional?(key: string, value: Uint8Array, expectedVersion: string | null): Promise<string | null>
@@ -145,13 +144,6 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
   constructor(private readonly backend: BlobBackend) {}
 
   async listRegistryIDs(): Promise<string[]> {
-    if (this.backend.listPrefixes) {
-      const prefixes = await this.backend.listPrefixes('skill-registries/')
-      return [...new Set(prefixes.flatMap((prefix): string[] => {
-        const match = prefix.match(/^skill-registries\/([^/]+)\/$/)
-        return match?.[1] ? [match[1]] : []
-      }))].sort()
-    }
     const keys = await this.backend.list('skill-registries/')
     return [...new Set(keys.flatMap((key): string[] => {
       const match = key.match(/^skill-registries\/([^/]+)\/state\.json$/)
@@ -490,15 +482,5 @@ export class R2BlobBackend implements BlobBackend {
       cursor = page.truncated ? page.cursor : undefined
     } while (cursor)
     return keys.sort()
-  }
-  async listPrefixes(prefix: string) {
-    const prefixes: string[] = []
-    let cursor: string | undefined
-    do {
-      const page = await this.bucket.list({ prefix, cursor, delimiter: '/' })
-      prefixes.push(...(page.delimitedPrefixes ?? []))
-      cursor = page.truncated ? page.cursor : undefined
-    } while (cursor)
-    return [...new Set(prefixes)].sort()
   }
 }
