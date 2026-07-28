@@ -6,12 +6,12 @@ Official Plugin & Skill Registry for [Memoh](https://github.com/memohai/Memoh).
 
 ```text
 supermarket/
-├── plugins/                         # Plugin registry
-│   └── <plugin-id>/                 # Plugin manifest and optional bundle files
-├── skills/                          # Authoring source for the memoh Registry
-│   └── <skill-id>/SKILL.md
 ├── registries/
-│   └── <registry-id>/registry.yaml  # Registry definitions
+│   ├── memoh/
+│   │   ├── registry.yaml            # Repository-owned Registry definition
+│   │   ├── plugins/<plugin-id>/     # Plugin manifests and optional bundle files
+│   │   └── skills/<skill-id>/       # Repository-owned Skill sources
+│   └── openai/registry.yaml         # External Registry definition
 ├── archive/                         # Shared TAR and gzip primitives
 ├── registry/                        # Registry model, sources, adapters, storage, refresh, and maintenance
 ├── server/                          # Nitro API routes and HTTP-facing services
@@ -56,7 +56,7 @@ Registry Skills use the identity `(registry_id, package_id, skill_id)`. The refe
 
 ### Adding a Plugin
 
-1. Create a directory under `plugins/` named after your plugin (for example, `plugins/notion/`).
+1. Create a directory under `registries/memoh/plugins/` named after your plugin (for example, `registries/memoh/plugins/notion/`).
 2. Add a `plugin.yaml` manifest:
 
 ```yaml
@@ -98,7 +98,7 @@ skills: []
 
 ### Adding a Skill
 
-1. Create `skills/<skill-id>/SKILL.md` with YAML frontmatter:
+1. Create `registries/memoh/skills/<skill-id>/SKILL.md` with YAML frontmatter:
 
 ```markdown
 ---
@@ -146,7 +146,7 @@ retention:
   snapshots: 30
 ```
 
-Supported sources are `local` and HTTPS `git`; adapters are `skill_directory` and `codex_marketplace_skills`. Run `bun run registry:validate` before refreshing.
+Supported sources are `local` and HTTPS `git`; adapters are `skill_directory` and `codex_marketplace_skills`. A local source path is relative to the directory containing its `registry.yaml`. Run `bun run registry:validate` before refreshing.
 
 The API Worker is read-only. The production Writer runs every 15 minutes and publishes immutable Snapshots and Artifacts before switching a Registry's `state.json` pointer. Test and production resources are declared under the matching environments in `workers/api/wrangler.jsonc` and `workers/writer/wrangler.jsonc`; both Workers must bind the same R2 bucket within an environment. The test Writer has no deployed cron. To exercise its scheduled handler locally, run `bun run registry:writer:dev`, then request `http://127.0.0.1:8787/__scheduled`.
 

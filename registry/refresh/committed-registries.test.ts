@@ -9,11 +9,12 @@ describe('Committed Skill Registries', () => {
   test('publishes every committed Memoh Skill with its complete file set', async () => {
     const projectRoot = path.resolve(import.meta.dirname, '../..')
     const definition = (await loadSkillRegistryDefinitions(projectRoot)).find((item) => item.id === 'memoh')!
-    const entries = (await readdir(path.join(projectRoot, 'skills'), { withFileTypes: true }))
+    const sourceRoot = path.join(projectRoot, 'registries/memoh/skills')
+    const entries = (await readdir(sourceRoot, { withFileTypes: true }))
       .filter((entry) => entry.isDirectory())
     const expected = (await Promise.all(entries.map(async (entry) => {
       try {
-        await access(path.join(projectRoot, 'skills', entry.name, 'SKILL.md'))
+        await access(path.join(sourceRoot, entry.name, 'SKILL.md'))
         return entry.name
       } catch {
         return undefined

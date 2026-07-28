@@ -47,7 +47,8 @@ export async function materializeLocalSource(
   projectRoot: string,
 ): Promise<MaterializedSkillRegistrySource> {
   if (definition.source.type !== 'local') throw new Error('Expected a local Registry source')
-  const root = await resolveRealInside(projectRoot, definition.source.path)
+  const registryRoot = await resolveRealInside(projectRoot, path.join('registries', definition.id))
+  const root = await resolveRealInside(registryRoot, definition.source.path)
   return {
     root,
     revision: await directoryRevision(root),

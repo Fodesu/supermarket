@@ -16,7 +16,7 @@ const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
 
 async function writeSkill(projectRoot: string, id: string, version: string) {
-  const directory = path.join(projectRoot, 'skills', id)
+  const directory = path.join(projectRoot, 'registries/memoh/skills', id)
   await mkdir(directory, { recursive: true })
   await writeFile(path.join(directory, 'SKILL.md'), `---\nname: ${id}\ndescription: Version ${version}\n---\n\n# ${id}\n`)
 }
@@ -92,12 +92,12 @@ describe('SkillRegistryRefresher', () => {
       .rejects.toThrow('unchanged Registry definition')
     expect((await state(store, 'memoh'))?.definition.priority).toBe(100)
 
-    await rm(path.join(projectRoot, 'skills/beta'), { recursive: true })
+    await rm(path.join(projectRoot, 'registries/memoh/skills/beta'), { recursive: true })
     await refresher.refresh(definition, { package: 'beta' })
     expect((await snapshot(store, 'memoh'))?.skills.map((skill) => skill.skill_id)).toEqual(['alpha'])
     await expect(refresher.refresh(definition, { package: 'missing' })).rejects.toThrow('not found')
 
-    await writeFile(path.join(projectRoot, 'skills/alpha/SKILL.md'), '# invalid')
+    await writeFile(path.join(projectRoot, 'registries/memoh/skills/alpha/SKILL.md'), '# invalid')
     const beforeFailure = await snapshot(store, 'memoh')
     const lastSuccessAt = (await state(store, 'memoh'))?.status.last_success_at
     await expect(refresher.refresh({ ...definition, priority: 101 })).rejects.toThrow('frontmatter')

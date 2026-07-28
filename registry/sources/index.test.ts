@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import type { SkillRegistryDefinition } from '../types'
@@ -67,5 +67,26 @@ describe('Skill Registry Git sources', () => {
     const after = (await readdir(os.tmpdir()))
       .filter((name) => name.startsWith('supermarket-skills-git-'))
     expect(after.filter((name) => !before.has(name))).toEqual([])
+  })
+})
+
+describe('Skill Registry local sources', () => {
+  test('resolves source paths relative to the Registry definition directory', async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'skill-source-project-'))
+    roots.push(projectRoot)
+    const sourceRoot = path.join(projectRoot, 'registries/example/skills')
+    await mkdir(sourceRoot, { recursive: true })
+    await writeFile(path.join(sourceRoot, 'README.md'), 'local Registry source')
+    const definition: SkillRegistryDefinition = {
+      schema_version: '1', id: 'example', name: 'Example', enabled: true, priority: 10,
+      adapter: { type: 'skill_directory' },
+      source: { type: 'local', path: 'skills' },
+      refresh_interval_seconds: 43_200,
+      retention: { snapshots: 30 },
+    }
+
+    const source = await materializeSkillRegistrySource(definition, projectRoot)
+    expect(source.root).toBe(await realpath(sourceRoot))
+    expect(source.revision).toMatch(/^[a-f0-9]{64}$/)
   })
 })

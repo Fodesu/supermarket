@@ -17,6 +17,5 @@ COPY registries ./registries
 COPY registry ./registry
 COPY scripts ./scripts
 COPY archive ./archive
-COPY skills ./skills
 
 CMD ["sh", "-c", "while :; do sleep 3600; done"]
