@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { createTar, gzip } from '../server/utils/tar'
+import { createTar, gzip } from '#archive/tar'
 import { extractSkillArchive, gunzip, parseTarArchive, validateSkillArchive } from './archive'
 
 const roots: string[] = []

@@ -1,6 +1,6 @@
 import { defineHandler } from 'nitro'
-import { getAllPluginTags } from '../utils/plugin-loader'
-import { getRegistrySkillTags } from '../utils/skill-registry-loader'
+import { getAllPluginTags } from '#server/services/plugin'
+import { getRegistrySkillTags } from '#server/services/skill-registry'
 
 export default defineHandler(async (event) => {
   const [pluginTags, registrySkillTags] = await Promise.all([

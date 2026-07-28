@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    ".wrangler/types/*.d.ts",
+    "archive/**/*.ts",
+    "client/**/*.ts",
+    "registry/**/*.ts",
+    "scripts/**/*.ts",
+    "server/**/*.ts",
+    "test/**/*.ts",
+    "vite.config.ts",
+    "workers/**/*.ts"
+  ]
+}

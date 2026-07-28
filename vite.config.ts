@@ -67,11 +67,13 @@ function nitroRawHtmlFix(): Plugin {
       if (id.includes('html-proxy') && /skills[/\\]/.test(id)) {
         return { id: '\0' + id, moduleSideEffects: false }
       }
+      return undefined
     },
     load(id) {
       if (id.startsWith('\0') && id.includes('html-proxy')) {
         return ''
       }
+      return undefined
     },
   }
 }

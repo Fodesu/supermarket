@@ -1,6 +1,6 @@
 import { defineHandler, HTTPError } from 'nitro'
 import { getRouterParam } from 'h3'
-import { getPluginById } from '../../utils/plugin-loader'
+import { getPluginById } from '#server/services/plugin'
 
 export default defineHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
@@ -12,4 +12,3 @@ export default defineHandler(async (event) => {
 
   return plugin
 })
-

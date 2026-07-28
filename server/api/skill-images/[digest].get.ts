@@ -1,6 +1,6 @@
 import { defineHandler, HTTPError } from 'nitro'
 import { getHeader, getRouterParam, setResponseHeader, setResponseStatus } from 'h3'
-import { getRuntimeSkillRegistryStore } from '../../utils/skill-registry-loader'
+import { getRuntimeSkillRegistryStore } from '#server/services/skill-registry'
 
 export default defineHandler(async (event) => {
   const digest = getRouterParam(event, 'digest')!

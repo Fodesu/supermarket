@@ -1,7 +1,7 @@
 import { defineHandler, HTTPError } from 'nitro'
 import { getQuery, getRouterParam } from 'h3'
-import { getCatalogSkills, getSkillRegistryDetails } from '../../../../utils/skill-registry-loader'
-import { parseSkillRegistryQuery, requireSkillRegistryID } from '../../../../utils/skill-registry-query'
+import { parseSkillRegistryQuery, requireSkillRegistryID } from '#server/services/skill-registry-query'
+import { getCatalogSkills, getSkillRegistryDetails } from '#server/services/skill-registry'
 
 export default defineHandler(async (event) => {
   const id = requireSkillRegistryID(getRouterParam(event, 'id')!, 'registry ID')

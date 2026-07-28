@@ -1,14 +1,14 @@
 import path from 'node:path'
-import type { SkillRegistryDefinition } from '../server/types/skill-registry'
-import { IndeterminateRemoteMutationError, type SkillRegistryStore } from '../server/utils/skill-registry-store'
+import type { SkillRegistryDefinition } from '#registry/types'
+import { IndeterminateRemoteMutationError, type SkillRegistryStore } from '#registry/storage/contracts'
 import {
   isSkillRegistryRefreshDue,
   loadSkillRegistryDefinitionResults,
   SkillRegistryRefresher,
   type SkillRegistryRefreshProgress,
-} from './skill-registry/refresher'
-import { createSkillRegistryStore } from './skill-registry/store'
-import { acquireRegistryWriterLock } from './skill-registry/writer-lock'
+} from '#registry/refresh/refresher'
+import { createSkillRegistryStore } from './skill-registry-runtime'
+import { acquireRegistryWriterLock } from '#registry/maintenance/writer-lock'
 
 export function createSkillRegistryProgressRenderer(
   write: (text: string) => void = (text) => process.stderr.write(text),

@@ -3,7 +3,7 @@ import path from 'node:path'
 import {
   MAX_SKILL_ARTIFACT_FILES,
   MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
-} from '../server/types/skill-registry'
+} from '#registry/types'
 
 const decoder = new TextDecoder()
 const blockSize = 512

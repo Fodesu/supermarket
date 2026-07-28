@@ -1,8 +1,8 @@
 import path from 'node:path'
-import { LocalSkillRegistryStore } from '../server/utils/local-skill-registry-store'
-import { garbageCollectSkillRegistries } from './skill-registry/gc'
-import { loadSkillRegistryDefinitions } from './skill-registry/refresher'
-import { acquireRegistryWriterLock } from './skill-registry/writer-lock'
+import { LocalSkillRegistryStore } from '#registry/storage/local'
+import { garbageCollectSkillRegistries } from '#registry/maintenance/gc'
+import { loadSkillRegistryDefinitions } from '#registry/refresh/refresher'
+import { acquireRegistryWriterLock } from '#registry/maintenance/writer-lock'
 
 if (import.meta.main) {
   const supported = new Set(['--apply'])
