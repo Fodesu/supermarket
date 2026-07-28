@@ -5,6 +5,7 @@ import type {
   SkillRegistryCatalog,
   SkillRegistryState,
 } from '../types'
+import { z } from 'zod'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../types'
 import { assertRegistryID } from '../definition'
 import { summarizeCurrentCatalog } from '../catalog'
@@ -26,6 +27,13 @@ const decoder = new TextDecoder()
 export const MAX_REGISTRY_STATE_BYTES = 256 * 1024
 export const MAX_REGISTRY_SNAPSHOT_BYTES = 8 * 1024 * 1024
 
+const summaryCountsSchema = z.object({
+  skill_count: z.number().int().min(0),
+  package_count: z.number().int().min(0),
+  category_count: z.number().int().min(0),
+  skipped_package_count: z.number().int().min(0),
+})
+
 function validateState(state: SkillRegistryState, id: string) {
   if (state.schema_version !== '1' || state.definition?.id !== id || !state.status?.state) {
     throw new Error(`Invalid Registry state: ${id}`)
@@ -40,8 +48,8 @@ function validateState(state: SkillRegistryState, id: string) {
     || !summary.source_revision || !Number.isFinite(Date.parse(summary.synced_at))) {
     throw new Error(`Registry state has an invalid current summary: ${id}`)
   }
-  for (const value of [summary.skill_count, summary.package_count, summary.category_count, summary.skipped_package_count]) {
-    if (!Number.isSafeInteger(value) || value < 0) throw new Error(`Registry state has invalid summary counts: ${id}`)
+  if (!summaryCountsSchema.safeParse(summary).success) {
+    throw new Error(`Registry state has invalid summary counts: ${id}`)
   }
 }
 

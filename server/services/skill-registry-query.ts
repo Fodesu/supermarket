@@ -1,4 +1,5 @@
 import { HTTPError } from 'nitro'
+import { z } from 'zod'
 import type { SkillCatalogSearchOptions } from '#registry/catalog'
 import { assertRegistryID, isSkillRuntimeOS } from '#registry/definition'
 import { positiveIntegerQuery, scalarQuery } from './query'
@@ -22,9 +23,8 @@ export function parseSkillRegistryQuery(query: Record<string, unknown>, registry
   const os = scalarQuery(query, 'os')
   const normalizedOS = os?.toLowerCase()
   const sortValue = scalarQuery(query, 'sort')
-  if (sortValue != null && !['relevance', 'name', 'registry', 'package'].includes(sortValue)) {
-    badRequest(`Unsupported sort: ${sortValue}`)
-  }
+  const sort = z.enum(['relevance', 'name', 'registry', 'package']).optional()
+  if (!sort.safeParse(sortValue).success) badRequest(`Unsupported sort: ${sortValue}`)
   if (normalizedOS != null && !isSkillRuntimeOS(normalizedOS)) badRequest(`Unsupported os: ${os}`)
   return {
     registry: registryValue != null ? requireSkillRegistryID(registryValue, 'registry ID') : undefined,

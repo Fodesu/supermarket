@@ -40,6 +40,7 @@
   },
   "dependencies": {
     "modern-tar": "^0.7.6",
-    "yaml": "^2.8.3"
+    "yaml": "^2.8.3",
+    "zod": "^4.4.3"
   }
 }
