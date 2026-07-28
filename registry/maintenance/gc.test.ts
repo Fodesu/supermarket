@@ -10,6 +10,7 @@ import type {
 } from '../types'
 import { LocalSkillRegistryStore } from '../storage/local'
 import { sha256 } from '../digest'
+import { summarizeCurrentCatalog } from '../catalog'
 import { garbageCollectSkillRegistries } from './gc'
 
 const roots: string[] = []
@@ -76,14 +77,15 @@ function fixture(store: LocalSkillRegistryStore): FixtureStore {
     async putDefinition(value: SkillRegistryDefinition) {
       const existing = await store.getState(value.id)
       await store.putState({
-        schema_version: '1', definition: value, current_snapshot: existing?.current_snapshot,
+        schema_version: '2', definition: value, current_snapshot: existing?.current_snapshot,
+        current_summary: existing?.current_summary,
         status: existing?.status ?? { state: 'empty' },
       })
     },
     async publishCatalog(value: SkillRegistryCatalog) {
       const existing = await store.getState(value.registry.id)
       await store.publishSnapshot(value, {
-        schema_version: '1', definition: value.registry, current_snapshot: value.revision,
+        schema_version: '2', definition: value.registry, current_snapshot: value.revision, current_summary: summarizeCurrentCatalog(value),
         status: existing?.status ?? { state: 'ready' },
       })
     },
@@ -158,7 +160,8 @@ describe('Skill Registry garbage collection', () => {
     await store.publishCatalog(catalog(known, newRevision, '2026-01-02T00:00:00.000Z', newArtifact))
     const statePath = path.join(root, 'skill-registries/known/state.json')
     const state = JSON.parse(await Bun.file(statePath).text())
-    await Bun.write(statePath, JSON.stringify({ ...state, current_snapshot: oldRevision }))
+    const oldCatalog = await store.getSnapshot(known.id, oldRevision)
+    await Bun.write(statePath, JSON.stringify({ ...state, current_snapshot: oldRevision, current_summary: summarizeCurrentCatalog(oldCatalog!) }))
 
     const result = await garbageCollectSkillRegistries({ store, definitions: [known] })
     const registry = result.registries.find((item) => item.registry_id === 'known')
@@ -241,7 +244,8 @@ describe('Skill Registry garbage collection', () => {
           return async (registryID: string, revision: string) => {
             await target.deleteSnapshot(registryID, revision)
             const state = await target.getState(known.id)
-            await Bun.write(currentPath, JSON.stringify({ ...state, current_snapshot: revisions[1] }))
+            const previous = await target.getSnapshot(known.id, revisions[1]!)
+            await Bun.write(currentPath, JSON.stringify({ ...state, current_snapshot: revisions[1], current_summary: summarizeCurrentCatalog(previous!) }))
           }
         }
         const value = Reflect.get(target, property)

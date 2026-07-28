@@ -97,35 +97,41 @@ export async function getCatalogSkill(event: RuntimeEvent, registryID: string, p
 }
 
 export async function getSkillRegistrySummaries(event: RuntimeEvent): Promise<SkillRegistrySummary[]> {
-  const store = await getRuntimeSkillRegistryStore(event)
-  const ids = await store.listRegistryIDs()
-  const summaries = await Promise.all(ids.map((id) => getSkillRegistrySummary(store, id)))
-  return summaries.filter((summary): summary is SkillRegistrySummary => summary !== null)
-    .sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id))
+  return getSkillRegistrySummariesForStore(await getRuntimeSkillRegistryStore(event))
 }
 
-async function getSkillRegistrySummary(store: SkillRegistryStore, registryID: string): Promise<SkillRegistrySummary | null> {
+export async function getSkillRegistrySummariesForStore(store: SkillRegistryStore): Promise<SkillRegistrySummary[]> {
+  const ids = await store.listRegistryIDs()
+  const summaries: SkillRegistrySummary[] = []
+  for (const id of ids) {
+    const summary = await getSkillRegistrySummary(store, id)
+    if (summary) summaries.push(summary)
+  }
+  return summaries.sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id))
+}
+
+async function getSkillRegistrySummary(
+  store: SkillRegistryStore,
+  registryID: string,
+): Promise<SkillRegistrySummary | null> {
   const state = await store.getState(registryID)
   if (!state) return null
   const registry = state.definition
   const status = state.status
-  const catalog = state.current_snapshot
-    ? await cachedSnapshot(store, registryID, state.current_snapshot)
-    : null
-  if (state.current_snapshot && !catalog) throw new Error(`Current Registry snapshot is missing: ${registryID}/${state.current_snapshot}`)
+  const current = state.current_summary
   const lastSuccess = status?.last_success_at ? Date.parse(status.last_success_at) : Number.NaN
   const nextRefreshAt = Number.isFinite(lastSuccess)
     ? new Date(lastSuccess + registry.refresh_interval_seconds * 1000).toISOString()
     : undefined
   return {
     id: registry.id, name: registry.name, enabled: registry.enabled, priority: registry.priority,
-    adapter: registry.adapter.type, revision: catalog?.revision, synced_at: catalog?.synced_at,
-    skill_count: catalog?.skills.length ?? 0,
-    package_count: new Set(catalog?.skills.map((skill) => skill.package_id) ?? []).size,
-    category_count: summarizeSkillCategories(catalog?.skills ?? []).length,
-    skipped_package_count: new Set(catalog?.diagnostics.map((item) => item.package_id).filter(Boolean) ?? []).size,
+    adapter: registry.adapter.type, revision: current?.revision, synced_at: current?.synced_at,
+    skill_count: current?.skill_count ?? 0,
+    package_count: current?.package_count ?? 0,
+    category_count: current?.category_count ?? 0,
+    skipped_package_count: current?.skipped_package_count ?? 0,
     refresh_interval_seconds: registry.refresh_interval_seconds, next_refresh_at: nextRefreshAt,
-    status: status?.state ?? (catalog?.skills.length ? 'ready' : 'empty'), last_error: status?.last_error,
+    status: status.state, last_error: status.last_error,
   }
 }
 

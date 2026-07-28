@@ -1,4 +1,4 @@
-import type { CatalogSkill, SkillCategorySummary, SkillRuntimeOS } from './types'
+import type { CatalogSkill, SkillCategorySummary, SkillRegistryCatalog, SkillRegistryCurrentSummary, SkillRuntimeOS } from './types'
 
 function slugify(value: string) {
   return value.normalize('NFKD').toLowerCase().trim().replace(/&/g, ' ').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
@@ -98,4 +98,16 @@ export function summarizeSkillCategories(skills: CatalogSkill[]): SkillCategoryS
     id, name: value.name, count: value.count,
     registries: [...value.registries].map(([registry, count]) => ({ id: registry, count })).sort((a, b) => a.id.localeCompare(b.id)),
   })).sort((a, b) => a.name.localeCompare(b.name))
+}
+
+export function summarizeCurrentCatalog(catalog: SkillRegistryCatalog): SkillRegistryCurrentSummary {
+  return {
+    revision: catalog.revision,
+    source_revision: catalog.source_revision,
+    synced_at: catalog.synced_at,
+    skill_count: catalog.skills.length,
+    package_count: new Set(catalog.skills.map((skill) => skill.package_id)).size,
+    category_count: summarizeSkillCategories(catalog.skills).length,
+    skipped_package_count: new Set(catalog.diagnostics.map((item) => item.package_id).filter(Boolean)).size,
+  }
 }

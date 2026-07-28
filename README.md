@@ -28,7 +28,7 @@ supermarket/
 └── vite.config.ts
 ```
 
-Plugins are repository-owned bundles. Registry Skills are published from Registry definitions into immutable Snapshots and Artifacts stored under `.data/registries` locally or R2 in production. A Snapshot is the serialized Catalog for one Registry revision: it contains the searchable Skill metadata and references digest-addressed Artifacts and images. The Registry's single mutable `state.json` selects the current Snapshot and records refresh status. Generated Registry data is not committed.
+Plugins are repository-owned bundles. Registry Skills are published from Registry definitions into immutable Snapshots and Artifacts stored under `.data/registries` locally or R2 in production. A Snapshot is the serialized Catalog for one Registry revision: it contains the searchable Skill metadata and references digest-addressed Artifacts and images. The Registry's single mutable `state.json` selects the current Snapshot, carries its compact listing summary, and records refresh status. Generated Registry data is not committed.
 
 ## API
 

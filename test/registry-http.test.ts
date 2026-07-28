@@ -14,6 +14,7 @@ import { createTar, gzip } from '#archive/tar'
 import { R2BlobBackend } from '#registry/storage/r2'
 import { sha256 } from '#registry/digest'
 import { BlobSkillRegistryStore } from '#registry/storage/blob'
+import { summarizeCurrentCatalog } from '#registry/catalog'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
@@ -101,7 +102,7 @@ describe('Skill Registry HTTP protocol', () => {
     await store.putArtifact(artifact, archive)
     await store.putImage(image, imageBytes)
     await store.publishSnapshot(catalog, {
-      schema_version: '1', definition, current_snapshot: revision,
+      schema_version: '2', definition, current_snapshot: revision, current_summary: summarizeCurrentCatalog(catalog),
       status: { state: 'ready' },
     })
 

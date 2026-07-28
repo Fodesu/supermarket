@@ -4,8 +4,13 @@ import os from 'node:os'
 import path from 'node:path'
 import type { SkillRegistryCatalog, SkillRegistryDefinition } from '#registry/types'
 import { LocalSkillRegistryStore } from '#registry/storage/local'
+import { summarizeCurrentCatalog } from '#registry/catalog'
 import type { SkillRegistryStore } from '#registry/storage/contracts'
-import { getEnabledSkillRegistryCatalogs, getRuntimeSkillRegistryStore } from './skill-registry'
+import {
+  getEnabledSkillRegistryCatalogs,
+  getRuntimeSkillRegistryStore,
+  getSkillRegistrySummariesForStore,
+} from './skill-registry'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
@@ -32,13 +37,13 @@ describe('Skill Registry loader', () => {
       source_revision: revision, synced_at: '2026-01-01T00:00:00.000Z', skills: [], diagnostics: [],
     }
     await store.publishSnapshot(catalog, {
-      schema_version: '1', definition, current_snapshot: revision,
+      schema_version: '2', definition, current_snapshot: revision, current_summary: summarizeCurrentCatalog(catalog),
       status: { state: 'ready' },
     })
     expect(await getEnabledSkillRegistryCatalogs(store)).toEqual([catalog])
 
     await store.putState({
-      schema_version: '1', definition: { ...definition, enabled: false }, current_snapshot: revision,
+      schema_version: '2', definition: { ...definition, enabled: false }, current_snapshot: revision, current_summary: summarizeCurrentCatalog(catalog),
       status: { state: 'disabled' },
     })
     expect(await getEnabledSkillRegistryCatalogs(store)).toEqual([])
@@ -58,9 +63,10 @@ describe('Skill Registry loader', () => {
       async getState() {
         stateReads++
         return {
-          schema_version: '1' as const,
+          schema_version: '2' as const,
           definition,
           current_snapshot: revision,
+          current_summary: summarizeCurrentCatalog(catalog),
           status: { state: 'ready' as const },
         }
       },
@@ -74,5 +80,44 @@ describe('Skill Registry loader', () => {
     await getEnabledSkillRegistryCatalogs(store)
     expect(stateReads).toBe(2)
     expect(snapshotReads).toBe(1)
+  })
+
+  test('loads Registry summaries from state without reading Snapshots', async () => {
+    const second = { ...definition, id: 'second', name: 'Second' }
+    const firstCatalog: SkillRegistryCatalog = {
+      schema_version: '1', registry: definition, revision: 'c'.repeat(64),
+      source_revision: 'first', synced_at: '2026-01-01T00:00:00.000Z', skills: [], diagnostics: [],
+    }
+    const secondCatalog: SkillRegistryCatalog = {
+      ...firstCatalog, registry: second, revision: 'd'.repeat(64), source_revision: 'second',
+    }
+    let activeStateReads = 0
+    let maxStateReads = 0
+    const store = {
+      async listRegistryIDs() { return ['example', 'second'] },
+      async getState(id: string) {
+        activeStateReads++
+        maxStateReads = Math.max(maxStateReads, activeStateReads)
+        await Promise.resolve()
+        activeStateReads--
+        const current = id === 'example' ? firstCatalog : secondCatalog
+        return {
+          schema_version: '2' as const,
+          definition: current.registry,
+          current_snapshot: current.revision,
+          current_summary: summarizeCurrentCatalog(current),
+          status: { state: 'ready' as const },
+        }
+      },
+      async getSnapshot() {
+        throw new Error('Registry summaries must not read Snapshots')
+      },
+    } as unknown as SkillRegistryStore
+
+    await expect(getSkillRegistrySummariesForStore(store)).resolves.toMatchObject([
+      { id: 'example', revision: firstCatalog.revision, skill_count: 0 },
+      { id: 'second', revision: secondCatalog.revision, skill_count: 0 },
+    ])
+    expect(maxStateReads).toBe(1)
   })
 })

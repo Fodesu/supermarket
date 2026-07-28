@@ -1,4 +1,4 @@
-import { lstat, readdir, readFile, realpath } from 'node:fs/promises'
+import { lstat, open, readdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { MAX_SKILL_ARTIFACT_FILES, MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES } from './types'
 import type { TarFileInput } from '#archive/tar'
@@ -6,6 +6,33 @@ import type { TarFileInput } from '#archive/tar'
 const ignoredDirectories = new Set(['.git', 'node_modules'])
 
 export type SkillSourceFile = TarFileInput
+
+export async function readFileBounded(target: string, maximum: number): Promise<Uint8Array> {
+  if (!Number.isSafeInteger(maximum) || maximum < 0) throw new Error(`Invalid file limit: ${maximum}`)
+  const handle = await open(target, 'r')
+  try {
+    if (!(await handle.stat()).isFile()) throw new Error(`Expected regular file: ${target}`)
+    const chunks: Uint8Array[] = []
+    let total = 0
+    while (true) {
+      const buffer = new Uint8Array(Math.min(64 * 1024, maximum - total + 1))
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null)
+      if (bytesRead === 0) break
+      total += bytesRead
+      if (total > maximum) throw new Error(`File exceeds ${maximum} bytes: ${target}`)
+      chunks.push(buffer.subarray(0, bytesRead))
+    }
+    const bytes = new Uint8Array(total)
+    let offset = 0
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset)
+      offset += chunk.length
+    }
+    return bytes
+  } finally {
+    await handle.close()
+  }
+}
 
 export function resolveInside(root: string, relativePath = ''): string {
   const resolvedRoot = path.resolve(root)
@@ -47,10 +74,7 @@ export async function readDirectoryFiles(root: string, allowedRoot = root): Prom
       if (stats.isDirectory()) await visit(target)
       else if (stats.isFile()) {
         if (fileCount >= MAX_SKILL_ARTIFACT_FILES) throw new Error(`Skill package exceeds ${MAX_SKILL_ARTIFACT_FILES} files`)
-        if (stats.size > MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES - totalBytes) {
-          throw new Error(`Skill package exceeds ${MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES} bytes`)
-        }
-        const bytes = new Uint8Array(await readFile(target))
+        const bytes = await readFileBounded(target, MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES - totalBytes)
         fileCount++
         totalBytes += bytes.length
         if (totalBytes > MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES) {
