@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { skillInstallID } from '#registry/definition'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '#registry/types'
-import { extractSkillArchive, gunzip, parseTarArchive, validateSkillArchive } from './archive'
+import { extractSkillArchive, parseGzipTarArchive, validateSkillArchive } from './archive'
 import {
   MAX_REGISTRY_JSON_BYTES,
   readBoundedResponse,
@@ -127,7 +127,7 @@ switch (command) {
     if (bytes.length !== artifact.size) throw new Error(`Artifact size mismatch: expected ${artifact.size}, got ${bytes.length}`)
     const actualDigest = await digest(bytes)
     if (actualDigest !== artifact.digest) throw new Error(`SHA-256 mismatch: expected ${artifact.digest}, got ${actualDigest}`)
-    const files = parseTarArchive(await gunzip(bytes))
+    const files = await parseGzipTarArchive(bytes)
     validateSkillArchive(files)
     const destination = path.resolve(option('--destination') ?? '.data/registry-client-installs')
     console.log(JSON.stringify({ installed_at: await extractSkillArchive(files, destination, installID), digest: actualDigest }, null, 2))

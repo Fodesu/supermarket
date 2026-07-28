@@ -12,7 +12,7 @@ supermarket/
 │   │   ├── plugins/<plugin-id>/     # Plugin manifests and optional bundle files
 │   │   └── skills/<skill-id>/       # Repository-owned Skill sources
 │   └── openai/registry.yaml         # External Registry definition
-├── archive/                         # Shared TAR and gzip primitives
+├── archive/                         # modern-tar adapter and archive limits
 ├── plugin/                          # Plugin manifest parsing and repository validation
 ├── registry/                        # Registry model, sources, adapters, storage, refresh, and maintenance
 ├── server/                          # Nitro API routes and HTTP-facing services

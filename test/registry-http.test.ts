@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { H3 } from 'h3'
-import { extractSkillArchive, gunzip, parseTarArchive } from '../client/archive'
+import { extractSkillArchive, parseGzipTarArchive } from '../client/archive'
 import artifactDownload from '../server/api/artifacts/[digest]/download.get'
 import skillImage from '../server/api/skill-images/[digest].get'
 import registrySkill from '../server/api/registries/[id]/packages/[packageId]/skills/[skillId].get'
@@ -74,7 +74,7 @@ describe('Skill Registry HTTP protocol', () => {
       retention: { snapshots: 30 },
     }
     const installID = 'example+tools+demo'
-    const archive = await gzip(createTar({
+    const archive = await gzip(await createTar({
       'SKILL.md': new TextEncoder().encode('---\nname: Demo\ndescription: Demo\n---\n'),
       'scripts/run.sh': { bytes: new TextEncoder().encode('#!/bin/sh\n'), mode: 0o755 },
     }, ''))
@@ -102,7 +102,7 @@ describe('Skill Registry HTTP protocol', () => {
     await store.putArtifact(artifact, archive)
     await store.putImage(image, imageBytes)
     await store.publishSnapshot(catalog, {
-      schema_version: '2', definition, current_snapshot: revision, current_summary: summarizeCurrentCatalog(catalog),
+      schema_version: '1', definition, current_snapshot: revision, current_summary: summarizeCurrentCatalog(catalog),
       status: { state: 'ready' },
     })
 
@@ -145,7 +145,7 @@ describe('Skill Registry HTTP protocol', () => {
 
     const destination = await mkdtemp(path.join(os.tmpdir(), 'registry-http-install-'))
     roots.push(destination)
-    const installed = await extractSkillArchive(parseTarArchive(await gunzip(downloaded)), destination, installID)
+    const installed = await extractSkillArchive(await parseGzipTarArchive(downloaded), destination, installID)
     expect(await readFile(path.join(installed, 'SKILL.md'), 'utf8')).toContain('name: Demo')
     expect((await stat(path.join(installed, 'scripts/run.sh'))).mode & 0o777).toBe(0o755)
   })

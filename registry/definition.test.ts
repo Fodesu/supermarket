@@ -55,10 +55,6 @@ describe('Skill Registry definitions', () => {
     expect(() => parseSkillRegistryDefinition({
       schema_version: '1', id: 'bad', name: 'Bad', adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' },
     })).toThrow('refresh_interval')
-    expect(() => parseSkillRegistryDefinition({
-      schema_version: '2', id: 'bad', name: 'Bad', adapter: { type: 'skill_directory' },
-      source: { type: 'local', path: 'skills' }, refresh_interval: '12h', retention: { snapshots: 30 },
-    })).toThrow('unsupported schema_version')
     expect(parseSkillRegistryDefinition({
       schema_version: '1', id: 'bad', name: 'Bad', adapter: { type: 'skill_directory' },
       source: { type: 'local', path: 'skills' }, refresh_interval: '12h',

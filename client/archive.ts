@@ -1,102 +1,110 @@
 import { chmod, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { createGzipDecoder, createTarDecoder, type ParsedTarEntry } from 'modern-tar'
+import { assertSafeArchivePath } from '#archive/tar'
 import {
   MAX_SKILL_ARTIFACT_FILES,
   MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
 } from '#registry/types'
-
-const decoder = new TextDecoder()
-const blockSize = 512
 
 export interface ArchiveFile {
   bytes: Uint8Array
   mode: 0o644 | 0o755
 }
 
-function stringField(header: Uint8Array, offset: number, length: number) {
-  return decoder.decode(header.subarray(offset, offset + length)).replace(/\0.*$/, '')
-}
-
-function octalField(header: Uint8Array, offset: number, length: number) {
-  const value = stringField(header, offset, length).replace(/\0/g, '').trim()
-  if (!/^[0-7]*$/.test(value)) throw new Error('Invalid tar numeric field')
-  return value ? Number.parseInt(value, 8) : 0
-}
-
-function safeArchivePath(name: string) {
-  if (name.includes('\\')) throw new Error(`Unsafe archive path: ${name}`)
-  const normalized = name
-  const segments = normalized.split('/')
-  if (!normalized || normalized.startsWith('/') || segments.includes('..') || segments.includes('') || /^[a-z]:/i.test(normalized)) {
-    throw new Error(`Unsafe archive path: ${name}`)
+async function readEntry(entry: ParsedTarEntry, remainingBytes: number) {
+  if (!Number.isSafeInteger(entry.header.size) || entry.header.size < 0 || entry.header.size > remainingBytes) {
+    await entry.body.cancel()
+    throw new Error('Archive exceeds extraction limits')
   }
-  return normalized
-}
-
-function verifyChecksum(header: Uint8Array) {
-  const expected = octalField(header, 148, 8)
-  let actual = 0
-  for (let index = 0; index < header.length; index++) {
-    actual += index >= 148 && index < 156 ? 0x20 : header[index] ?? 0
+  const reader = entry.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.length
+      if (total > entry.header.size || total > remainingBytes) {
+        await reader.cancel()
+        throw new Error('Archive exceeds extraction limits')
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
   }
-  if (expected !== actual) throw new Error('Invalid tar header checksum')
-}
-
-export function parseTarArchive(bytes: Uint8Array): Map<string, ArchiveFile> {
-  const files = new Map<string, ArchiveFile>()
+  if (total !== entry.header.size) throw new Error(`Truncated archive entry: ${entry.header.name}`)
+  const bytes = new Uint8Array(total)
   let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.length
+  }
+  return bytes
+}
+
+function limitStream(limit: number, message: string) {
+  let total = 0
+  return new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      total += chunk.length
+      if (total > limit) throw new Error(message)
+      controller.enqueue(chunk)
+    },
+  })
+}
+
+async function parseTarStream(input: ReadableStream<Uint8Array>): Promise<Map<string, ArchiveFile>> {
+  const entries = input.pipeThrough(createTarDecoder({ strict: true }))
+  const files = new Map<string, ArchiveFile>()
   let totalBytes = 0
-  while (offset + blockSize <= bytes.length) {
-    const header = bytes.subarray(offset, offset + blockSize)
-    if (header.every((value) => value === 0)) break
-    verifyChecksum(header)
-    const name = safeArchivePath([stringField(header, 345, 155), stringField(header, 0, 100)].filter(Boolean).join('/'))
-    const rawMode = octalField(header, 100, 8)
-    const size = octalField(header, 124, 12)
-    const type = header[156]
-    offset += blockSize
-    if (offset + size > bytes.length) throw new Error(`Truncated archive entry: ${name}`)
-    if (type !== 0 && type !== 0x30) throw new Error(`Unsupported archive entry type for ${name}`)
-    if (files.has(name)) throw new Error(`Duplicate archive entry: ${name}`)
-    totalBytes += size
-    if (files.size >= MAX_SKILL_ARTIFACT_FILES || totalBytes > MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES) {
+
+  for await (const entry of entries) {
+    const name = assertSafeArchivePath(entry.header.name, 'archive')
+    if (entry.header.type !== 'file') {
+      await entry.body.cancel()
+      throw new Error(`Unsupported archive entry type for ${name}`)
+    }
+    if (files.has(name)) {
+      await entry.body.cancel()
+      throw new Error(`Duplicate archive entry: ${name}`)
+    }
+    if (files.size >= MAX_SKILL_ARTIFACT_FILES) {
+      await entry.body.cancel()
       throw new Error('Archive exceeds extraction limits')
     }
-    files.set(name, { bytes: bytes.slice(offset, offset + size), mode: rawMode & 0o111 ? 0o755 : 0o644 })
-    offset += Math.ceil(size / blockSize) * blockSize
+    const data = await readEntry(entry, MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES - totalBytes)
+    totalBytes += data.length
+    files.set(name, { bytes: data, mode: (entry.header.mode ?? 0) & 0o111 ? 0o755 : 0o644 })
   }
+
   if (!files.size) throw new Error('Archive contains no files')
   for (const name of files.keys()) {
     const segments = name.split('/')
     for (let index = 1; index < segments.length; index++) {
-      if (files.has(segments.slice(0, index).join('/'))) throw new Error(`Archive contains a conflicting path: ${name}`)
+      if (files.has(segments.slice(0, index).join('/'))) {
+        throw new Error(`Archive contains a conflicting path: ${name}`)
+      }
     }
   }
   return files
 }
 
-export async function gunzip(bytes: Uint8Array, limit = MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES) {
-  const stream = new Blob([bytes.slice().buffer as ArrayBuffer]).stream().pipeThrough(new DecompressionStream('gzip'))
-  const reader = stream.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.length
-    if (total > limit) {
-      await reader.cancel()
-      throw new Error('Archive exceeds decompression limit')
-    }
-    chunks.push(value)
-  }
-  const output = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    output.set(chunk, offset)
-    offset += chunk.length
-  }
-  return output
+function byteStream(bytes: Uint8Array) {
+  return new Blob([bytes.slice().buffer as ArrayBuffer]).stream()
+}
+
+export function parseTarArchive(bytes: Uint8Array) {
+  return parseTarStream(byteStream(bytes).pipeThrough(
+    limitStream(MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES, 'Archive exceeds extraction limits'),
+  ))
+}
+
+export function parseGzipTarArchive(bytes: Uint8Array, limit = MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES) {
+  return parseTarStream(byteStream(bytes)
+    .pipeThrough(createGzipDecoder())
+    .pipeThrough(limitStream(limit, 'Archive exceeds decompression limit')))
 }
 
 export function validateSkillArchive(files: Map<string, ArchiveFile>) {

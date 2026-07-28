@@ -39,6 +39,7 @@
     "wrangler": "^4.114.0"
   },
   "dependencies": {
+    "modern-tar": "^0.7.6",
     "yaml": "^2.8.3"
   }
 }

@@ -25,7 +25,7 @@ describe('Skill Registry refresh runner', () => {
       store: {
         listRegistryIDs: async () => [],
         getState: async (id) => ({
-          schema_version: '2' as const,
+          schema_version: '1' as const,
           definition: id === 'first' ? definition('first', true) : definition(id),
           status: statuses.get(id) ?? { state: 'empty' as const },
         }),
@@ -50,7 +50,7 @@ describe('Skill Registry refresh runner', () => {
       store: {
         listRegistryIDs: async () => [],
         getState: async () => ({
-          schema_version: '2' as const, definition: item,
+          schema_version: '1' as const, definition: item,
           status: { state: 'disabled' as const },
         }),
       },
@@ -66,7 +66,7 @@ describe('Skill Registry refresh runner', () => {
       store: {
         listRegistryIDs: async () => [],
         getState: async (id) => ({
-          schema_version: '2' as const, definition: definition(id),
+          schema_version: '1' as const, definition: definition(id),
           status: { state: 'empty' as const },
         }),
       },
@@ -89,7 +89,7 @@ describe('Skill Registry refresh runner', () => {
       store: {
         listRegistryIDs: async () => ['current', 'removed', 'invalid-definition'],
         getState: async (id) => ({
-          schema_version: '2' as const,
+          schema_version: '1' as const,
           definition: definition(id),
           status: { state: 'ready' as const, last_success_at: '2026-01-01T00:00:00.000Z' },
         }),

@@ -77,7 +77,7 @@ function fixture(store: LocalSkillRegistryStore): FixtureStore {
     async putDefinition(value: SkillRegistryDefinition) {
       const existing = await store.getState(value.id)
       await store.putState({
-        schema_version: '2', definition: value, current_snapshot: existing?.current_snapshot,
+        schema_version: '1', definition: value, current_snapshot: existing?.current_snapshot,
         current_summary: existing?.current_summary,
         status: existing?.status ?? { state: 'empty' },
       })
@@ -85,7 +85,7 @@ function fixture(store: LocalSkillRegistryStore): FixtureStore {
     async publishCatalog(value: SkillRegistryCatalog) {
       const existing = await store.getState(value.registry.id)
       await store.publishSnapshot(value, {
-        schema_version: '2', definition: value.registry, current_snapshot: value.revision, current_summary: summarizeCurrentCatalog(value),
+        schema_version: '1', definition: value.registry, current_snapshot: value.revision, current_summary: summarizeCurrentCatalog(value),
         status: existing?.status ?? { state: 'ready' },
       })
     },
