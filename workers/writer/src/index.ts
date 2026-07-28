@@ -137,7 +137,7 @@ export class RegistryWriter extends Container<WriterEnv> {
     try {
       await this.start()
       const process = await this.ctx.container!.exec(
-        ['env', `REGISTRY_WRITER_TOKEN=${run.token}`, 'bun', 'scripts/skill-registry-refresh.ts', '--due'],
+        ['env', `REGISTRY_WRITER_TOKEN=${run.token}`, 'bun', 'scripts/registry/refresh.ts', '--due'],
         { cwd: '/app' },
       )
       const result = await process.output()

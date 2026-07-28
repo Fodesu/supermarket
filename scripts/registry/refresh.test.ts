@@ -5,7 +5,7 @@ import path from 'node:path'
 import type { SkillRegistryDefinition, SkillRegistryStatus } from '#registry/types'
 import { IndeterminateRemoteMutationError } from '#registry/storage/contracts'
 import { loadSkillRegistryDefinitionResults, type SkillRegistryRefreshProgress } from '#registry/refresh/refresher'
-import { createSkillRegistryProgressRenderer, runSkillRegistryRefreshes } from './skill-registry-refresh'
+import { createSkillRegistryProgressRenderer, runSkillRegistryRefreshes } from './refresh'
 
 function definition(id: string, enabled = true): SkillRegistryDefinition {
   return {
