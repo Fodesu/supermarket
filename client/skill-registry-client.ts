@@ -1,5 +1,6 @@
 import path from 'node:path'
 import { z } from 'zod'
+import { sha256 } from '#registry/digest'
 import { skillInstallID } from '#registry/definition'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '#registry/types'
 import { extractSkillArchive, parseGzipTarArchive, validateSkillArchive } from './archive'
@@ -74,11 +75,6 @@ async function download(url: string) {
   return readBoundedResponse(response, MAX_SKILL_ARTIFACT_COMPRESSED_BYTES, 'Artifact')
 }
 
-async function digest(bytes: Uint8Array) {
-  const hash = await crypto.subtle.digest('SHA-256', bytes.slice().buffer as ArrayBuffer)
-  return [...new Uint8Array(hash)].map((value) => value.toString(16).padStart(2, '0')).join('')
-}
-
 const command = process.argv[2]
 const base = (option('--base') ?? process.env.SUPERMARKET_URL ?? 'http://127.0.0.1:5173').replace(/\/$/, '')
 const positional = process.argv.slice(3).filter((value, index, values) => !value.startsWith('--') && values[index - 1]?.startsWith('--') !== true)
@@ -118,7 +114,7 @@ switch (command) {
     }
     const bytes = await download(resolveArtifactDownloadURL(artifact.download_url, base))
     if (bytes.length !== artifact.size) throw new Error(`Artifact size mismatch: expected ${artifact.size}, got ${bytes.length}`)
-    const actualDigest = await digest(bytes)
+    const actualDigest = await sha256(bytes)
     if (actualDigest !== artifact.digest) throw new Error(`SHA-256 mismatch: expected ${artifact.digest}, got ${actualDigest}`)
     const files = await parseGzipTarArchive(bytes)
     validateSkillArchive(files)
