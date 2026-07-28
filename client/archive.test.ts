@@ -17,9 +17,11 @@ describe('Skill Registry client archives', () => {
       [longPath]: new TextEncoder().encode('guide'),
       'references/note ': new TextEncoder().encode('spacing'),
       'scripts/run.sh': { bytes: new TextEncoder().encode('#!/bin/sh\n'), mode: 0o755 },
-    }, installID))
+    }, ''))
     const files = parseTarArchive(await gunzip(compressed))
-    validateSkillArchive(files, installID)
+    validateSkillArchive(files)
+    expect(files.has('SKILL.md')).toBe(true)
+    expect([...files.keys()].some((name) => name.startsWith(`${installID}/`))).toBe(false)
     const root = await mkdtemp(path.join(os.tmpdir(), 'skill-client-install-'))
     roots.push(root)
     const installed = await extractSkillArchive(files, root, installID)
@@ -28,13 +30,27 @@ describe('Skill Registry client archives', () => {
     expect((await stat(path.join(installed, 'scripts/run.sh'))).mode & 0o777).toBe(0o755)
   })
 
+  test('uses install identity only to select the destination', async () => {
+    const files = parseTarArchive(createTar({
+      'SKILL.md': new TextEncoder().encode('---\nname: shared\n---\n'),
+    }, ''))
+    const root = await mkdtemp(path.join(os.tmpdir(), 'skill-client-install-identity-'))
+    roots.push(root)
+
+    const first = await extractSkillArchive(files, root, 'registry-a+package+skill')
+    const second = await extractSkillArchive(files, root, 'registry-b+package+skill')
+
+    expect(await readFile(path.join(first, 'SKILL.md'), 'utf8')).toContain('name: shared')
+    expect(await readFile(path.join(second, 'SKILL.md'), 'utf8')).toContain('name: shared')
+  })
+
   test('rejects traversal, unsupported entry types, conflicts and decompression bombs', async () => {
     expect(() => createTar({ '../private': new Uint8Array() }, 'skill')).toThrow('Unsafe tar path')
     expect(() => createTar({ 'references\\private': new Uint8Array() }, 'skill')).toThrow('Unsafe tar path')
-    const tar = createTar({ 'SKILL.md': new Uint8Array() }, 'skill')
+    const tar = createTar({ 'SKILL.md': new Uint8Array() }, '')
     tar[156] = 0x32
     expect(() => parseTarArchive(tar)).toThrow(/checksum|entry type/)
-    const conflict = createTar({ 'file': new Uint8Array(), 'file/child': new Uint8Array() }, 'skill')
+    const conflict = createTar({ 'file': new Uint8Array(), 'file/child': new Uint8Array() }, '')
     expect(() => parseTarArchive(conflict)).toThrow('conflicting path')
     const compressed = await gzip(new Uint8Array(1024))
     await expect(gunzip(compressed, 100)).rejects.toThrow('decompression limit')
@@ -44,7 +60,7 @@ describe('Skill Registry client archives', () => {
     const installID = 'registry+package+skill'
     const files = parseTarArchive(createTar({
       'SKILL.md': new TextEncoder().encode('---\nname: skill\n---\n'),
-    }, installID))
+    }, ''))
     const root = await mkdtemp(path.join(os.tmpdir(), 'skill-client-concurrent-install-'))
     roots.push(root)
     const results = await Promise.allSettled([

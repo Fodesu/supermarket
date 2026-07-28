@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { gunzip, parseTarArchive } from '../../client/archive'
 import type { SkillRegistryDefinition, SkillRegistryStatus } from '../../server/types/skill-registry'
 import { LocalSkillRegistryStore } from '../../server/utils/local-skill-registry-store'
 import type { SkillRegistryStore } from '../../server/utils/skill-registry-store'
@@ -64,7 +65,13 @@ describe('SkillRegistryRefresher', () => {
     expect(first.skills).toBe(2)
     const initial = await snapshot(store, 'memoh')
     expect(initial?.skills.every((skill) => skill.artifact.format === 'memoh_skill_v1')).toBe(true)
-    for (const skill of initial!.skills) expect(await store.getArtifact(skill.artifact.digest)).not.toBeNull()
+    for (const skill of initial!.skills) {
+      const artifact = await store.getArtifact(skill.artifact.digest)
+      expect(artifact).not.toBeNull()
+      const files = parseTarArchive(await gunzip(artifact!.bytes))
+      expect(files.has('SKILL.md')).toBe(true)
+      expect([...files.keys()].some((name) => name.startsWith(`${skill.install_id}/`))).toBe(false)
+    }
 
     const overlapping = refresher.refresh(definition)
     await expect(refresher.refresh(definition)).rejects.toThrow('another refresh is already running')

@@ -74,7 +74,7 @@ describe('Skill Registry HTTP protocol', () => {
     const archive = await gzip(createTar({
       'SKILL.md': new TextEncoder().encode('---\nname: Demo\ndescription: Demo\n---\n'),
       'scripts/run.sh': { bytes: new TextEncoder().encode('#!/bin/sh\n'), mode: 0o755 },
-    }, installID))
+    }, ''))
     const digest = await sha256(archive)
     const artifact: SkillArtifactDescriptor = {
       registry_id: 'example', package_id: 'tools', skill_id: 'demo', source_revision: 'source',
