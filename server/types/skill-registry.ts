@@ -34,16 +34,10 @@ export interface SkillRegistryDefinition {
 }
 
 export interface SkillArtifactDescriptor {
-  registry_id: string
-  package_id: string
-  skill_id: string
-  source_revision: string
   format: 'memoh_skill_v1'
   digest: string
   size: number
-  filename: string
   content_type: 'application/gzip'
-  created_at: string
 }
 
 export interface SkillArtifactBlob {
@@ -106,7 +100,6 @@ export interface SkillRegistryCatalog {
   schema_version: '1'
   registry: SkillRegistryDefinition
   revision: string
-  content_revision: string
   source_revision: string
   synced_at: string
   skills: CatalogSkill[]
@@ -114,15 +107,9 @@ export interface SkillRegistryCatalog {
 }
 
 export interface SkillRegistryStatus {
-  registry_id: string
   state: 'ready' | 'refreshing' | 'stale' | 'empty' | 'disabled'
-  current_revision?: string
   last_attempt_at?: string
   last_success_at?: string
-  // Upstream source revision verified by the most recent successful refresh.
-  // The Catalog may keep an older source_revision when new upstream commits
-  // did not change any Skill content, so due checks compare against this.
-  last_source_revision?: string
   last_error?: string
 }
 
@@ -134,7 +121,7 @@ export interface SkillRegistryStatus {
 export interface SkillRegistryState {
   schema_version: '1'
   definition: SkillRegistryDefinition
-  current_revision?: string
+  current_snapshot?: string
   status: SkillRegistryStatus
 }
 

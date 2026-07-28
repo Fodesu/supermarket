@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { gunzip, parseTarArchive } from '../../client/archive'
-import type { SkillRegistryDefinition, SkillRegistryStatus } from '../../server/types/skill-registry'
+import type { SkillRegistryDefinition } from '../../server/types/skill-registry'
 import { LocalSkillRegistryStore } from '../../server/utils/local-skill-registry-store'
 import type { SkillRegistryStore } from '../../server/utils/skill-registry-store'
 import {
@@ -27,7 +27,7 @@ async function state(store: SkillRegistryStore, id: string) {
 
 async function snapshot(store: SkillRegistryStore, id: string) {
   const current = await state(store, id)
-  return current?.current_revision ? store.getSnapshot(id, current.current_revision) : null
+  return current?.current_snapshot ? store.getSnapshot(id, current.current_snapshot) : null
 }
 
 describe('SkillRegistryRefresher', () => {
@@ -38,8 +38,8 @@ describe('SkillRegistryRefresher', () => {
       retention: { catalog_revisions: 30 },
     }
     const lastSuccess = '2026-01-01T00:00:00.000Z'
-    expect(isSkillRegistryRefreshDue(definition, { registry_id: 'memoh', state: 'ready', last_success_at: lastSuccess }, Date.parse('2026-01-01T01:59:59.000Z'))).toBe(false)
-    expect(isSkillRegistryRefreshDue(definition, { registry_id: 'memoh', state: 'ready', last_success_at: lastSuccess }, Date.parse('2026-01-01T02:00:00.000Z'))).toBe(true)
+    expect(isSkillRegistryRefreshDue(definition, { state: 'ready', last_success_at: lastSuccess }, Date.parse('2026-01-01T01:59:59.000Z'))).toBe(false)
+    expect(isSkillRegistryRefreshDue(definition, { state: 'ready', last_success_at: lastSuccess }, Date.parse('2026-01-01T02:00:00.000Z'))).toBe(true)
     expect(isSkillRegistryRefreshDue(definition, null)).toBe(true)
   })
 
@@ -81,9 +81,6 @@ describe('SkillRegistryRefresher', () => {
     expect(await refresher.refresh(definition)).toMatchObject({ revision: initial?.revision, skipped: 'unchanged' })
     const unchangedStatus = (await state(store, 'memoh'))?.status
     expect(Date.parse(unchangedStatus!.last_success_at!)).toBeGreaterThan(Date.parse(initial!.synced_at))
-    const forced = await refresher.refresh(definition, { force: true })
-    expect(forced.revision).not.toBe(initial?.revision)
-
     await writeSkill(projectRoot, 'alpha', '2')
     await refresher.refresh(definition, { package: 'alpha', skill: 'alpha' })
     const updated = await snapshot(store, 'memoh')
@@ -111,7 +108,7 @@ describe('SkillRegistryRefresher', () => {
     expect((await state(store, 'memoh'))?.status.last_success_at).toBe(lastSuccessAt)
   })
 
-  test('skips Git registries whose upstream revision is already verified', async () => {
+  test('refreshes Git sources before deciding whether the snapshot changed', async () => {
     const repository = await mkdtemp(path.join(os.tmpdir(), 'skill-fastpath-repo-'))
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'skill-fastpath-project-'))
     const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'skill-fastpath-data-'))
@@ -141,29 +138,17 @@ describe('SkillRegistryRefresher', () => {
     const first = await refresher.refresh(definition)
     expect(first.skills).toBe(1)
     const firstStatus = (await state(store, 'gitreg'))?.status
-    expect(firstStatus?.last_source_revision).toMatch(/^[a-f0-9]{40}$/)
-
-    // Unchanged upstream: one ls-remote, no clone, no Catalog work.
     events.length = 0
-    expect(await refresher.refresh(definition)).toMatchObject({ revision: first.revision, skipped: 'source_unchanged' })
-    expect(events.map((event) => event.type)).toEqual(['source_unchanged'])
+    expect(await refresher.refresh(definition)).toMatchObject({ revision: first.revision, skipped: 'unchanged' })
+    expect(events.map((event) => event.type)).toContain('source')
     expect(Date.parse((await state(store, 'gitreg'))!.status.last_success_at!))
       .toBeGreaterThanOrEqual(Date.parse(firstStatus!.last_success_at!))
 
-    // An upstream commit that touches no Skill: the full pass runs, but the
-    // provenance-free content revision keeps the Catalog revision stable.
     await writeFile(path.join(repository, 'README.md'), 'docs only')
     await git('add', '.')
     await git('commit', '-m', 'docs')
     expect(await refresher.refresh(definition)).toMatchObject({ revision: first.revision, skipped: 'unchanged' })
-    const afterDocs = (await state(store, 'gitreg'))?.status
-    expect(afterDocs?.last_source_revision).toMatch(/^[a-f0-9]{40}$/)
-    expect(afterDocs?.last_source_revision).not.toBe(firstStatus?.last_source_revision)
 
-    // The docs-only revision is now verified, so the fast path re-arms.
-    expect(await refresher.refresh(definition)).toMatchObject({ revision: first.revision, skipped: 'source_unchanged' })
-
-    // A definition change must bypass the fast path even with an unchanged source.
     const reprioritized = { ...definition, priority: 101 }
     const changedDefinition = await refresher.refresh(reprioritized)
     expect(changedDefinition.skipped).toBeUndefined()
@@ -226,6 +211,8 @@ describe('SkillRegistryRefresher', () => {
       },
       putArtifact: (descriptor, bytes) => base.putArtifact(descriptor, bytes),
       getArtifact: (digest) => base.getArtifact(digest),
+      putImage: (descriptor, bytes) => base.putImage(descriptor, bytes),
+      getImage: (digest) => base.getImage(digest),
     }
     const definition: SkillRegistryDefinition = {
       schema_version: '1', id: 'memoh', name: 'Memoh', enabled: true, priority: 100,
@@ -235,6 +222,6 @@ describe('SkillRegistryRefresher', () => {
     const result = await new SkillRegistryRefresher(store, projectRoot).refresh(definition)
     expect(result.skills).toBe(1)
     const catalog = await snapshot(base, 'memoh')
-    expect((await state(base, 'memoh'))?.status).toMatchObject({ state: 'ready', current_revision: catalog?.revision })
+    expect((await state(base, 'memoh'))).toMatchObject({ current_snapshot: catalog?.revision, status: { state: 'ready' } })
   })
 })

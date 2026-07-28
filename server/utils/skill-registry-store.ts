@@ -22,11 +22,13 @@ export class IndeterminateRemoteMutationError extends Error {
 export interface BlobBackend {
   get(key: string): Promise<Uint8Array | null>
   put(key: string, value: Uint8Array): Promise<void>
-  delete(key: string): Promise<void>
   list(prefix: string): Promise<string[]>
   getStream?(key: string): Promise<{ body: ReadableStream<Uint8Array>; size?: number } | null>
-  getVersioned?(key: string): Promise<{ value: Uint8Array; version: string } | null>
   putConditional?(key: string, value: Uint8Array, expectedVersion: string | null): Promise<string | null>
+}
+
+export interface MaintenanceBlobBackend extends BlobBackend {
+  delete(key: string): Promise<void>
 }
 
 export interface SkillRegistryStore {
@@ -34,7 +36,7 @@ export interface SkillRegistryStore {
   getState(registryID: string): Promise<SkillRegistryState | null>
   putState(state: SkillRegistryState): Promise<void>
   getSnapshot(registryID: string, revision: string): Promise<SkillRegistryCatalog | null>
-  publishSnapshot(catalog: SkillRegistryCatalog, state: SkillRegistryState, assertWriterLease?: () => void): Promise<void>
+  publishSnapshot(catalog: SkillRegistryCatalog, state: SkillRegistryState, assertWriterActive?: () => void): Promise<void>
   putArtifact(descriptor: SkillArtifactDescriptor, bytes: Uint8Array): Promise<{ stored: boolean }>
   getArtifact(digest: string): Promise<{ descriptor: SkillArtifactBlob; bytes: Uint8Array } | null>
   getArtifactStream?(digest: string): Promise<{
@@ -47,12 +49,15 @@ export interface SkillRegistryStore {
     descriptor: SkillImageAsset
     body: ReadableStream<Uint8Array> | Uint8Array
   } | null>
-  listCatalogRevisions?(registryID: string): Promise<SkillRegistryCatalog[]>
-  deleteCatalogRevision?(registryID: string, revision: string): Promise<void>
-  listArtifactDigests?(): Promise<string[]>
-  deleteArtifact?(digest: string): Promise<void>
-  listImageDigests?(): Promise<string[]>
-  deleteImage?(digest: string): Promise<void>
+}
+
+export interface SkillRegistryMaintenanceStore extends SkillRegistryStore {
+  listCatalogRevisions(registryID: string): Promise<SkillRegistryCatalog[]>
+  deleteCatalogRevision(registryID: string, revision: string): Promise<void>
+  listArtifactDigests(): Promise<string[]>
+  deleteArtifact(digest: string): Promise<void>
+  listImageDigests(): Promise<string[]>
+  deleteImage(digest: string): Promise<void>
 }
 
 function assertDigest(value: string): string {
@@ -86,9 +91,7 @@ function validateStoredCatalog(catalog: SkillRegistryCatalog, registryID: string
     throw new Error(`Invalid stored Catalog: ${key}`)
   }
   for (const skill of catalog.skills) {
-    if (!skill || skill.schema_version !== '1' || skill.registry_id !== registryID
-      || !skill.artifact || skill.artifact.registry_id !== registryID
-      || skill.artifact.package_id !== skill.package_id || skill.artifact.skill_id !== skill.skill_id) {
+    if (!skill || skill.schema_version !== '1' || skill.registry_id !== registryID || !skill.artifact) {
       throw new Error(`Invalid stored Catalog Skill: ${key}`)
     }
     try {
@@ -141,7 +144,7 @@ export async function sha256(value: Uint8Array | string): Promise<string> {
 }
 
 export class BlobSkillRegistryStore implements SkillRegistryStore {
-  constructor(private readonly backend: BlobBackend) {}
+  constructor(protected readonly backend: BlobBackend) {}
 
   async listRegistryIDs(): Promise<string[]> {
     const keys = await this.backend.list('skill-registries/')
@@ -155,20 +158,17 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     const id = assertRegistryID(registryID, 'registry ID')
     const state = await readJSON<SkillRegistryState>(this.backend, `skill-registries/${id}/state.json`)
     if (!state) return null
-    if (state.schema_version !== '1' || state.definition?.id !== id || state.status?.registry_id !== id) {
+    if (state.schema_version !== '1' || state.definition?.id !== id || !state.status?.state) {
       throw new Error(`Invalid Registry state: ${id}`)
     }
-    if (state.current_revision) assertDigest(state.current_revision)
-    if (state.status.current_revision && state.status.current_revision !== state.current_revision) {
-      throw new Error(`Registry state revision mismatch: ${id}`)
-    }
+    if (state.current_snapshot) assertDigest(state.current_snapshot)
     return state
   }
 
   async putState(state: SkillRegistryState) {
     const id = assertRegistryID(state.definition.id, 'registry ID')
-    if (state.schema_version !== '1' || state.status.registry_id !== id) throw new Error(`Invalid Registry state: ${id}`)
-    if (state.current_revision) assertDigest(state.current_revision)
+    if (state.schema_version !== '1' || !state.status?.state) throw new Error(`Invalid Registry state: ${id}`)
+    if (state.current_snapshot) assertDigest(state.current_snapshot)
     await this.backend.put(`skill-registries/${id}/state.json`, jsonBytes(state))
   }
 
@@ -182,10 +182,10 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     return catalog
   }
 
-  async publishSnapshot(catalog: SkillRegistryCatalog, state: SkillRegistryState, assertWriterLease: () => void = () => {}) {
+  async publishSnapshot(catalog: SkillRegistryCatalog, state: SkillRegistryState, assertWriterActive: () => void = () => {}) {
     const id = assertRegistryID(catalog.registry.id, 'registry ID')
     const revision = assertDigest(catalog.revision)
-    if (state.definition.id !== id || state.current_revision !== revision || state.status.registry_id !== id) {
+    if (state.definition.id !== id || state.current_snapshot !== revision) {
       throw new Error(`Snapshot state does not match Catalog: ${id}/${revision}`)
     }
     const key = `skill-registries/${id}/snapshots/${revision}.json`
@@ -194,48 +194,22 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     if (existing) {
       const stored = JSON.parse(decoder.decode(existing)) as SkillRegistryCatalog
       validateStoredCatalog(stored, id, revision, key)
-      if (stored.revision !== revision || stored.content_revision !== catalog.content_revision || stored.registry.id !== id) {
-        throw new Error(`Catalog revision ${revision} is immutable`)
-      }
     }
     if (!existing && this.backend.putConditional) {
-      assertWriterLease()
+      assertWriterActive()
       const version = await this.backend.putConditional(key, bytes, null)
       if (!version) {
         existing = await this.backend.get(key)
         if (!existing) throw new Error(`Catalog revision appeared but could not be read: ${revision}`)
         const stored = JSON.parse(decoder.decode(existing)) as SkillRegistryCatalog
         validateStoredCatalog(stored, id, revision, key)
-        if (stored.content_revision !== catalog.content_revision) throw new Error(`Catalog revision ${revision} is immutable`)
       }
     } else if (!existing) {
-      assertWriterLease()
+      assertWriterActive()
       await this.backend.put(key, bytes)
     }
-    assertWriterLease()
-    await this.putState({ ...state, status: { ...state.status, current_revision: revision } })
-  }
-
-  async listCatalogRevisions(registryID: string) {
-    const id = assertRegistryID(registryID, 'registry ID')
-    const prefix = `skill-registries/${id}/snapshots/`
-    const keys = await this.backend.list(prefix)
-    const unexpected = keys.find((key) => !key.startsWith(prefix) || !/^[a-f0-9]{64}\.json$/.test(key.slice(prefix.length)))
-    if (unexpected) throw new Error(`Unexpected object in Catalog namespace: ${unexpected}`)
-    return Promise.all(keys.map(async (key) => {
-      const revision = key.slice(prefix.length, -'.json'.length)
-      const catalog = await readJSON<SkillRegistryCatalog>(this.backend, key)
-      validateStoredCatalog(catalog!, id, revision, key)
-      return catalog!
-    }))
-  }
-
-  async deleteCatalogRevision(registryID: string, revision: string) {
-    const id = assertRegistryID(registryID, 'registry ID')
-    const digest = assertDigest(revision)
-    const state = await this.getState(id)
-    if (state?.current_revision === digest) throw new Error(`Cannot delete current Catalog revision: ${id}/${digest}`)
-    await this.backend.delete(`skill-registries/${id}/snapshots/${digest}.json`)
+    assertWriterActive()
+    await this.putState(state)
   }
 
   // Uploads a digest-addressed object. These keys are immutable: a duplicate or
@@ -243,7 +217,7 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
   // settle by reading the key back, and safe to retry while it is still absent.
   // Exhausted retries throw a plain Error on purpose — unlike mutable pointer
   // writes, an in-flight PUT that lands later cannot corrupt anything, so the
-  // writer lease does not need to survive this failure for safety.
+  // writer run does not need to remain active after this failure for safety.
   private async putImmutableObject(key: string, bytes: Uint8Array, label: string) {
     const expected = await sha256(bytes)
     let lastError: unknown
@@ -252,103 +226,60 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
       try {
         if (this.backend.putConditional) {
           const created = await this.backend.putConditional(key, bytes, null)
-          if (created) return
+          return Boolean(created)
         } else {
+          const stored = await this.backend.get(key)
+          if (stored) {
+            if (stored.length !== bytes.length || await sha256(stored) !== expected) {
+              throw new Error(`${label} is immutable: ${key}`)
+            }
+            return false
+          }
           await this.backend.put(key, bytes)
-          return
+          return true
         }
       } catch (error) {
         lastError = error
       }
       const stored = await this.backend.get(key).catch(() => null)
-      if (stored && stored.length === bytes.length && await sha256(stored) === expected) return
+      if (stored && stored.length === bytes.length && await sha256(stored) === expected) return true
     }
     throw new Error(`${label} upload did not complete: ${key}`, { cause: lastError })
   }
 
   async putArtifact(descriptor: SkillArtifactDescriptor, bytes: Uint8Array) {
-    assertRegistryID(descriptor.registry_id, 'registry ID')
-    assertRegistryID(descriptor.package_id, 'package ID')
-    assertRegistryID(descriptor.skill_id, 'skill ID')
     assertDigest(descriptor.digest)
     if (descriptor.format !== 'memoh_skill_v1') throw new Error(`Unsupported artifact format: ${descriptor.format}`)
     if (descriptor.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) throw new Error('Artifact exceeds compressed size limit')
     if (descriptor.size !== bytes.length) throw new Error('Artifact size does not match its content')
     if (descriptor.digest !== await sha256(bytes)) throw new Error('Artifact digest does not match its content')
-    const blob: SkillArtifactBlob = {
-      format: descriptor.format,
-      digest: descriptor.digest,
-      size: descriptor.size,
-      content_type: descriptor.content_type,
-    }
-    const metadataKey = `skill-artifacts/${descriptor.digest}.json`
     const archiveKey = `skill-artifacts/${descriptor.digest}.tar.gz`
-    const metadata = jsonBytes(blob)
-    const storedMetadata = await this.backend.get(metadataKey)
-    if (storedMetadata) {
-      if (decoder.decode(storedMetadata) !== decoder.decode(metadata)) {
-        throw new Error(`Artifact ${descriptor.digest} metadata is immutable`)
-      }
-      // Metadata is only written after its archive, both keys embed the digest,
-      // and every read path re-verifies content hashes — so a matching metadata
-      // object proves the archive is already stored. Skipping the archive read
-      // keeps steady-state refreshes from re-downloading every Artifact.
-      return { stored: false }
-    }
-    const storedArchive = await this.backend.get(archiveKey)
-    if (storedArchive) {
-      if (await sha256(storedArchive) !== descriptor.digest) {
-        throw new Error(`Artifact ${descriptor.digest} content is immutable`)
-      }
-    } else {
-      await this.putImmutableObject(archiveKey, bytes, 'Artifact')
-    }
-    await this.putImmutableObject(metadataKey, metadata, 'Artifact metadata')
-    return { stored: !storedArchive }
-  }
-
-  async listArtifactDigests() {
-    const keys = await this.backend.list('skill-artifacts/')
-    return [...new Set(keys.flatMap((key): string[] => {
-      const match = key.match(/^skill-artifacts\/([a-f0-9]{64})\.(?:json|tar\.gz)$/)
-      return match?.[1] ? [match[1]] : []
-    }))].sort()
-  }
-
-  async deleteArtifact(digest: string) {
-    const value = assertDigest(digest)
-    // Refresh uses metadata as the committed marker for the archive. Remove
-    // that marker first so an interrupted GC can only leave an unreferenced
-    // archive behind, never metadata that points to a missing archive.
-    await this.backend.delete(`skill-artifacts/${value}.json`)
-    await this.backend.delete(`skill-artifacts/${value}.tar.gz`)
+    return { stored: await this.putImmutableObject(archiveKey, bytes, 'Artifact') }
   }
 
   async getArtifact(digest: string) {
     assertDigest(digest)
-    const [descriptor, bytes] = await Promise.all([
-      readJSON<SkillArtifactBlob>(this.backend, `skill-artifacts/${digest}.json`),
-      this.backend.get(`skill-artifacts/${digest}.tar.gz`),
-    ])
-    if (!descriptor || !bytes) return null
-    validateArtifactBlob(descriptor, digest)
-    if (bytes.length !== descriptor.size || await sha256(bytes) !== digest) {
+    const bytes = await this.backend.get(`skill-artifacts/${digest}.tar.gz`)
+    if (!bytes) return null
+    if (await sha256(bytes) !== digest) {
       throw new Error(`Stored Artifact content is corrupt: ${digest}`)
+    }
+    const descriptor: SkillArtifactBlob = {
+      format: 'memoh_skill_v1', digest, size: bytes.length, content_type: 'application/gzip',
     }
     return { descriptor, bytes }
   }
 
   async getArtifactStream(digest: string) {
     assertDigest(digest)
-    const descriptor = await readJSON<SkillArtifactBlob>(this.backend, `skill-artifacts/${digest}.json`)
-    if (!descriptor) return null
-    validateArtifactBlob(descriptor, digest)
     if (this.backend.getStream) {
       const streamed = await this.backend.getStream(`skill-artifacts/${digest}.tar.gz`)
       if (!streamed) return null
-      if (streamed.size != null && streamed.size !== descriptor.size) {
-        throw new Error(`Stored Artifact size is corrupt: ${digest}`)
+      if (streamed.size == null) throw new Error(`Stored Artifact size is unavailable: ${digest}`)
+      const descriptor: SkillArtifactBlob = {
+        format: 'memoh_skill_v1', digest, size: streamed.size, content_type: 'application/gzip',
       }
+      validateArtifactBlob(descriptor, digest)
       return { descriptor, body: verifiedAssetStream(streamed.body, descriptor) }
     }
     const artifact = await this.getArtifact(digest)
@@ -409,6 +340,51 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     return image ? { descriptor: image.descriptor, body: image.bytes } : null
   }
 
+}
+
+export class BlobSkillRegistryMaintenanceStore
+  extends BlobSkillRegistryStore
+  implements SkillRegistryMaintenanceStore {
+  declare protected readonly backend: MaintenanceBlobBackend
+
+  constructor(backend: MaintenanceBlobBackend) {
+    super(backend)
+  }
+
+  async listCatalogRevisions(registryID: string) {
+    const id = assertRegistryID(registryID, 'registry ID')
+    const prefix = `skill-registries/${id}/snapshots/`
+    const keys = await this.backend.list(prefix)
+    const unexpected = keys.find((key) => !key.startsWith(prefix) || !/^[a-f0-9]{64}\.json$/.test(key.slice(prefix.length)))
+    if (unexpected) throw new Error(`Unexpected object in Catalog namespace: ${unexpected}`)
+    return Promise.all(keys.map(async (key) => {
+      const revision = key.slice(prefix.length, -'.json'.length)
+      const catalog = await readJSON<SkillRegistryCatalog>(this.backend, key)
+      validateStoredCatalog(catalog!, id, revision, key)
+      return catalog!
+    }))
+  }
+
+  async deleteCatalogRevision(registryID: string, revision: string) {
+    const id = assertRegistryID(registryID, 'registry ID')
+    const digest = assertDigest(revision)
+    const state = await this.getState(id)
+    if (state?.current_snapshot === digest) throw new Error(`Cannot delete current Catalog revision: ${id}/${digest}`)
+    await this.backend.delete(`skill-registries/${id}/snapshots/${digest}.json`)
+  }
+
+  async listArtifactDigests() {
+    const keys = await this.backend.list('skill-artifacts/')
+    return [...new Set(keys.flatMap((key): string[] => {
+      const match = key.match(/^skill-artifacts\/([a-f0-9]{64})\.tar\.gz$/)
+      return match?.[1] ? [match[1]] : []
+    }))].sort()
+  }
+
+  async deleteArtifact(digest: string) {
+    await this.backend.delete(`skill-artifacts/${assertDigest(digest)}.tar.gz`)
+  }
+
   async listImageDigests() {
     const keys = await this.backend.list('skill-images/')
     return [...new Set(keys.flatMap((key): string[] => {
@@ -421,66 +397,5 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     const value = assertDigest(digest)
     await this.backend.delete(`skill-images/${value}.json`)
     await this.backend.delete(`skill-images/${value}`)
-  }
-}
-
-interface R2ObjectLike {
-  arrayBuffer(): Promise<ArrayBuffer>
-  body?: ReadableStream<Uint8Array>
-  size?: number
-  etag?: string
-}
-interface R2BucketLike {
-  get(key: string): Promise<R2ObjectLike | null>
-  put(key: string, value: Uint8Array, options?: {
-    onlyIf?: { etagMatches?: string; etagDoesNotMatch?: string }
-  }): Promise<{ etag?: string } | null | void>
-  delete(key: string): Promise<unknown>
-  list(options?: { prefix?: string; cursor?: string; delimiter?: string }): Promise<{
-    objects: Array<{ key: string }>
-    truncated: boolean
-    cursor?: string
-    delimitedPrefixes?: string[]
-  }>
-}
-
-export class R2BlobBackend implements BlobBackend {
-  constructor(private readonly bucket: R2BucketLike) {}
-  async get(key: string) {
-    const object = await this.bucket.get(key)
-    return object ? new Uint8Array(await object.arrayBuffer()) : null
-  }
-  async put(key: string, value: Uint8Array) { await this.bucket.put(key, value) }
-  async delete(key: string) { await this.bucket.delete(key) }
-  async getVersioned(key: string) {
-    const object = await this.bucket.get(key)
-    if (!object) return null
-    if (!object.etag) throw new Error(`R2 object has no ETag: ${key}`)
-    return { value: new Uint8Array(await object.arrayBuffer()), version: object.etag }
-  }
-  async putConditional(key: string, value: Uint8Array, expectedVersion: string | null) {
-    const result = await this.bucket.put(key, value, {
-      onlyIf: expectedVersion === null ? { etagDoesNotMatch: '*' } : { etagMatches: expectedVersion },
-    })
-    if (!result) return null
-    if (!result.etag) throw new Error(`Conditional R2 write returned no ETag: ${key}`)
-    return result.etag
-  }
-  async getStream(key: string) {
-    const object = await this.bucket.get(key)
-    if (!object) return null
-    if (object.body) return { body: object.body, size: object.size }
-    const bytes = new Uint8Array(await object.arrayBuffer())
-    return { body: new Blob([bytes]).stream(), size: bytes.length }
-  }
-  async list(prefix: string) {
-    const keys: string[] = []
-    let cursor: string | undefined
-    do {
-      const page = await this.bucket.list({ prefix, cursor })
-      keys.push(...page.objects.map((object) => object.key))
-      cursor = page.truncated ? page.cursor : undefined
-    } while (cursor)
-    return keys.sort()
   }
 }

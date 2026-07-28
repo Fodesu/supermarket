@@ -11,7 +11,8 @@ import registries from '../server/api/registries/index.get'
 import skills from '../server/api/skills/index.get'
 import type { CatalogSkill, SkillArtifactDescriptor, SkillRegistryCatalog, SkillRegistryDefinition } from '../server/types/skill-registry'
 import { createTar, gzip } from '../server/utils/tar'
-import { BlobSkillRegistryStore, R2BlobBackend, sha256 } from '../server/utils/skill-registry-store'
+import { R2BlobBackend } from '../server/utils/r2-blob-backend'
+import { BlobSkillRegistryStore, sha256 } from '../server/utils/skill-registry-store'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
@@ -77,9 +78,8 @@ describe('Skill Registry HTTP protocol', () => {
     }, ''))
     const digest = await sha256(archive)
     const artifact: SkillArtifactDescriptor = {
-      registry_id: 'example', package_id: 'tools', skill_id: 'demo', source_revision: 'source',
-      format: 'memoh_skill_v1', digest, size: archive.length, filename: `${installID}.tar.gz`,
-      content_type: 'application/gzip', created_at: '2026-01-01T00:00:00.000Z',
+      format: 'memoh_skill_v1', digest, size: archive.length,
+      content_type: 'application/gzip',
     }
     const imageBytes = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"/>')
     const image = { digest: await sha256(imageBytes), size: imageBytes.length, content_type: 'image/svg+xml' as const }
@@ -94,14 +94,14 @@ describe('Skill Registry HTTP protocol', () => {
     }
     const revision = await sha256('catalog')
     const catalog: SkillRegistryCatalog = {
-      schema_version: '1', registry: definition, revision, content_revision: revision,
+      schema_version: '1', registry: definition, revision,
       source_revision: 'source', synced_at: '2026-01-01T00:00:00.000Z', skills: [skill], diagnostics: [],
     }
     await store.putArtifact(artifact, archive)
     await store.putImage(image, imageBytes)
     await store.publishSnapshot(catalog, {
-      schema_version: '1', definition, current_revision: revision,
-      status: { registry_id: definition.id, state: 'ready', current_revision: revision },
+      schema_version: '1', definition, current_snapshot: revision,
+      status: { state: 'ready' },
     })
 
     const app = new H3()

@@ -16,6 +16,9 @@ supermarket/
 ├── scripts/skill-registry/          # Refresh, validation, local GC, and adapters
 ├── writer/                          # Cloudflare Container refresh writer
 ├── client/                          # Reference Registry client and safe extractor
+├── api.wrangler.jsonc               # API Worker environments and bindings
+├── writer.wrangler.jsonc            # Writer environments, cron, Container, and bindings
+├── writer.Dockerfile
 ├── nitro.config.mjs
 └── vite.config.ts
 ```
@@ -140,7 +143,19 @@ retention:
 
 Supported sources are `local` and `git`; adapters are `skill_directory` and `codex_marketplace_skills`. Run `bun run registry:validate` before refreshing.
 
-For production, the API Worker is read-only. Deploy the separate Cloudflare Writer with `bun run registry:writer:deploy`; it refreshes due Registries every 15 minutes. Local garbage collection remains available with `bun run registry:gc` (add `-- --apply` to apply it); the deployed Writer does not run GC.
+The API Worker is read-only. The separate Writer runs every 15 minutes and publishes immutable Snapshots and Artifacts before switching a Registry's `state.json` pointer. Test and production resources are declared under the matching environments in `api.wrangler.jsonc` and `writer.wrangler.jsonc`; both Workers must bind the same R2 bucket within an environment.
+
+```bash
+# Test
+bun run registry:writer:deploy:test
+bun run registry:api:deploy:test
+
+# Production
+bun run registry:writer:deploy:production
+bun run registry:api:deploy:production
+```
+
+Local garbage collection remains available with `bun run registry:gc` (add `-- --apply` to apply it). The deployed Writer does not run GC.
 
 ## License
 

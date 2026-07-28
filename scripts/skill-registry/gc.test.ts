@@ -26,10 +26,9 @@ function definition(id: string, retention = 2): SkillRegistryDefinition {
 async function putArtifact(store: LocalSkillRegistryStore, id: string) {
   const bytes = new TextEncoder().encode(`artifact:${id}`)
   const digest = await sha256(bytes)
-  const descriptor: SkillArtifactDescriptor = {
-    registry_id: 'known', package_id: 'package', skill_id: id, source_revision: 'source',
-    format: 'memoh_skill_v1', digest, size: bytes.length, filename: `${id}.tar.gz`,
-    content_type: 'application/gzip', created_at: '2026-01-01T00:00:00.000Z',
+  const descriptor: SkillArtifactDescriptor & { package_id: string; skill_id: string } = {
+    package_id: 'package', skill_id: id,
+    format: 'memoh_skill_v1', digest, size: bytes.length, content_type: 'application/gzip',
   }
   await store.putArtifact(descriptor, bytes)
   return descriptor
@@ -42,7 +41,12 @@ async function putImage(store: LocalSkillRegistryStore, id: string) {
   return descriptor
 }
 
-function catalog(definition: SkillRegistryDefinition, revision: string, syncedAt: string, artifact: SkillArtifactDescriptor): SkillRegistryCatalog {
+function catalog(
+  definition: SkillRegistryDefinition,
+  revision: string,
+  syncedAt: string,
+  artifact: SkillArtifactDescriptor & { package_id: string; skill_id: string },
+): SkillRegistryCatalog {
   const skill: CatalogSkill = {
     schema_version: '1', registry_id: definition.id, registry_priority: definition.priority,
     package_id: artifact.package_id, skill_id: artifact.skill_id,
@@ -50,10 +54,13 @@ function catalog(definition: SkillRegistryDefinition, revision: string, syncedAt
     name: artifact.skill_id, description: artifact.skill_id, author: { name: 'Test', email: '' },
     tags: [], category: 'other', category_name: 'Other', runtime_requirements: { os: ['linux'] },
     source: { type: 'local', revision: 'source', path: `skills/${artifact.skill_id}` },
-    files: ['SKILL.md'], artifact: { ...artifact, registry_id: definition.id },
+    files: ['SKILL.md'],
+    artifact: {
+      format: artifact.format, digest: artifact.digest, size: artifact.size, content_type: artifact.content_type,
+    },
   }
   return {
-    schema_version: '1', registry: definition, revision, content_revision: revision,
+    schema_version: '1', registry: definition, revision,
     source_revision: 'source', synced_at: syncedAt, skills: [skill], diagnostics: [],
   }
 }
@@ -69,20 +76,20 @@ function fixture(store: LocalSkillRegistryStore): FixtureStore {
     async putDefinition(value: SkillRegistryDefinition) {
       const existing = await store.getState(value.id)
       await store.putState({
-        schema_version: '1', definition: value, current_revision: existing?.current_revision,
-        status: existing?.status ?? { registry_id: value.id, state: 'empty' },
+        schema_version: '1', definition: value, current_snapshot: existing?.current_snapshot,
+        status: existing?.status ?? { state: 'empty' },
       })
     },
     async publishCatalog(value: SkillRegistryCatalog) {
       const existing = await store.getState(value.registry.id)
       await store.publishSnapshot(value, {
-        schema_version: '1', definition: value.registry, current_revision: value.revision,
-        status: { ...(existing?.status ?? { registry_id: value.registry.id, state: 'ready' }), current_revision: value.revision },
+        schema_version: '1', definition: value.registry, current_snapshot: value.revision,
+        status: existing?.status ?? { state: 'ready' },
       })
     },
     async getCatalog(id: string) {
       const current = await store.getState(id)
-      return current?.current_revision ? store.getSnapshot(id, current.current_revision) : null
+      return current?.current_snapshot ? store.getSnapshot(id, current.current_snapshot) : null
     },
   })
 }
@@ -123,7 +130,7 @@ describe('Skill Registry garbage collection', () => {
     await expect(garbageCollectSkillRegistries({ store, definitions: [known], apply: true }))
       .rejects.toThrow('writer lock guard')
     const applied = await garbageCollectSkillRegistries({
-      store, definitions: [known], apply: true, assertWriterLease: () => {},
+      store, definitions: [known], apply: true, assertWriterActive: () => {},
     })
     expect(applied.applied).toBe(true)
     expect((await store.listCatalogRevisions('known')).map((item) => item.revision).sort())
@@ -151,7 +158,7 @@ describe('Skill Registry garbage collection', () => {
     await store.publishCatalog(catalog(known, newRevision, '2026-01-02T00:00:00.000Z', newArtifact))
     const statePath = path.join(root, 'skill-registries/known/state.json')
     const state = JSON.parse(await Bun.file(statePath).text())
-    await Bun.write(statePath, JSON.stringify({ ...state, current_revision: oldRevision, status: { ...state.status, current_revision: oldRevision } }))
+    await Bun.write(statePath, JSON.stringify({ ...state, current_snapshot: oldRevision }))
 
     const result = await garbageCollectSkillRegistries({ store, definitions: [known] })
     const registry = result.registries.find((item) => item.registry_id === 'known')
@@ -180,12 +187,12 @@ describe('Skill Registry garbage collection', () => {
     const malformedRevision = await sha256('malformed-catalog')
     await Bun.write(path.join(catalogsRoot, `${malformedRevision}.json`), JSON.stringify({
       schema_version: '1', registry: known, revision: malformedRevision,
-      content_revision: malformedRevision, source_revision: 'source',
+      source_revision: 'source',
       synced_at: '2026-01-02T00:00:00.000Z', diagnostics: [],
       skills: [{ schema_version: '1', registry_id: 'known', package_id: 'package', skill_id: 'broken', artifact: { digest: 'bad' } }],
     }))
     await expect(garbageCollectSkillRegistries({ store, definitions: [known] }))
-      .rejects.toThrow('Invalid stored Catalog Skill')
+      .rejects.toThrow('Invalid stored Catalog Artifact reference')
     expect(await store.getArtifact(artifact.digest)).not.toBeNull()
   })
 
@@ -209,18 +216,29 @@ describe('Skill Registry garbage collection', () => {
     expect(protectedResult.registries[0]?.protected_reason).toBe('missing_current')
     expect(protectedResult.registries[0]?.deleted_revisions).toEqual([])
     expect(protectedResult.artifacts.deleted).toEqual([orphanArtifact.digest])
-    await store.putState({ schema_version: '1', definition: known, current_revision: currentRevision,
-      status: { registry_id: known.id, state: 'ready', current_revision: currentRevision } })
+    expect(await store.getArtifact(oldArtifact.digest)).not.toBeNull()
+    expect(await store.getArtifact(currentArtifact.digest)).not.toBeNull()
 
+    await store.putState({
+      schema_version: '1',
+      definition: known,
+      current_snapshot: currentRevision,
+      status: { state: 'ready' },
+    })
     const failingStore = new Proxy(store, {
       get(target, property) {
-        if (property === 'deleteCatalogRevision') return async () => { throw new Error('catalog delete failed') }
+        if (property === 'deleteCatalogRevision') {
+          return async () => { throw new Error('catalog delete failed') }
+        }
         const value = Reflect.get(target, property)
         return typeof value === 'function' ? value.bind(target) : value
       },
     })
     await expect(garbageCollectSkillRegistries({
-      store: failingStore, definitions: [known], apply: true, assertWriterLease: () => {},
+      store: failingStore,
+      definitions: [known],
+      apply: true,
+      assertWriterActive: () => {},
     })).rejects.toThrow('catalog delete failed')
     expect(await store.getArtifact(oldArtifact.digest)).not.toBeNull()
     expect(await store.getArtifact(orphanArtifact.digest)).not.toBeNull()
@@ -247,7 +265,7 @@ describe('Skill Registry garbage collection', () => {
           return async (registryID: string, revision: string) => {
             await target.deleteCatalogRevision(registryID, revision)
             const state = await target.getState(known.id)
-            await Bun.write(currentPath, JSON.stringify({ ...state, current_revision: revisions[1], status: { ...state?.status, current_revision: revisions[1] } }))
+            await Bun.write(currentPath, JSON.stringify({ ...state, current_snapshot: revisions[1] }))
           }
         }
         const value = Reflect.get(target, property)
@@ -255,7 +273,7 @@ describe('Skill Registry garbage collection', () => {
       },
     })
     await expect(garbageCollectSkillRegistries({
-      store: changingStore, definitions: [known], apply: true, assertWriterLease: () => {},
+      store: changingStore, definitions: [known], apply: true, assertWriterActive: () => {},
     })).rejects.toThrow('Current Catalog changed')
     expect(await store.getArtifact(oldArtifact.digest)).not.toBeNull()
     expect(await store.getArtifact(orphanArtifact.digest)).not.toBeNull()

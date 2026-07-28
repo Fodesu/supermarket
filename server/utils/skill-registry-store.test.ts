@@ -5,10 +5,10 @@ import path from 'node:path'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../types/skill-registry'
 import type { SkillArtifactDescriptor, SkillImageAsset, SkillRegistryCatalog, SkillRegistryDefinition } from '../types/skill-registry'
 import { LocalSkillRegistryStore } from './local-skill-registry-store'
+import { R2BlobBackend } from './r2-blob-backend'
 import {
   BlobSkillRegistryStore,
   IndeterminateRemoteMutationError,
-  R2BlobBackend,
   sha256,
   type BlobBackend,
 } from './skill-registry-store'
@@ -24,7 +24,7 @@ const definition: SkillRegistryDefinition = {
 
 function catalog(revision: string): SkillRegistryCatalog {
   return {
-    schema_version: '1', registry: definition, revision, content_revision: revision,
+    schema_version: '1', registry: definition, revision,
     source_revision: revision, synced_at: '2026-01-01T00:00:00.000Z', skills: [], diagnostics: [],
   }
 }
@@ -32,8 +32,8 @@ function catalog(revision: string): SkillRegistryCatalog {
 async function exerciseStore(store: LocalSkillRegistryStore | BlobSkillRegistryStore) {
   const revision = 'a'.repeat(64)
   const readyState = {
-    schema_version: '1' as const, definition, current_revision: revision,
-    status: { registry_id: definition.id, state: 'ready' as const, current_revision: revision },
+    schema_version: '1' as const, definition, current_snapshot: revision,
+    status: { state: 'ready' as const },
   }
   await store.publishSnapshot(catalog(revision), readyState)
   await expect(store.publishSnapshot({ ...catalog(revision), synced_at: '2026-01-02T00:00:00.000Z' }, readyState)).resolves.toBeUndefined()
@@ -44,9 +44,7 @@ async function exerciseStore(store: LocalSkillRegistryStore | BlobSkillRegistryS
   const bytes = new TextEncoder().encode('artifact')
   const digest = await sha256(bytes)
   const descriptor: SkillArtifactDescriptor = {
-    registry_id: 'example', package_id: 'package', skill_id: 'skill', source_revision: revision,
-    format: 'memoh_skill_v1', digest, size: bytes.length, filename: 'skill.tar.gz',
-    content_type: 'application/gzip', created_at: '2026-01-01T00:00:00.000Z',
+    format: 'memoh_skill_v1', digest, size: bytes.length, content_type: 'application/gzip',
   }
   await store.putArtifact(descriptor, bytes)
   const artifact = await store.getArtifact(digest)
@@ -54,7 +52,7 @@ async function exerciseStore(store: LocalSkillRegistryStore | BlobSkillRegistryS
   expect(artifact?.descriptor).toEqual({
     format: 'memoh_skill_v1', digest, size: bytes.length, content_type: 'application/gzip',
   })
-  await expect(store.putArtifact({ ...descriptor, source_revision: 'b'.repeat(64) }, bytes)).resolves.toEqual({ stored: false })
+  await expect(store.putArtifact(descriptor, bytes)).resolves.toEqual({ stored: false })
   await expect(store.putArtifact({ ...descriptor, size: bytes.length + 1 }, bytes)).rejects.toThrow('size')
   await expect(store.putArtifact({ ...descriptor, size: MAX_SKILL_ARTIFACT_COMPRESSED_BYTES + 1 }, bytes))
     .rejects.toThrow('compressed size limit')
@@ -70,8 +68,7 @@ async function exerciseStore(store: LocalSkillRegistryStore | BlobSkillRegistryS
 function memoryBackend() {
   const objects = new Map<string, Uint8Array>()
   const gets = new Map<string, number>()
-  const deletes: string[] = []
-  const behavior = { failPuts: 0, landDespiteError: false, failDelete: '' }
+  const behavior = { failPuts: 0, landDespiteError: false }
   const backend: BlobBackend = {
     async get(key) {
       gets.set(key, (gets.get(key) ?? 0) + 1)
@@ -85,28 +82,21 @@ function memoryBackend() {
       }
       objects.set(key, value.slice())
     },
-    async delete(key) {
-      deletes.push(key)
-      if (behavior.failDelete === key) throw new Error(`delete failed: ${key}`)
-      objects.delete(key)
-    },
     async list(prefix) {
       return [...objects.keys()].filter((key) => key.startsWith(prefix)).sort()
     },
   }
-  return { backend, deletes, gets, behavior }
+  return { backend, gets, behavior }
 }
 
 describe('Immutable digest-addressed uploads', () => {
   test('settles unknown outcomes, retries transient failures, and skips stored archives', async () => {
-    const { backend, deletes, gets, behavior } = memoryBackend()
+    const { backend, gets, behavior } = memoryBackend()
     const store = new BlobSkillRegistryStore(backend)
     const bytes = new TextEncoder().encode('artifact-retry')
     const digest = await sha256(bytes)
     const descriptor: SkillArtifactDescriptor = {
-      registry_id: 'example', package_id: 'package', skill_id: 'skill', source_revision: 'a'.repeat(64),
-      format: 'memoh_skill_v1', digest, size: bytes.length, filename: 'skill.tar.gz',
-      content_type: 'application/gzip', created_at: '2026-01-01T00:00:00.000Z',
+      format: 'memoh_skill_v1', digest, size: bytes.length, content_type: 'application/gzip',
     }
 
     // The PUT reported an unknown outcome but actually landed: reading the key
@@ -116,23 +106,10 @@ describe('Immutable digest-addressed uploads', () => {
     await expect(store.putArtifact(descriptor, bytes)).resolves.toEqual({ stored: true })
     expect((await store.getArtifact(digest))?.bytes).toEqual(bytes)
 
-    // Steady state: matching metadata short-circuits the call and the archive
-    // is never downloaded again.
+    // Steady state reuses the content-addressed archive.
     const archiveReads = gets.get(`skill-artifacts/${digest}.tar.gz`) ?? 0
     await expect(store.putArtifact(descriptor, bytes)).resolves.toEqual({ stored: false })
-    expect(gets.get(`skill-artifacts/${digest}.tar.gz`) ?? 0).toBe(archiveReads)
-
-    // GC removes the metadata commit marker before the archive. If deleting
-    // the archive fails, the next refresh validates the orphaned bytes and
-    // restores metadata instead of mistaking a missing archive for a hit.
-    const metadataKey = `skill-artifacts/${digest}.json`
-    const archiveKey = `skill-artifacts/${digest}.tar.gz`
-    behavior.failDelete = archiveKey
-    await expect(store.deleteArtifact(digest)).rejects.toThrow('delete failed')
-    expect(deletes.slice(-2)).toEqual([metadataKey, archiveKey])
-    behavior.failDelete = ''
-    await expect(store.putArtifact(descriptor, bytes)).resolves.toEqual({ stored: false })
-    expect((await store.getArtifact(digest))?.bytes).toEqual(bytes)
+    expect(gets.get(`skill-artifacts/${digest}.tar.gz`) ?? 0).toBe(archiveReads + 1)
 
     // A transient failure that did not land is retried and succeeds.
     const secondBytes = new TextEncoder().encode('artifact-retry-second')
@@ -144,7 +121,7 @@ describe('Immutable digest-addressed uploads', () => {
     await expect(store.putArtifact(secondDescriptor, secondBytes)).resolves.toEqual({ stored: true })
 
     // A failure that never lands surfaces a PLAIN error after retries: a late
-    // duplicate PUT of identical bytes is harmless, so the writer lease must
+    // duplicate PUT of identical bytes is harmless, so the writer run must
     // not be poisoned by Artifact or image uploads.
     const imageBytes = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><title>retry</title></svg>')
     const image: SkillImageAsset = {
@@ -170,8 +147,8 @@ describe('SkillRegistryStore contract', () => {
     const store = new LocalSkillRegistryStore(root)
     const digest = await exerciseStore(store)
     const state = JSON.parse(await readFile(path.join(root, 'skill-registries/example/state.json'), 'utf8'))
-    expect(state.current_revision).toBe('a'.repeat(64))
-    await Bun.write(path.join(root, 'skill-registries/example/state.json'), JSON.stringify({ ...state, current_revision: '../invalid' }))
+    expect(state.current_snapshot).toBe('a'.repeat(64))
+    await Bun.write(path.join(root, 'skill-registries/example/state.json'), JSON.stringify({ ...state, current_snapshot: '../invalid' }))
     await expect(store.getState('example')).rejects.toThrow('digest')
     await Bun.write(path.join(root, 'skill-registries/example/state.json'), JSON.stringify(state))
     await Bun.write(path.join(root, `skill-artifacts/${digest}.tar.gz`), 'corrupt')
@@ -226,6 +203,5 @@ describe('SkillRegistryStore contract', () => {
     const corrupt = await store.getArtifactStream(digest)
     if (!(corrupt?.body instanceof ReadableStream)) throw new Error('Expected a corrupt R2 Artifact stream')
     await expect(new Response(corrupt.body).arrayBuffer()).rejects.toThrow('corrupt')
-
   })
 })

@@ -1,8 +1,8 @@
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { BlobSkillRegistryStore, type BlobBackend } from './skill-registry-store'
+import { BlobSkillRegistryMaintenanceStore, type MaintenanceBlobBackend } from './skill-registry-store'
 
-export class LocalBlobBackend implements BlobBackend {
+export class LocalBlobBackend implements MaintenanceBlobBackend {
   constructor(readonly root: string) {}
 
   private resolve(key: string) {
@@ -63,7 +63,7 @@ export class LocalBlobBackend implements BlobBackend {
 
 }
 
-export class LocalSkillRegistryStore extends BlobSkillRegistryStore {
+export class LocalSkillRegistryStore extends BlobSkillRegistryMaintenanceStore {
   constructor(root = process.env.REGISTRY_DATA_DIR || path.resolve(process.cwd(), '.data/registries')) {
     super(new LocalBlobBackend(root))
   }

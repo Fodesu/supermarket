@@ -14,7 +14,7 @@ import {
 export class WorkerR2BlobBackend implements BlobBackend {
   constructor(
     private readonly baseURL: string,
-    private readonly fetcher: typeof fetch = fetch,
+    private readonly fetcher: (input: string | URL | Request, init?: RequestInit) => Promise<Response> = fetch,
     private readonly requestTimeoutMs = Number(process.env.REGISTRY_R2_REQUEST_TIMEOUT_MS || 60_000),
   ) {
     if (!/^http:\/\/[a-z0-9.-]+$/i.test(baseURL)) throw new Error('REGISTRY_R2_INTERNAL_URL must be an HTTP virtual hostname')
@@ -28,18 +28,6 @@ export class WorkerR2BlobBackend implements BlobBackend {
   async put(key: string, value: Uint8Array) {
     const response = await this.request(`objects/${encodeURIComponent(key)}`, 'PUT', value, undefined, this.isMutable(key))
     if (!response.ok) throw new IndeterminateRemoteMutationError(`Worker R2 write outcome is unknown (${response.status} ${response.statusText}): ${key}`)
-  }
-  async delete(key: string) {
-    const response = await this.request(`objects/${encodeURIComponent(key)}`, 'DELETE', undefined, undefined, this.isMutable(key))
-    if (!response.ok && response.status !== 404) throw new IndeterminateRemoteMutationError(`Worker R2 delete outcome is unknown (${response.status} ${response.statusText}): ${key}`)
-  }
-  async getVersioned(key: string) {
-    const response = await this.request(`objects/${encodeURIComponent(key)}`, 'GET')
-    if (response.status === 404) return null
-    if (!response.ok) throw new Error(`Versioned Worker R2 read failed (${response.status} ${response.statusText})`)
-    const version = normalizeETag(response.headers.get('etag'))
-    if (!version) throw new Error(`Worker R2 object has no ETag: ${key}`)
-    return { value: new Uint8Array(await response.arrayBuffer()), version }
   }
   async putConditional(key: string, value: Uint8Array, expectedVersion: string | null) {
     const response = await this.request(`objects/${encodeURIComponent(key)}`, 'PUT', value, expectedVersion === null
@@ -70,7 +58,7 @@ export class WorkerR2BlobBackend implements BlobBackend {
   }
   private async request(
     path: string,
-    method: 'GET' | 'PUT' | 'DELETE',
+    method: 'GET' | 'PUT',
     value?: Uint8Array,
     headers?: HeadersInit,
     mutable = false,
@@ -103,8 +91,5 @@ function normalizeETag(value: unknown) {
 export function createSkillRegistryStore(projectRoot = path.resolve(import.meta.dirname, '../..')): SkillRegistryStore {
   const internalURL = process.env.REGISTRY_R2_INTERNAL_URL
   if (internalURL) return new BlobSkillRegistryStore(new WorkerR2BlobBackend(internalURL))
-  if (['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET'].some((name) => process.env[name])) {
-    throw new Error('Direct R2 S3 registry writers are not supported; use the Cloudflare Registry Writer')
-  }
   return new LocalSkillRegistryStore(process.env.REGISTRY_DATA_DIR || path.join(projectRoot, '.data/registries'))
 }

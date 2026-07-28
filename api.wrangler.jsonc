@@ -1,0 +1,46 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "memohai-supermarket",
+  "main": "./.output/server/index.mjs",
+  "compatibility_date": "2026-07-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "no_bundle": true,
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "./.output/public"
+  },
+  "rules": [
+    {
+      "type": "ESModule",
+      "globs": ["**/*.mjs", "**/*.js"]
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "env": {
+    "test": {
+      "name": "memohai-supermarket-test",
+      "workers_dev": true,
+      "preview_urls": true,
+      "r2_buckets": [
+        {
+          "binding": "SKILL_REGISTRY_BUCKET",
+          "bucket_name": "test-memoh-supermarket"
+        }
+      ]
+    },
+    "production": {
+      "name": "memohai-supermarket",
+      "workers_dev": true,
+      "preview_urls": false,
+      "r2_buckets": [
+        {
+          "binding": "SKILL_REGISTRY_BUCKET",
+          "bucket_name": "memoh-supermarket"
+        }
+      ]
+    }
+  }
+}

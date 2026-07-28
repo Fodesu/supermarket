@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { WorkerR2BlobBackend, createSkillRegistryStore } from './store'
+import { WorkerR2BlobBackend } from './store'
 
-const names = ['REGISTRY_R2_INTERNAL_URL', 'REGISTRY_R2_MUTABLE_URL', 'REGISTRY_WRITER_TOKEN', 'R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET'] as const
+const names = ['REGISTRY_R2_MUTABLE_URL', 'REGISTRY_WRITER_TOKEN'] as const
 const original = Object.fromEntries(names.map((name) => [name, process.env[name]]))
 
 afterEach(() => {
@@ -12,7 +12,7 @@ afterEach(() => {
 })
 
 describe('Worker Registry blob backend', () => {
-  test('routes mutable writes through the token-protected coordinator host', async () => {
+  test('routes mutable writes through the token-protected Writer host', async () => {
     const requests: Request[] = []
     const backend = new WorkerR2BlobBackend('http://registry-r2', async (input, init) => {
       requests.push(new Request(input, init))
@@ -36,14 +36,9 @@ describe('Worker Registry blob backend', () => {
       requests.push(new Request(input, init))
       return new Response(null, { status: 201, headers: { etag: 'created' } })
     })
-    const key = `skill-artifacts/${'a'.repeat(64)}.json`
+    const key = `skill-artifacts/${'a'.repeat(64)}.tar.gz`
 
     await expect(backend.putConditional(key, new Uint8Array(), null)).resolves.toBe('created')
     expect(requests[0]?.headers.get('if-none-match')).toBe('*')
-  })
-
-  test('rejects legacy direct S3 writer configuration', () => {
-    process.env.R2_ACCOUNT_ID = 'account'
-    expect(() => createSkillRegistryStore()).toThrow('Direct R2 S3 registry writers are not supported')
   })
 })
