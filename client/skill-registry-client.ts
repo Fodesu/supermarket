@@ -77,7 +77,7 @@ switch (command) {
     const actualDigest = await digest(bytes)
     if (actualDigest !== artifact.digest) throw new Error(`SHA-256 mismatch: expected ${artifact.digest}, got ${actualDigest}`)
     const files = parseTarArchive(await gunzip(bytes))
-    validateSkillArchive(files, skill.install_id)
+    validateSkillArchive(files)
     const destination = path.resolve(option('--destination') ?? '.data/registry-client-installs')
     console.log(JSON.stringify({ installed_at: await extractSkillArchive(files, destination, skill.install_id), digest: actualDigest }, null, 2))
     break

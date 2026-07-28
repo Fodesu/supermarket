@@ -99,16 +99,12 @@ export async function gunzip(bytes: Uint8Array, limit = MAX_SKILL_ARTIFACT_UNCOM
   return output
 }
 
-export function validateSkillArchive(files: Map<string, ArchiveFile>, installID: string) {
-  const prefix = `${installID}/`
-  if (!files.has(`${prefix}SKILL.md`)) throw new Error('Skill archive does not contain SKILL.md at its root')
-  for (const name of files.keys()) {
-    if (!name.startsWith(prefix)) throw new Error(`Archive entry is outside the Skill root: ${name}`)
-  }
+export function validateSkillArchive(files: Map<string, ArchiveFile>) {
+  if (!files.has('SKILL.md')) throw new Error('Skill archive does not contain SKILL.md at its root')
 }
 
 export async function extractSkillArchive(files: Map<string, ArchiveFile>, destination: string, installID: string) {
-  validateSkillArchive(files, installID)
+  validateSkillArchive(files)
   const root = path.resolve(destination, installID)
   await mkdir(path.dirname(root), { recursive: true })
   try {
@@ -118,12 +114,10 @@ export async function extractSkillArchive(files: Map<string, ArchiveFile>, desti
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
   const temporary = `${root}.tmp-${crypto.randomUUID()}`
-  const prefix = `${installID}/`
   let claimedRoot = false
   try {
     for (const [name, file] of files) {
-      const relative = name.slice(prefix.length)
-      const target = path.resolve(temporary, relative)
+      const target = path.resolve(temporary, name)
       if (!target.startsWith(`${temporary}${path.sep}`)) throw new Error(`Archive path escapes destination: ${name}`)
       await mkdir(path.dirname(target), { recursive: true })
       await writeFile(target, file.bytes, { flag: 'wx', mode: file.mode })

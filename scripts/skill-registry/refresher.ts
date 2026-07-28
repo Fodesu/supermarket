@@ -235,7 +235,7 @@ export class SkillRegistryRefresher {
       const storedImages = new Set<string>()
       for (const candidate of result.skills) {
         this.assertWriterLease()
-        const packaged = await packageSkill(candidate.files, candidate.install_id)
+        const packaged = await packageSkill(candidate.files)
         const existingCreatedAt = current?.skills.find((skill) =>
           skill.registry_id === definition.id
           && skill.package_id === candidate.package_id
