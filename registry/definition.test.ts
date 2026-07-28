@@ -10,6 +10,8 @@ describe('Skill Registry definitions', () => {
       refresh_interval: '12h', retention: { snapshots: 30 },
     })
     expect(resolveSkillRuntimeRequirements(definition, 'other', 'declared', { os: ['linux'] })).toEqual({ os: ['linux'] })
+    expect(() => resolveSkillRuntimeRequirements(definition, 'other', 'declared', { os: ['linux'], oses: [] }))
+      .toThrow('contains unsupported field oses')
     expect(resolveSkillRuntimeRequirements(definition, 'other', 'unknown')).toBeUndefined()
     expect(definition.refresh_interval_seconds).toBe(43_200)
     expect(definition.retention).toEqual({ snapshots: 30 })

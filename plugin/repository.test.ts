@@ -41,4 +41,19 @@ describe('Committed Plugin repository', () => {
 
     await expect(validateCommittedPlugins(root)).rejects.toThrow('must not contain symbolic links')
   })
+
+  test('rejects symbolic links in the repository path before entering plugins', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'plugin-repository-parent-link-'))
+    const outside = await mkdtemp(path.join(os.tmpdir(), 'plugin-repository-external-'))
+    roots.push(root, outside)
+    await mkdir(path.join(root, 'registries'), { recursive: true })
+    await mkdir(path.join(outside, 'memoh/plugins/example'), { recursive: true })
+    await writeFile(path.join(outside, 'memoh/plugins/example/plugin.yaml'), [
+      'schema_version: "1"', 'id: example', 'name: Example', 'version: 1.0.0',
+      'description: Example Plugin', 'author:', '  name: Memoh',
+    ].join('\n'))
+    await symlink(path.join(outside, 'memoh'), path.join(root, 'registries/memoh'))
+
+    await expect(validateCommittedPlugins(root)).rejects.toThrow('registries/memoh')
+  })
 })

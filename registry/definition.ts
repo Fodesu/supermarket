@@ -45,6 +45,7 @@ function parseRuntimeRequirements(raw: unknown, label: string): SkillRuntimeRequ
   if (raw == null) return undefined
   if (!raw || typeof raw !== 'object') throw new Error(`${label} must be an object`)
   const data = raw as Record<string, unknown>
+  assertSupportedFields(data, ['os'], label)
   if (!Array.isArray(data.os) || data.os.length === 0) throw new Error(`${label}.os must be a non-empty array`)
   const values = data.os.map((item) => String(item).toLowerCase().trim())
   const invalid = values.find((item) => !runtimeOS.has(item))

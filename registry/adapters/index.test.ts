@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import type { SkillRegistryAdapter, SkillRegistryDefinition } from '../types'
-import { readDirectoryFiles } from '../filesystem'
+import { readDirectoryFiles, readFileBounded } from '../filesystem'
 import { buildSkillCandidates } from './index'
 import { detectSkillImageContentType } from './codex-marketplace'
 
@@ -157,6 +157,14 @@ describe('Skill Registry adapters', () => {
     await mkdir(path.join(root, 'package'), { recursive: true })
     await symlink(outside, path.join(root, 'package/escaped'))
     await expect(readDirectoryFiles(path.join(root, 'package/escaped'), root)).rejects.toThrow('escapes source')
+  })
+
+  test('enforces a byte limit while reading files', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'skill-bounded-read-'))
+    roots.push(root)
+    const target = path.join(root, 'growing.txt')
+    await writeFile(target, 'too-large')
+    await expect(readFileBounded(target, 3)).rejects.toThrow('exceeds 3 bytes')
   })
 
   test('normalizes scalar author and tag metadata', async () => {

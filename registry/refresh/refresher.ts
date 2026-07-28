@@ -7,6 +7,7 @@ import type {
   SkillRegistryStatus,
 } from '../types'
 import { sha256 } from '../digest'
+import { summarizeCurrentCatalog } from '../catalog'
 import { IndeterminateRemoteMutationError, type SkillRegistryStore } from '../storage/contracts'
 import { buildSkillCandidates, skillAdapterBootstrapPaths } from '../adapters/index'
 import { packageSkill } from '../artifacts/build'
@@ -106,8 +107,17 @@ export class SkillRegistryRefresher {
       currentSnapshot = current?.revision,
       stateDefinition = previousState?.definition ?? definition,
     ) => {
+      const activeCatalog = currentSnapshot === current?.revision
+        ? current
+        : currentSnapshot
+          ? await this.store.getSnapshot(definition.id, currentSnapshot)
+          : null
+      if (currentSnapshot && !activeCatalog) {
+        throw new Error(`Current Registry snapshot is missing: ${definition.id}/${currentSnapshot}`)
+      }
       await this.store.putState({
-        schema_version: '1', definition: stateDefinition, current_snapshot: currentSnapshot, status,
+        schema_version: '2', definition: stateDefinition, current_snapshot: currentSnapshot,
+        current_summary: activeCatalog ? summarizeCurrentCatalog(activeCatalog) : undefined, status,
       })
     }
     if (options.package && current && !sameDefinition(current.registry, definition)) {
@@ -240,7 +250,7 @@ export class SkillRegistryRefresher {
       this.onProgress({ type: 'publishing', registry: definition.id, revision })
       this.assertWriterActive()
       await this.store.publishSnapshot(catalog, {
-        schema_version: '1', definition, current_snapshot: revision,
+        schema_version: '2', definition, current_snapshot: revision, current_summary: summarizeCurrentCatalog(catalog),
         status: {
           state: completed.state, last_attempt_at: attemptedAt, last_success_at: succeededAt,
         },

@@ -1,7 +1,11 @@
 import { useStorage } from 'nitro/storage'
 import { stringify as stringifyYaml } from 'yaml'
 import { parseBundledSkillDocument, parsePluginManifest } from '#plugin/manifest'
-import type { BundledPluginSkill, PluginEntry } from '#plugin/types'
+import { PluginBundleBudget } from '#plugin/bundle'
+import {
+  type BundledPluginSkill,
+  type PluginEntry,
+} from '#plugin/types'
 
 let cache: PluginEntry[] | null = null
 
@@ -36,12 +40,11 @@ async function readBundledSkills(pluginID: string) {
 async function scanExplicitPlugins(): Promise<PluginEntry[]> {
   const storage = useStorage('assets/plugins')
   const allKeys = await storage.getKeys()
-  const manifestKeys = allKeys.filter((key) => key.endsWith(':plugin.yaml') || key === 'plugin.yaml')
+  const manifestKeys = allKeys.filter((key) => /^[^:]+:plugin\.yaml$/.test(key))
   const plugins: PluginEntry[] = []
 
   for (const key of manifestKeys) {
-    const id = key.replace(/:plugin\.yaml$/, '')
-    if (!id) throw new Error(`Invalid Plugin manifest asset key: ${key}`)
+    const id = key.slice(0, -':plugin.yaml'.length)
     const text = (await storage.getItem(key)) as string
     if (!text) throw new Error(`${id}: missing plugin.yaml`)
     plugins.push({
@@ -124,9 +127,12 @@ export async function getPluginFiles(id: string): Promise<Record<string, Uint8Ar
 
   const encoder = new TextEncoder()
   const { bundled_skills: _bundledSkills, ...manifest } = plugin
+  const manifestBytes = encoder.encode(stringifyYaml(manifest))
   const files: Record<string, Uint8Array> = {
-    'plugin.yaml': encoder.encode(stringifyYaml(manifest)),
+    'plugin.yaml': manifestBytes,
   }
+  const budget = new PluginBundleBudget()
+  budget.add('plugin.yaml', manifestBytes.length)
 
   const storage = useStorage('assets/plugins')
   const allKeys = await storage.getKeys()
@@ -142,15 +148,16 @@ export async function getPluginFiles(id: string): Promise<Record<string, Uint8Ar
     }
     const relativePath = pluginRelativeKey.replaceAll(':', '/')
     const raw = await storage.getItemRaw(key)
-    if (raw instanceof Uint8Array) {
-      files[relativePath] = raw
-    } else if (raw instanceof ArrayBuffer) {
-      files[relativePath] = new Uint8Array(raw)
-    } else if (typeof raw === 'string') {
-      files[relativePath] = encoder.encode(raw)
-    } else if (raw != null) {
-      files[relativePath] = encoder.encode(String(raw))
-    }
+    const bytes = raw instanceof Uint8Array
+      ? raw
+      : raw instanceof ArrayBuffer
+        ? new Uint8Array(raw)
+        : raw != null
+          ? encoder.encode(typeof raw === 'string' ? raw : String(raw))
+          : undefined
+    if (!bytes) continue
+    budget.add(relativePath, bytes.length)
+    files[relativePath] = bytes
   }
 
   return files

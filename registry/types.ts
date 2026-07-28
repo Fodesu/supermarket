@@ -116,10 +116,25 @@ export interface SkillRegistryStatus {
  * and refresh status.
  */
 export interface SkillRegistryState {
-  schema_version: '1'
+  schema_version: '2'
   definition: SkillRegistryDefinition
   current_snapshot?: string
+  current_summary?: SkillRegistryCurrentSummary
   status: SkillRegistryStatus
+}
+
+/**
+ * The compact, reader-facing projection of the active Snapshot. It lives in
+ * state.json so Registry listings do not have to download every Snapshot.
+ */
+export interface SkillRegistryCurrentSummary {
+  revision: string
+  source_revision: string
+  synced_at: string
+  skill_count: number
+  package_count: number
+  category_count: number
+  skipped_package_count: number
 }
 
 export interface SkillRegistrySummary {

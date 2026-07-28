@@ -7,6 +7,7 @@ import type {
 } from '../types'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../types'
 import { assertRegistryID } from '../definition'
+import { summarizeCurrentCatalog } from '../catalog'
 import { sha256 } from '../digest'
 import {
   type BlobBackend,
@@ -24,6 +25,25 @@ const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 export const MAX_REGISTRY_STATE_BYTES = 256 * 1024
 export const MAX_REGISTRY_SNAPSHOT_BYTES = 8 * 1024 * 1024
+
+function validateState(state: SkillRegistryState, id: string) {
+  if (state.schema_version !== '2' || state.definition?.id !== id || !state.status?.state) {
+    throw new Error(`Invalid Registry state: ${id}`)
+  }
+  if (!state.current_snapshot) {
+    if (state.current_summary) throw new Error(`Registry state has a summary without a Snapshot: ${id}`)
+    return
+  }
+  assertDigest(state.current_snapshot)
+  const summary = state.current_summary
+  if (!summary || summary.revision !== state.current_snapshot
+    || !summary.source_revision || !Number.isFinite(Date.parse(summary.synced_at))) {
+    throw new Error(`Registry state has an invalid current summary: ${id}`)
+  }
+  for (const value of [summary.skill_count, summary.package_count, summary.category_count, summary.skipped_package_count]) {
+    if (!Number.isSafeInteger(value) || value < 0) throw new Error(`Registry state has invalid summary counts: ${id}`)
+  }
+}
 
 function jsonBytes(value: unknown): Uint8Array {
   return encoder.encode(`${JSON.stringify(value, null, 2)}\n`)
@@ -55,17 +75,13 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
       MAX_REGISTRY_STATE_BYTES,
     )
     if (!state) return null
-    if (state.schema_version !== '1' || state.definition?.id !== id || !state.status?.state) {
-      throw new Error(`Invalid Registry state: ${id}`)
-    }
-    if (state.current_snapshot) assertDigest(state.current_snapshot)
+    validateState(state, id)
     return state
   }
 
   async putState(state: SkillRegistryState) {
     const id = assertRegistryID(state.definition.id, 'registry ID')
-    if (state.schema_version !== '1' || !state.status?.state) throw new Error(`Invalid Registry state: ${id}`)
-    if (state.current_snapshot) assertDigest(state.current_snapshot)
+    validateState(state, id)
     const bytes = jsonBytes(state)
     if (bytes.length > MAX_REGISTRY_STATE_BYTES) throw new Error(`Registry state exceeds ${MAX_REGISTRY_STATE_BYTES} bytes: ${id}`)
     await this.backend.put(`skill-registries/${id}/state.json`, bytes)
@@ -93,9 +109,11 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
       throw new Error(`Registry snapshot exceeds ${MAX_REGISTRY_SNAPSHOT_BYTES} bytes: ${id}/${revision}`)
     }
     let existing = await this.backend.get(key)
+    let publishedCatalog = catalog
     if (existing) {
       const stored = JSON.parse(decoder.decode(existing)) as SkillRegistryCatalog
       validateStoredCatalog(stored, id, revision, key)
+      publishedCatalog = stored
     }
     if (!existing && this.backend.putConditional) {
       assertWriterActive()
@@ -105,10 +123,14 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
         if (!existing) throw new Error(`Snapshot appeared but could not be read: ${revision}`)
         const stored = JSON.parse(decoder.decode(existing)) as SkillRegistryCatalog
         validateStoredCatalog(stored, id, revision, key)
+        publishedCatalog = stored
       }
     } else if (!existing) {
       assertWriterActive()
       await this.backend.put(key, bytes)
+    }
+    if (JSON.stringify(state.current_summary) !== JSON.stringify(summarizeCurrentCatalog(publishedCatalog))) {
+      throw new Error(`Snapshot state summary does not match Catalog: ${id}/${revision}`)
     }
     assertWriterActive()
     await this.putState(state)

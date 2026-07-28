@@ -1,6 +1,7 @@
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { parseBundledSkillDocument, parsePluginManifest } from './manifest'
+import { PluginBundleBudget } from './bundle'
 
 function isWithin(root: string, candidate: string) {
   const relative = path.relative(root, candidate)
@@ -9,6 +10,7 @@ function isWithin(root: string, candidate: string) {
 
 async function validatePluginTree(root: string, canonicalRepositoryRoot: string) {
   const files: string[] = []
+  const budget = new PluginBundleBudget()
 
   const visit = async (directory: string) => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -20,7 +22,10 @@ async function validatePluginTree(root: string, canonicalRepositoryRoot: string)
         throw new Error(`Plugin content escapes its repository root: ${relativePath}`)
       }
       if (stat.isDirectory()) await visit(absolutePath)
-      else if (stat.isFile()) files.push(relativePath)
+      else if (stat.isFile()) {
+        budget.add(relativePath, stat.size)
+        files.push(relativePath)
+      }
       else throw new Error(`Plugin content contains unsupported file type: ${relativePath}`)
     }
   }
@@ -30,9 +35,16 @@ async function validatePluginTree(root: string, canonicalRepositoryRoot: string)
 }
 
 export async function validateCommittedPlugins(projectRoot: string) {
-  const root = path.join(projectRoot, 'registries/memoh/plugins')
-  if ((await lstat(root)).isSymbolicLink()) {
-    throw new Error('Plugin repository root must not be a symbolic link')
+  const canonicalProjectRoot = await realpath(projectRoot)
+  let root = projectRoot
+  for (const segment of ['registries', 'memoh', 'plugins']) {
+    root = path.join(root, segment)
+    if ((await lstat(root)).isSymbolicLink()) {
+      throw new Error(`Plugin repository path must not contain symbolic links: ${path.relative(projectRoot, root)}`)
+    }
+    if (!isWithin(canonicalProjectRoot, await realpath(root))) {
+      throw new Error(`Plugin repository path escapes the project root: ${path.relative(projectRoot, root)}`)
+    }
   }
   const canonicalRepositoryRoot = await realpath(root)
   const entries = await readdir(root, { withFileTypes: true })
