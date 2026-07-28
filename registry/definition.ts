@@ -1,7 +1,7 @@
 import path from 'node:path'
+import { z } from 'zod'
 import type {
   SkillRegistryDefinition,
-  SkillRegistrySource,
   SkillRuntimeOS,
   SkillRuntimeRequirements,
 } from './types'
@@ -10,10 +10,15 @@ export const supportedSkillRuntimeOS: SkillRuntimeOS[] = ['darwin', 'linux', 'wi
 const runtimeOS = new Set<string>(supportedSkillRuntimeOS)
 const safeIDPattern = /^[a-z0-9][a-z0-9._-]*$/
 
-function assertSupportedFields(data: Record<string, unknown>, fields: readonly string[], label: string) {
-  const allowed = new Set(fields)
-  const unsupported = Object.keys(data).find((field) => !allowed.has(field))
-  if (unsupported) throw new Error(`${label} contains unsupported field ${unsupported}`)
+function unsupportedFieldError(label: string) {
+  return { error: (issue: z.core.$ZodRawIssue) => issue.code === 'unrecognized_keys'
+    ? `${label} contains unsupported field ${(issue as { keys: string[] }).keys.join(', ')}`
+    : undefined }
+}
+
+function object(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`)
+  return value as Record<string, unknown>
 }
 
 export function assertRegistryID(value: string, label = 'ID'): string {
@@ -43,11 +48,17 @@ export function safeRelativePath(value: string, label = 'path'): string {
 
 function parseRuntimeRequirements(raw: unknown, label: string): SkillRuntimeRequirements | undefined {
   if (raw == null) return undefined
-  if (!raw || typeof raw !== 'object') throw new Error(`${label} must be an object`)
-  const data = raw as Record<string, unknown>
-  assertSupportedFields(data, ['os'], label)
-  if (!Array.isArray(data.os) || data.os.length === 0) throw new Error(`${label}.os must be a non-empty array`)
-  const values = data.os.map((item) => String(item).toLowerCase().trim())
+  const schema = z.strictObject({
+    os: z.array(z.unknown()).nonempty(),
+  }, unsupportedFieldError(label))
+  const result = schema.safeParse(raw)
+  if (!result.success) {
+    const issue = result.error.issues[0]!
+    if (issue.code === 'unrecognized_keys') throw new Error(issue.message)
+    if (issue.code === 'invalid_type' && issue.path.length === 0) throw new Error(`${label} must be an object`)
+    throw new Error(`${label}.os must be a non-empty array`)
+  }
+  const values = result.data.os.map((item) => String(item).toLowerCase().trim())
   const invalid = values.find((item) => !runtimeOS.has(item))
   if (invalid) throw new Error(`${label}.os contains unsupported value: ${invalid}`)
   const selected = new Set(values)
@@ -70,16 +81,17 @@ function parseRetention(raw: unknown, registryID: string): SkillRegistryDefiniti
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error(`${registryID}.retention must be an object`)
   }
-  const data = raw as Record<string, unknown>
-  if (Object.keys(data).some((field) => field !== 'snapshots')) {
-    throw new Error(`${registryID}.retention contains unsupported fields`)
-  }
-  const snapshots = data.snapshots
-  if (typeof snapshots !== 'number' || !Number.isSafeInteger(snapshots)
-    || snapshots < 1 || snapshots > 10_000) {
+  const parsed = z.strictObject({
+    snapshots: z.number().int().min(1).max(10_000),
+  }, {
+    error: (issue) => issue.code === 'unrecognized_keys' ? `${registryID}.retention contains unsupported fields` : undefined,
+  }).safeParse(raw)
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0]!
+    if (issue.code === 'unrecognized_keys') throw new Error(issue.message)
     throw new Error(`${registryID}.retention.snapshots must be an integer from 1 to 10000`)
   }
-  return { snapshots }
+  return { snapshots: parsed.data.snapshots }
 }
 
 export function resolveSkillRuntimeRequirements(
@@ -91,77 +103,90 @@ export function resolveSkillRuntimeRequirements(
   return parseRuntimeRequirements(declared, `${definition.id}/${packageID}/${skillID}.runtime_requirements`)
 }
 
-export function parseSkillRegistryDefinition(raw: unknown): SkillRegistryDefinition {
-  if (!raw || typeof raw !== 'object') throw new Error('Registry definition must be an object')
-  const data = raw as Record<string, any>
-  const id = assertRegistryID(String(data.id ?? '').trim(), 'registry ID')
-  const supportedFields = new Set([
-    'schema_version', 'id', 'name', 'enabled', 'priority', 'adapter',
-    'source', 'refresh_interval', 'retention',
-  ])
-  const unsupportedField = Object.keys(data).find((field) => !supportedFields.has(field))
-  if (unsupportedField) throw new Error(`${id}: unsupported Registry field ${unsupportedField}`)
-  if (data.schema_version !== '1') throw new Error(`${id}: unsupported schema_version ${String(data.schema_version)}`)
-  const name = String(data.name ?? '').trim()
-  if (!name) throw new Error(`${id}: name is required`)
-  const adapterData = data.adapter
-  if (!adapterData || typeof adapterData !== 'object' || Array.isArray(adapterData)) {
-    throw new Error(`${id}: adapter must be an object`)
+function parseAdapter(raw: unknown, id: string): SkillRegistryDefinition['adapter'] {
+  const data = object(raw, `${id}: adapter`)
+  const type = String(data.type ?? '')
+  if (type === 'skill_directory') {
+    z.strictObject({ type: z.literal('skill_directory') }, {
+      error: (issue) => issue.code === 'unrecognized_keys' ? `${id}: skill_directory adapter contains unsupported fields` : undefined,
+    }).parse(data)
+    return { type: 'skill_directory' }
   }
-  const adapterType = String(adapterData.type ?? '')
-  let adapter: SkillRegistryDefinition['adapter']
-  if (adapterType === 'skill_directory') {
-    if (Object.keys(adapterData).some((field) => field !== 'type')) {
-      throw new Error(`${id}: skill_directory adapter contains unsupported fields`)
-    }
-    adapter = { type: 'skill_directory' }
-  } else if (adapterType === 'codex_marketplace_skills') {
-    if (Object.keys(adapterData).some((field) => !['type', 'catalog_path'].includes(field))) {
-      throw new Error(`${id}: codex_marketplace_skills adapter contains unsupported fields`)
-    }
-    if (typeof adapterData.catalog_path !== 'string' || !adapterData.catalog_path.trim()) {
-      throw new Error(`${id}: adapter.catalog_path is required for ${adapterType}`)
-    }
-    adapter = {
-      type: 'codex_marketplace_skills',
-      catalog_path: safeRelativePath(adapterData.catalog_path, 'catalog path'),
-    }
-  } else {
-    throw new Error(`${id}: unsupported adapter ${adapterType}`)
+  if (type === 'codex_marketplace_skills') {
+    const parsed = z.strictObject({
+      type: z.literal('codex_marketplace_skills'),
+      catalog_path: z.string().trim().min(1),
+    }, {
+      error: (issue) => issue.code === 'unrecognized_keys' ? `${id}: codex_marketplace_skills adapter contains unsupported fields` : undefined,
+    }).safeParse(data)
+    if (!parsed.success) throw new Error(`${id}: adapter.catalog_path is required for ${type}`)
+    return { type: 'codex_marketplace_skills', catalog_path: safeRelativePath(parsed.data.catalog_path, 'catalog path') }
   }
+  throw new Error(`${id}: unsupported adapter ${type}`)
+}
 
-  const sourceData = data.source
-  if (!sourceData || typeof sourceData !== 'object' || Array.isArray(sourceData)) {
-    throw new Error(`${id}: source must be an object`)
-  }
-  let source: SkillRegistrySource
-  if (sourceData.type === 'local') {
-    assertSupportedFields(sourceData, ['type', 'path'], `${id}: local source`)
-    if (typeof sourceData.path !== 'string' || !sourceData.path.trim()) {
+function parseSource(raw: unknown, id: string): SkillRegistryDefinition['source'] {
+  const data = object(raw, `${id}: source`)
+  if (data.type === 'local') {
+    const parsed = z.strictObject({
+      type: z.literal('local'),
+      path: z.string().trim().min(1),
+    }, unsupportedFieldError(`${id}: local source`)).safeParse(data)
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0]!
+      if (issue.code === 'unrecognized_keys') throw new Error(issue.message)
       throw new Error(`${id}: local source.path is required`)
     }
-    const localPath = sourceData.path.trim()
-    source = { type: 'local', path: localPath === '.' ? '' : safeRelativePath(localPath, 'local source path') }
-  } else if (sourceData.type === 'git') {
-    assertSupportedFields(sourceData, ['type', 'url', 'ref', 'path'], `${id}: git source`)
-    const url = String(sourceData.url ?? '').trim()
-    if (!/^https:\/\//.test(url)) {
-      throw new Error(`${id}: git source URL must use HTTPS`)
-    }
-    source = {
-      type: 'git', url,
-      ref: sourceData.ref ? String(sourceData.ref) : undefined,
-      path: sourceData.path ? safeRelativePath(String(sourceData.path), 'git source path') : undefined,
-    }
-  } else {
-    throw new Error(`${id}: unsupported source type ${String(sourceData.type)}`)
+    return { type: 'local', path: parsed.data.path === '.' ? '' : safeRelativePath(parsed.data.path, 'local source path') }
   }
+  if (data.type === 'git') {
+    const parsed = z.strictObject({
+      type: z.literal('git'),
+      url: z.string().trim().refine((value) => /^https:\/\//.test(value), `${id}: git source URL must use HTTPS`),
+      ref: z.string().optional(),
+      path: z.string().optional(),
+    }, unsupportedFieldError(`${id}: git source`)).safeParse(data)
+    if (!parsed.success) throw new Error(parsed.error.issues[0]!.message)
+    return {
+      type: 'git', url: parsed.data.url,
+      ref: parsed.data.ref ? String(parsed.data.ref) : undefined,
+      path: parsed.data.path ? safeRelativePath(String(parsed.data.path), 'git source path') : undefined,
+    }
+  }
+  throw new Error(`${id}: unsupported source type ${String(data.type)}`)
+}
 
+export function parseSkillRegistryDefinition(raw: unknown): SkillRegistryDefinition {
+  const data = object(raw, 'Registry definition')
+  const id = assertRegistryID(String(data.id ?? '').trim(), 'registry ID')
+  const parsed = z.strictObject({
+    schema_version: z.unknown(),
+    id: z.unknown(),
+    name: z.string().transform((value) => value.trim()).pipe(z.string().min(1)),
+    enabled: z.unknown().optional(),
+    priority: z.unknown().optional(),
+    adapter: z.unknown(),
+    source: z.unknown(),
+    refresh_interval: z.unknown().optional(),
+    retention: z.unknown().optional(),
+  }, {
+    error: (issue) => issue.code === 'unrecognized_keys'
+      ? `${id}: unsupported Registry field ${(issue as { keys: string[] }).keys.join(', ')}`
+      : undefined,
+  }).safeParse(data)
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0]!
+    if (issue.code === 'unrecognized_keys') throw new Error(issue.message)
+    if (issue.path[0] === 'name') throw new Error(`${id}: name is required`)
+    throw new Error(issue.message)
+  }
+  if (data.schema_version !== '1') throw new Error(`${id}: unsupported schema_version ${String(data.schema_version)}`)
   return {
-    schema_version: '1', id, name,
+    schema_version: '1', id, name: parsed.data.name,
     enabled: data.enabled !== false,
     priority: Number.isFinite(Number(data.priority)) ? Number(data.priority) : 0,
-    adapter, source,
+    adapter: parseAdapter(data.adapter, id),
+    source: parseSource(data.source, id),
     refresh_interval_seconds: parseRefreshInterval(data.refresh_interval, `${id}.refresh_interval`),
     retention: parseRetention(data.retention, id),
   }

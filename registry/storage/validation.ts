@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { z } from 'zod'
 import type {
   SkillArtifactBlob,
   SkillImageAsset,
@@ -12,18 +13,29 @@ export function assertDigest(value: string): string {
   return value
 }
 
+const artifactBlobSchema = z.object({
+  format: z.literal('memoh_skill_v1'),
+  content_type: z.literal('application/gzip'),
+  digest: z.string(),
+  size: z.number().int().min(0).max(MAX_SKILL_ARTIFACT_COMPRESSED_BYTES),
+})
+
+const imageAssetSchema = z.object({
+  content_type: z.enum(['image/svg+xml', 'image/png', 'image/jpeg', 'image/webp']),
+  digest: z.string(),
+  size: z.number().int().min(1).max(512 * 1024),
+})
+
 export function validateArtifactBlob(descriptor: SkillArtifactBlob, digest: string) {
-  if (descriptor.format !== 'memoh_skill_v1' || descriptor.content_type !== 'application/gzip'
-    || descriptor.digest !== digest || !Number.isSafeInteger(descriptor.size) || descriptor.size < 0
-    || descriptor.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) {
+  const result = artifactBlobSchema.safeParse(descriptor)
+  if (!result.success || descriptor.digest !== digest) {
     throw new Error(`Invalid stored Artifact metadata: ${digest}`)
   }
 }
 
 export function validateImageAsset(descriptor: SkillImageAsset, digest: string) {
-  const supported = new Set(['image/svg+xml', 'image/png', 'image/jpeg', 'image/webp'])
-  if (!supported.has(descriptor.content_type) || descriptor.digest !== digest
-    || !Number.isSafeInteger(descriptor.size) || descriptor.size < 1 || descriptor.size > 512 * 1024) {
+  const result = imageAssetSchema.safeParse(descriptor)
+  if (!result.success || descriptor.digest !== digest) {
     throw new Error(`Invalid stored Skill image metadata: ${digest}`)
   }
 }

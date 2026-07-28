@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { z } from 'zod'
 import { skillInstallID } from '#registry/definition'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '#registry/types'
 import { extractSkillArchive, parseGzipTarArchive, validateSkillArchive } from './archive'
@@ -37,38 +38,30 @@ interface InstallableSkillResponse {
   }
 }
 
+const installableSkillSchema = z.object({
+  registry_id: z.string(),
+  package_id: z.string(),
+  skill_id: z.string(),
+  install_id: z.string(),
+  artifact: z.object({
+    format: z.literal('memoh_skill_v1'),
+    digest: z.string().regex(/^[a-f0-9]{64}$/),
+    size: z.number().int().min(0).max(MAX_SKILL_ARTIFACT_COMPRESSED_BYTES),
+    download_url: z.string(),
+  }),
+})
+
 function installableSkillResponse(value: unknown): InstallableSkillResponse {
-  if (!value || typeof value !== 'object') throw new Error('Invalid Skill response')
-  const skill = value as Record<string, unknown>
-  const artifact = skill.artifact
-  if (!artifact || typeof artifact !== 'object') throw new Error('Invalid Skill Artifact response')
-  const descriptor = artifact as Record<string, unknown>
-  if (
-    typeof skill.registry_id !== 'string'
-    || typeof skill.package_id !== 'string'
-    || typeof skill.skill_id !== 'string'
-    || typeof skill.install_id !== 'string'
-    || descriptor.format !== 'memoh_skill_v1'
-    || typeof descriptor.digest !== 'string'
-    || !/^[a-f0-9]{64}$/.test(descriptor.digest)
-    || typeof descriptor.size !== 'number'
-    || !Number.isSafeInteger(descriptor.size)
-    || descriptor.size < 0
-    || descriptor.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES
-    || typeof descriptor.download_url !== 'string'
-  ) {
-    throw new Error('Invalid Skill response')
-  }
+  const result = installableSkillSchema.safeParse(value)
+  if (!result.success) throw new Error('Invalid Skill response')
+  const { registry_id, package_id, skill_id, install_id, artifact } = result.data
   return {
-    registry_id: skill.registry_id,
-    package_id: skill.package_id,
-    skill_id: skill.skill_id,
-    install_id: skill.install_id,
+    registry_id, package_id, skill_id, install_id,
     artifact: {
-      format: descriptor.format,
-      digest: descriptor.digest,
-      size: descriptor.size,
-      download_url: descriptor.download_url,
+      format: artifact.format,
+      digest: artifact.digest,
+      size: artifact.size,
+      download_url: artifact.download_url,
     },
   }
 }
