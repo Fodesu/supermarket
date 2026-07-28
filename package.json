@@ -3,26 +3,37 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "bun scripts/verify-registry-bucket.ts && vite build",
+    "build": "vite build",
     "preview": "vite preview",
     "test": "bun test",
+    "typecheck": "tsc --noEmit --project tsconfig.registry.json",
+    "types": "bun run types:runtime && bun run types:writer",
+    "types:runtime": "wrangler types worker-configuration.d.ts --config api.wrangler.jsonc --env test --include-env false",
+    "types:writer": "wrangler types writer/worker-env.d.ts --config writer.wrangler.jsonc --env test --env-interface WriterEnv --include-runtime false",
+    "types:check": "wrangler types worker-configuration.d.ts --config api.wrangler.jsonc --env test --include-env false --check && wrangler types writer/worker-env.d.ts --config writer.wrangler.jsonc --env test --env-interface WriterEnv --include-runtime false --check",
     "registry:refresh": "bun scripts/skill-registry-refresh.ts",
     "registry:gc": "bun scripts/skill-registry-gc.ts",
     "registry:validate": "bun scripts/skill-registry-validate.ts",
     "registry:client": "bun client/skill-registry-client.ts",
-    "registry:writer:dev": "bunx wrangler dev --config writer.wrangler.jsonc --test-scheduled",
-    "registry:writer:deploy": "bun scripts/verify-registry-bucket.ts && bunx wrangler deploy --config writer.wrangler.jsonc",
-    "registry:api:deploy": "bun run build && bunx wrangler deploy --config .output/server/wrangler.json"
+    "registry:writer:dev": "wrangler dev --config writer.wrangler.jsonc --env test --test-scheduled",
+    "registry:writer:check": "wrangler deploy --config writer.wrangler.jsonc --env test --dry-run --containers-rollout=none",
+    "registry:writer:deploy:test": "wrangler deploy --config writer.wrangler.jsonc --env test",
+    "registry:writer:deploy:production": "wrangler deploy --config writer.wrangler.jsonc --env production",
+    "registry:api:dev": "bun run build && wrangler dev --config api.wrangler.jsonc --env test",
+    "registry:api:deploy:test": "bun run build && wrangler deploy --config api.wrangler.jsonc --env test",
+    "registry:api:deploy:production": "bun run build && wrangler deploy --config api.wrangler.jsonc --env production"
   },
   "imports": {
     "#*": "./*"
   },
   "devDependencies": {
-    "@cloudflare/containers": "latest",
+    "@cloudflare/containers": "^0.3.7",
     "@vitejs/plugin-vue": "^6.0.5",
     "nitro": "latest",
+    "typescript": "^5.9.3",
     "vite": "^8.0.2",
-    "vue": "^3.5.30"
+    "vue": "^3.5.30",
+    "wrangler": "^4.114.0"
   },
   "dependencies": {
     "yaml": "^2.8.3"

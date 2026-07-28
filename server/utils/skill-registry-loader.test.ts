@@ -27,18 +27,18 @@ describe('Skill Registry loader', () => {
     const store = new LocalSkillRegistryStore(root)
     const revision = 'a'.repeat(64)
     const catalog: SkillRegistryCatalog = {
-      schema_version: '1', registry: definition, revision, content_revision: revision,
+      schema_version: '1', registry: definition, revision,
       source_revision: revision, synced_at: '2026-01-01T00:00:00.000Z', skills: [], diagnostics: [],
     }
     await store.publishSnapshot(catalog, {
-      schema_version: '1', definition, current_revision: revision,
-      status: { registry_id: definition.id, state: 'ready', current_revision: revision },
+      schema_version: '1', definition, current_snapshot: revision,
+      status: { state: 'ready' },
     })
     expect(await getEnabledSkillRegistryCatalogs(store)).toEqual([catalog])
 
     await store.putState({
-      schema_version: '1', definition: { ...definition, enabled: false }, current_revision: revision,
-      status: { registry_id: definition.id, state: 'disabled', current_revision: revision },
+      schema_version: '1', definition: { ...definition, enabled: false }, current_snapshot: revision,
+      status: { state: 'disabled' },
     })
     expect(await getEnabledSkillRegistryCatalogs(store)).toEqual([])
     expect(await getEnabledSkillRegistryCatalogs(store, definition.id)).toEqual([])

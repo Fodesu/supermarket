@@ -19,8 +19,8 @@ describe('Skill Registry refresh runner', () => {
   test('applies definition changes immediately and isolates Registry failures', async () => {
     const definitions = [definition('first', false), definition('second')]
     const statuses = new Map<string, SkillRegistryStatus>([
-      ['first', { registry_id: 'first', state: 'ready', last_success_at: new Date().toISOString() }],
-      ['second', { registry_id: 'second', state: 'ready', last_success_at: '2020-01-01T00:00:00.000Z' }],
+      ['first', { state: 'ready', last_success_at: new Date().toISOString() }],
+      ['second', { state: 'ready', last_success_at: '2020-01-01T00:00:00.000Z' }],
     ])
     const calls: string[] = []
     const outcome = await runSkillRegistryRefreshes({
@@ -29,7 +29,7 @@ describe('Skill Registry refresh runner', () => {
         getState: async (id) => ({
           schema_version: '1' as const,
           definition: id === 'first' ? definition('first', true) : definition(id),
-          status: statuses.get(id) ?? { registry_id: id, state: 'empty' as const },
+          status: statuses.get(id) ?? { state: 'empty' as const },
         }),
       },
       refresher: {
@@ -52,7 +52,7 @@ describe('Skill Registry refresh runner', () => {
       store: {
         getState: async () => ({
           schema_version: '1' as const, definition: item,
-          status: { registry_id: item.id, state: 'disabled' as const },
+          status: { state: 'disabled' as const },
         }),
       },
       refresher: { refresh: async () => { throw new Error('must not refresh') } },
@@ -67,7 +67,7 @@ describe('Skill Registry refresh runner', () => {
       store: {
         getState: async (id) => ({
           schema_version: '1' as const, definition: definition(id),
-          status: { registry_id: id, state: 'empty' as const },
+          status: { state: 'empty' as const },
         }),
       },
       refresher: {
@@ -83,7 +83,6 @@ describe('Skill Registry refresh runner', () => {
   test('renders progress lines for phases, uploads, and milestones', () => {
     const events: SkillRegistryRefreshProgress[] = [
       { type: 'source', registry: 'openai' },
-      { type: 'source_unchanged', registry: 'memoh', revision: 'e'.repeat(40) },
       { type: 'source_ready', registry: 'openai', revision: 'f'.repeat(64) },
       { type: 'scanned', registry: 'openai', skills: 60, diagnostics: 2 },
       { type: 'skill', registry: 'openai', index: 1, total: 60, package_id: 'pkg', skill_id: 'uploaded-one', uploaded: true },
@@ -98,7 +97,6 @@ describe('Skill Registry refresh runner', () => {
     for (const event of events) renderPlain(event)
     const output = plain.join('')
     expect(output).toContain('openai: fetching source')
-    expect(output).toContain(`memoh: source unchanged at ${'e'.repeat(12)}, skipping`)
     expect(output).toContain(`openai: source revision ${'f'.repeat(12)}`)
     expect(output).toContain('openai: packaging 60 Skills (2 diagnostics)')
     expect(output).toContain('[1/60] pkg/uploaded-one (uploaded)')

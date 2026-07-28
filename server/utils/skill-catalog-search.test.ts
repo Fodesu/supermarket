@@ -12,9 +12,8 @@ function skill(overrides: Partial<CatalogSkill> = {}): CatalogSkill {
     source: { type: 'git', revision: 'abc', path: 'plugins/documents/skills/pdf', repository: 'https://example.test/repo.git' },
     files: ['SKILL.md'],
     artifact: {
-      registry_id: 'openai', package_id: 'documents', skill_id: 'pdf', source_revision: 'abc',
-      format: 'memoh_skill_v1', digest: 'a'.repeat(64), size: 100, filename: 'openai--documents--pdf.tar.gz',
-      content_type: 'application/gzip', created_at: '2026-01-01T00:00:00.000Z',
+      format: 'memoh_skill_v1', digest: 'a'.repeat(64), size: 100,
+      content_type: 'application/gzip',
     },
     ...overrides,
   }

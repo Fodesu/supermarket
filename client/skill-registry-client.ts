@@ -66,7 +66,7 @@ switch (command) {
     }
     const artifact = skill.artifact
     if (
-      artifact.registry_id !== registryID || artifact.package_id !== packageID || artifact.skill_id !== skillID
+      skill.registry_id !== registryID || skill.package_id !== packageID || skill.skill_id !== skillID
       || artifact.format !== 'memoh_skill_v1'
       || typeof artifact.digest !== 'string' || !/^[a-f0-9]{64}$/.test(artifact.digest)
     ) {

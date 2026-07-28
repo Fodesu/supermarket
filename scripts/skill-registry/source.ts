@@ -23,33 +23,6 @@ async function exec(command: string, args: string[], timeoutMs?: number) {
   }
 }
 
-// Resolves the upstream revision a refresh would check out, using a single
-// ls-remote round trip instead of a clone. Returns null whenever the answer is
-// not certain (unknown ref shape, ambiguity, network failure): callers treat
-// null as "do the full refresh", so this can only ever skip work incorrectly
-// in the safe direction.
-export async function peekSkillRegistrySourceRevision(definition: SkillRegistryDefinition): Promise<string | null> {
-  if (definition.source.type !== 'git') return null
-  const { url, ref } = definition.source
-  if (ref && /^[a-f0-9]{40}$/.test(ref)) return ref
-  try {
-    const output = await exec('git', ['ls-remote', url, ...(ref ? [ref] : ['HEAD'])], 30_000)
-    const lines = output.split('\n').filter(Boolean).map((line) => {
-      const [sha, name] = line.split(/\s+/)
-      return { sha: sha ?? '', name: name ?? '' }
-    }).filter((line) => /^[a-f0-9]{40}$/.test(line.sha))
-    if (!ref) return lines.find((line) => line.name === 'HEAD')?.sha ?? null
-    // Prefer heads (matching fetch semantics), then the peeled tag commit —
-    // checkoutGit records `rev-parse HEAD`, which is the peeled commit.
-    return lines.find((line) => line.name === `refs/heads/${ref}`)?.sha
-      ?? lines.find((line) => line.name === `refs/tags/${ref}^{}`)?.sha
-      ?? lines.find((line) => line.name === `refs/tags/${ref}`)?.sha
-      ?? (lines.length === 1 ? lines[0]!.sha : null)
-  } catch {
-    return null
-  }
-}
-
 async function directoryRevision(root: string) {
   const physicalRoot = await resolveRealInside(root)
   const hash = createHash('sha256')

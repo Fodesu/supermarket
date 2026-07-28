@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "worker-configuration.d.ts",
+    "writer/worker-env.d.ts",
+    "client/**/*.ts",
+    "scripts/skill-registry/**/*.ts",
+    "scripts/skill-registry-*.ts",
+    "server/types/skill-registry.ts",
+    "server/types/skill.ts",
+    "server/utils/local-skill-registry-store.ts",
+    "server/utils/r2-blob-backend.ts",
+    "server/utils/skill-catalog-search.ts",
+    "server/utils/skill-catalog-search.test.ts",
+    "server/utils/skill-registry-*.ts",
+    "test/registry-http.test.ts",
+    "writer/src/**/*.ts"
+  ]
+}

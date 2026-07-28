@@ -1,23 +1,26 @@
-import { Container, ContainerProxy, getContainer } from '@cloudflare/containers'
-import { DurableObject } from 'cloudflare:workers'
-
-interface WriterEnv {
-  SKILL_REGISTRY_BUCKET: R2Bucket
-  REGISTRY_WRITER: DurableObjectNamespace<RegistryWriter>
-  REGISTRY_COORDINATOR: DurableObjectNamespace<RegistryCoordinator>
-}
+import {
+  Container,
+  ContainerProxy,
+  getContainer,
+  type OutboundHandlerContext,
+} from '@cloudflare/containers'
+import {
+  activeRegistryRun,
+  isAllowedRegistryListPrefix,
+  isImmutableRegistryKey,
+  isRegistryStateKey,
+  objectKey,
+  type ActiveRegistryRun,
+} from './registry-access'
 
 interface RefreshResult {
   exitCode: number
   output: string
+  skipped?: 'already_running'
 }
 
-interface ActiveLease {
-  token: string
-  owner: string
-  etag: string
-}
-
+const activeRunStorageKey = 'active-run'
+const activeRunTtlMs = 6 * 60 * 60 * 1000
 const outputDecoder = new TextDecoder()
 const maxLoggedOutputChars = 12_000
 
@@ -26,53 +29,66 @@ function clippedOutput(stdout: ArrayBuffer, stderr: ArrayBuffer) {
   return text.length <= maxLoggedOutputChars ? text : `${text.slice(-maxLoggedOutputChars)}\n[output truncated]`
 }
 
-export class RegistryWriter extends Container {
-  sleepAfter = '1m'
+async function writeR2Object(request: Request, env: WriterEnv, key: string) {
+  if (request.method !== 'PUT') return new Response('Method not allowed', { status: 405 })
+  const object = await env.SKILL_REGISTRY_BUCKET.put(key, request.body, { onlyIf: request.headers })
+  if (!object) return new Response(null, { status: 412 })
+  return new Response(null, { status: 201, headers: { etag: object.httpEtag } })
+}
 
-  async refreshDue(token: string): Promise<RefreshResult> {
-    await this.start()
-    const process = await this.ctx.container.exec(
-      ['env', `REGISTRY_WRITER_TOKEN=${token}`, 'bun', 'scripts/skill-registry-refresh.ts', '--due'],
-      { cwd: '/app' },
-    )
-    const result = await process.output()
-    const output = clippedOutput(result.stdout, result.stderr)
-    if (result.exitCode !== 0) {
-      throw new Error(`Registry refresh failed with exit code ${result.exitCode}${output ? `:\n${output}` : ''}`)
-    }
-    return { exitCode: result.exitCode, output }
+async function immutableR2Request(request: Request, env: WriterEnv) {
+  const url = new URL(request.url)
+  if (url.pathname === '/list' && request.method === 'GET') {
+    const prefix = url.searchParams.get('prefix') ?? ''
+    if (!isAllowedRegistryListPrefix(prefix)) return new Response('Forbidden prefix', { status: 403 })
+    const cursor = url.searchParams.get('cursor') ?? undefined
+    const delimiter = url.searchParams.get('delimiter') ?? undefined
+    const page = await env.SKILL_REGISTRY_BUCKET.list({ prefix, cursor, delimiter })
+    return Response.json({
+      keys: delimiter ? page.delimitedPrefixes ?? [] : page.objects.map((object) => object.key),
+      cursor: page.truncated ? page.cursor : undefined,
+    })
   }
-}
 
-function mutableKey(pathname: string) {
-  if (!pathname.startsWith('/objects/')) return undefined
-  const key = decodeURIComponent(pathname.slice('/objects/'.length))
-  return /^skill-registries\/[^/]+\/state\.json$/.test(key) ? key : undefined
-}
+  const key = objectKey(url.pathname)
+  if (!key) return new Response('Not found', { status: 404 })
+  if (isRegistryStateKey(key)) {
+    if (request.method !== 'GET') return new Response('Registry state writes require the owning Writer', { status: 403 })
+  } else if (!isImmutableRegistryKey(key)) {
+    return new Response('Forbidden key', { status: 403 })
+  }
 
-function immutableKey(key: string) {
-  return /^skill-artifacts\/[a-f0-9]{64}\.(?:json|tar\.gz)$/.test(key)
-    || /^skill-images\/[a-f0-9]{64}(?:\.json)?$/.test(key)
-    || /^skill-registries\/[^/]+\/snapshots\/[a-f0-9]{64}\.json$/.test(key)
-}
-
-function allowedListPrefix(prefix: string) {
-  return ['skill-registries/', 'skill-artifacts/', 'skill-images/'].includes(prefix)
-}
-
-async function r2Mutation(request: Request, env: WriterEnv, key: string) {
+  if (request.method === 'GET') {
+    const object = await env.SKILL_REGISTRY_BUCKET.get(key)
+    if (!object) return new Response(null, { status: 404 })
+    return new Response(object.body, {
+      headers: {
+        etag: object.httpEtag,
+        ...(object.size != null ? { 'content-length': String(object.size) } : {}),
+      },
+    })
+  }
   if (request.method === 'PUT') {
-    const object = await env.SKILL_REGISTRY_BUCKET.put(key, request.body, { onlyIf: request.headers })
-    if (!object) return new Response(null, { status: 412 })
-    return new Response(null, { status: 201, headers: { etag: object.httpEtag } })
+    if (request.headers.get('if-none-match') !== '*') {
+      return new Response('Immutable Registry keys require If-None-Match: *', { status: 428 })
+    }
+    return writeR2Object(request, env, key)
   }
   return new Response('Method not allowed', { status: 405 })
 }
 
-export class RegistryCoordinator extends DurableObject<WriterEnv> {
+async function mutableR2Request(request: Request, env: WriterEnv, ctx: OutboundHandlerContext) {
+  const token = request.headers.get('x-registry-writer-token')
+  if (!token) return new Response('Missing writer token', { status: 401 })
+  const writer = env.REGISTRY_WRITER.get(env.REGISTRY_WRITER.idFromString(ctx.containerId))
+  return writer.writeState(token, request)
+}
+
+export class RegistryWriter extends Container<WriterEnv> {
+  override sleepAfter = '1m'
+
   private mutationChain = Promise.resolve()
   private activeRefresh: Promise<RefreshResult> | undefined
-  private readonly leaseKey = 'skill-registry-maintenance/writer-lease.json'
 
   private async serialized<T>(operation: () => Promise<T>) {
     const next = this.mutationChain.then(operation, operation)
@@ -91,148 +107,64 @@ export class RegistryCoordinator extends DurableObject<WriterEnv> {
     }
   }
 
-  private async runRefreshDue(): Promise<RefreshResult> {
-    const token = crypto.randomUUID()
-    await this.serialized(() => this.acquireLease(token))
-    const heartbeat = this.startHeartbeat(token)
-    try {
-      const writer = getContainer(this.env.REGISTRY_WRITER, 'singleton')
-      const result = await writer.refreshDue(token)
-      heartbeat.assertActive()
-      return result
-    } finally {
-      heartbeat.stop()
-      await this.serialized(async () => {
-        const activeLease = await this.ctx.storage.get<ActiveLease>('active-lease')
-        if (activeLease?.token === token) {
-          await this.ctx.storage.delete('active-lease')
-          await this.releaseLease(activeLease)
-        }
-      })
-    }
-  }
-
-  async runScheduled(): Promise<RefreshResult> {
-    return this.refreshDue()
-  }
-
-  private startHeartbeat(token: string) {
-    let failure: unknown
-    let running = false
-    const renew = () => {
-      if (running || failure) return
-      running = true
-      void this.serialized(() => this.renewLease(token)).catch((error) => { failure = error }).finally(() => { running = false })
-    }
-    const timer = setInterval(renew, 30_000)
-    return {
-      stop() { clearInterval(timer) },
-      assertActive() {
-        if (failure) throw failure
-      },
-    }
-  }
-
-  private async acquireLease(token: string) {
-    const current = await this.env.SKILL_REGISTRY_BUCKET.get(this.leaseKey)
-    const now = Date.now()
-    if (current) {
-      const lease = JSON.parse(await current.text()) as { owner?: unknown; expires_at?: unknown; released_at?: unknown }
-      const expiresAt = typeof lease.expires_at === 'string' ? Date.parse(lease.expires_at) : Number.NaN
-      if (!lease.released_at && Number.isFinite(expiresAt) && expiresAt > now) {
-        throw new Error(`Registry writer lease is already held by ${typeof lease.owner === 'string' ? lease.owner : 'an unknown owner'}`)
-      }
-    }
-    const owner = crypto.randomUUID()
-    const expiresAt = new Date(now + 15 * 60 * 1000).toISOString()
-    const result = await this.env.SKILL_REGISTRY_BUCKET.put(this.leaseKey, JSON.stringify({
-      owner, holder: 'cloudflare-registry-coordinator', acquired_at: new Date(now).toISOString(),
-      renewed_at: new Date(now).toISOString(), expires_at: expiresAt, fencing_token: token,
-    }), { onlyIf: current ? { etagMatches: current.etag } : { etagDoesNotMatch: '*' } })
-    if (!result) throw new Error('Registry writer lease changed while acquiring it')
-    const lease = { token, owner, etag: result.etag }
-    await this.ctx.storage.put('active-lease', lease)
-    return lease
-  }
-
-  private async renewLease(token: string) {
-    const lease = await this.ctx.storage.get<ActiveLease>('active-lease')
-    if (!lease || lease.token !== token) throw new Error('Stale writer token')
-    const now = new Date().toISOString()
-    const result = await this.env.SKILL_REGISTRY_BUCKET.put(this.leaseKey, JSON.stringify({
-      owner: lease.owner, holder: 'cloudflare-registry-coordinator', renewed_at: now,
-      expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(), fencing_token: token,
-    }), { onlyIf: { etagMatches: lease.etag } })
-    if (!result) {
-      await this.ctx.storage.delete('active-lease')
-      throw new Error('Registry writer lease was lost')
-    }
-    const renewed = { ...lease, etag: result.etag }
-    await this.ctx.storage.put('active-lease', renewed)
-    return renewed
-  }
-
-  private async releaseLease(lease: ActiveLease) {
-    const now = new Date().toISOString()
-    const result = await this.env.SKILL_REGISTRY_BUCKET.put(this.leaseKey, JSON.stringify({
-      owner: lease.owner, holder: 'cloudflare-registry-coordinator', renewed_at: now,
-      expires_at: now, released_at: now,
-    }), { onlyIf: { etagMatches: lease.etag } })
-    if (!result) throw new Error('Registry writer lease changed before release')
-  }
-
-  async mutate(token: string, request: Request): Promise<Response> {
+  private async beginRun() {
     return this.serialized(async () => {
-      const activeLease = await this.ctx.storage.get<ActiveLease>('active-lease')
-      if (!activeLease || activeLease.token !== token) return new Response('Stale writer token', { status: 409 })
-      await this.renewLease(token)
-      const key = mutableKey(new URL(request.url).pathname)
-      if (!key) return new Response('Not found', { status: 404 })
-      return r2Mutation(request, this.env, key)
+      const stored = activeRegistryRun(await this.ctx.storage.get(activeRunStorageKey))
+      if (stored) return null
+      const now = Date.now()
+      const run: ActiveRegistryRun = {
+        token: crypto.randomUUID(),
+        started_at: new Date(now).toISOString(),
+        expires_at: new Date(now + activeRunTtlMs).toISOString(),
+      }
+      await this.ctx.storage.put(activeRunStorageKey, run)
+      return run
     })
   }
-}
 
-RegistryWriter.outboundByHost = {
-  'registry-r2': async (request, env: WriterEnv) => {
-    const url = new URL(request.url)
-    if (url.pathname === '/list' && request.method === 'GET') {
-      const prefix = url.searchParams.get('prefix') ?? ''
-      if (!allowedListPrefix(prefix)) return new Response('Forbidden prefix', { status: 403 })
-      const cursor = url.searchParams.get('cursor') ?? undefined
-      const delimiter = url.searchParams.get('delimiter') ?? undefined
-      const page = await env.SKILL_REGISTRY_BUCKET.list({ prefix, cursor, delimiter })
-      return Response.json({ keys: delimiter ? page.delimitedPrefixes ?? [] : page.objects.map((object) => object.key), cursor: page.truncated ? page.cursor : undefined })
+  private async finishRun(token: string) {
+    await this.serialized(async () => {
+      const stored = await this.ctx.storage.get<ActiveRegistryRun>(activeRunStorageKey)
+      if (stored?.token === token) await this.ctx.storage.delete(activeRunStorageKey)
+    })
+  }
+
+  private async runRefreshDue(): Promise<RefreshResult> {
+    const run = await this.beginRun()
+    if (!run) {
+      return { exitCode: 0, output: 'Registry refresh already running', skipped: 'already_running' }
     }
-    if (!url.pathname.startsWith('/objects/')) return new Response('Not found', { status: 404 })
-    const key = decodeURIComponent(url.pathname.slice('/objects/'.length))
-    if (!key || key.includes('\0') || key.split('/').some((part) => part === '..')) return new Response('Invalid key', { status: 400 })
-    if (mutableKey(url.pathname)) {
-      if (request.method !== 'GET') return new Response('Mutable Registry keys require the coordinator', { status: 403 })
-    } else if (!immutableKey(key)) {
-      return new Response('Forbidden key', { status: 403 })
-    }
-    if (request.method === 'GET') {
-      const object = await env.SKILL_REGISTRY_BUCKET.get(key)
-      if (!object) return new Response(null, { status: 404 })
-      return new Response(object.body, { headers: { etag: object.httpEtag } })
-    }
-    if (request.method === 'PUT') {
-      if (request.headers.get('if-none-match') !== '*') {
-        return new Response('Immutable Registry keys require If-None-Match: *', { status: 428 })
+    try {
+      await this.start()
+      const process = await this.ctx.container!.exec(
+        ['env', `REGISTRY_WRITER_TOKEN=${run.token}`, 'bun', 'scripts/skill-registry-refresh.ts', '--due'],
+        { cwd: '/app' },
+      )
+      const result = await process.output()
+      const output = clippedOutput(result.stdout, result.stderr)
+      if (result.exitCode !== 0) {
+        throw new Error(`Registry refresh failed with exit code ${result.exitCode}${output ? `:\n${output}` : ''}`)
       }
-      const object = await env.SKILL_REGISTRY_BUCKET.put(key, request.body, { onlyIf: { etagDoesNotMatch: '*' } })
-      if (!object) return new Response(null, { status: 412 })
-      return new Response(null, { status: 201, headers: { etag: object.httpEtag } })
+      return { exitCode: result.exitCode, output }
+    } finally {
+      await this.finishRun(run.token)
     }
-    return new Response('Method not allowed', { status: 405 })
-  },
-  'registry-mutable': async (request, env: WriterEnv, ctx) => {
-    const token = request.headers.get('x-registry-writer-token')
-    if (!token) return new Response('Missing writer token', { status: 401 })
-    const coordinator = env.REGISTRY_COORDINATOR.getByName('singleton')
-    return coordinator.mutate(token, request)
-  },
+  }
+
+  async writeState(token: string, request: Request): Promise<Response> {
+    return this.serialized(async () => {
+      const run = activeRegistryRun(await this.ctx.storage.get(activeRunStorageKey))
+      if (!run || run.token !== token) return new Response('Stale writer token', { status: 409 })
+      const key = objectKey(new URL(request.url).pathname)
+      if (!key || !isRegistryStateKey(key)) return new Response('Not found', { status: 404 })
+      return writeR2Object(request, this.env, key)
+    })
+  }
+
+  static override outboundByHost = {
+    'registry-r2': immutableR2Request,
+    'registry-mutable': mutableR2Request,
+  }
 }
 
 export { ContainerProxy }
@@ -242,14 +174,21 @@ export default {
     return new Response('Not found', { status: 404 })
   },
 
-  async scheduled(_controller: ScheduledController, env: WriterEnv): Promise<void> {
-    console.log('Registry scheduled run started')
+  async scheduled(controller: ScheduledController, env: WriterEnv): Promise<void> {
+    console.log(JSON.stringify({ event: 'registry_refresh_started', scheduled_at: controller.scheduledTime }))
     try {
-      const coordinator = env.REGISTRY_COORDINATOR.getByName('singleton')
-      const result = await coordinator.runScheduled()
-      console.log(result.output || 'Registry refresh completed without output')
+      const writer = getContainer(env.REGISTRY_WRITER, 'singleton')
+      const result = await writer.refreshDue()
+      console.log(JSON.stringify({
+        event: result.skipped ? 'registry_refresh_skipped' : 'registry_refresh_completed',
+        reason: result.skipped,
+        output: result.output,
+      }))
     } catch (error) {
-      console.error('Registry scheduled run failed', error)
+      console.error(JSON.stringify({
+        event: 'registry_refresh_failed',
+        error: error instanceof Error ? error.message : String(error),
+      }))
       throw error
     }
   },

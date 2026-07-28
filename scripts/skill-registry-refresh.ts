@@ -27,9 +27,6 @@ export function createSkillRegistryProgressRenderer(
       case 'source':
         line(`${progress.registry}: fetching source`)
         break
-      case 'source_unchanged':
-        line(`${progress.registry}: source unchanged at ${progress.revision.slice(0, 12)}, skipping`)
-        break
       case 'source_ready':
         line(`${progress.registry}: source revision ${progress.revision.slice(0, 12)}`)
         break
@@ -57,7 +54,7 @@ export function createSkillRegistryProgressRenderer(
 interface RefreshRunner {
   refresh(
     definition: SkillRegistryDefinition,
-    options: { package?: string; skill?: string; force?: boolean },
+    options: { package?: string; skill?: string },
   ): Promise<unknown>
 }
 
@@ -84,7 +81,7 @@ export async function runSkillRegistryRefreshes(input: {
         }
       }
       results.push(await input.refresher.refresh(definition, {
-        package: input.package, skill: input.skill, force: input.force,
+        package: input.package, skill: input.skill,
       }))
     } catch (error) {
       if (error instanceof IndeterminateRemoteMutationError) throw error

@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import type { SkillRegistryDefinition } from '../../server/types/skill-registry'
 import { buildSkillCandidates } from './adapters'
-import { materializeSkillRegistrySource, peekSkillRegistrySourceRevision } from './source'
+import { materializeSkillRegistrySource } from './source'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
@@ -58,20 +58,7 @@ describe('Skill Registry Git sources', () => {
       await source.cleanup()
     }
 
-    const head = await revParseHead(repository)
-    expect(await peekSkillRegistrySourceRevision(definition)).toBe(head)
-    expect(await peekSkillRegistrySourceRevision({
-      ...definition, source: { type: 'git', url: repository },
-    })).toBe(head)
-    expect(await peekSkillRegistrySourceRevision({
-      ...definition, source: { type: 'git', url: repository, ref: 'a'.repeat(40) },
-    })).toBe('a'.repeat(40))
-    expect(await peekSkillRegistrySourceRevision({
-      ...definition, source: { type: 'git', url: repository, ref: 'missing-branch' },
-    })).toBeNull()
-    expect(await peekSkillRegistrySourceRevision({
-      ...definition, source: { type: 'local', path: 'skills' },
-    })).toBeNull()
+    expect(await revParseHead(repository)).toBe(source.revision)
 
     const before = new Set((await readdir(os.tmpdir())).filter((name) => name.startsWith('supermarket-skills-git-')))
     await expect(materializeSkillRegistrySource({
