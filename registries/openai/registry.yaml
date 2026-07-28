@@ -3,35 +3,13 @@ id: openai
 name: OpenAi
 enabled: true
 priority: 100
-adapter: codex_marketplace_skills
+adapter:
+  type: codex_marketplace_skills
+  catalog_path: .agents/plugins/api_marketplace.json
 source:
   type: git
   url: https://github.com/openai/plugins.git
   ref: main
-catalog_path: .agents/plugins/api_marketplace.json
 refresh_interval: 12h
 retention:
   snapshots: 30
-defaults:
-  runtime_requirements:
-    os:
-      - darwin
-      - linux
-      - win32
-package_overrides:
-  build-macos-apps:
-    runtime_requirements:
-      os:
-        - darwin
-skill_overrides:
-  nvidia/omniverse-cad-to-simready:
-    runtime_requirements:
-      os:
-        - darwin
-        - linux
-taxonomy:
-  mappings:
-    Developer Tools: developer-tools
-    Data & Analytics: data-analytics
-    Education & Research: education-research
-    Business & Operations: business-operations

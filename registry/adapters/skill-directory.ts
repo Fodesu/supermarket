@@ -1,7 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { assertRegistryID } from '../definition'
-import { resolveRealInside } from '../artifacts/build'
+import { resolveRealInside } from '../filesystem'
 import { buildSkillCandidate } from './common'
 import type { SkillAdapterInput, SkillAdapterResult, SkillCandidate } from './types'
 

@@ -1,16 +1,13 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import os from 'node:os'
-import path from 'node:path'
 import type { SkillRegistryDefinition, SkillRegistryStatus } from '#registry/types'
 import { IndeterminateRemoteMutationError } from '#registry/storage/contracts'
-import { loadSkillRegistryDefinitionResults, type SkillRegistryRefreshProgress } from '#registry/refresh/refresher'
+import type { SkillRegistryRefreshProgress } from '#registry/refresh/refresher'
 import { createSkillRegistryProgressRenderer, runSkillRegistryRefreshes } from './refresh'
 
 function definition(id: string, enabled = true): SkillRegistryDefinition {
   return {
     schema_version: '1', id, name: id, enabled, priority: 10,
-    adapter: 'skill_directory', source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
+    adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
     retention: { snapshots: 30 },
   }
 }
@@ -104,21 +101,5 @@ describe('Skill Registry refresh runner', () => {
     expect(output).toContain('[25/60] pkg/milestone')
     expect(output).toContain('[60/60] pkg/last')
     expect(output).toContain(`openai: publishing revision ${'f'.repeat(12)}`)
-  })
-
-  test('loads valid Registry definitions alongside a malformed file', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'registry-definition-results-'))
-    try {
-      await mkdir(path.join(root, 'registries/valid'), { recursive: true })
-      await mkdir(path.join(root, 'registries/broken'), { recursive: true })
-      await writeFile(path.join(root, 'registries/valid/registry.yaml'), `schema_version: "1"\nid: valid\nname: Valid\nadapter: skill_directory\nsource:\n  type: local\n  path: skills\nrefresh_interval: 12h\nretention:\n  snapshots: 30\n`)
-      await writeFile(path.join(root, 'registries/broken/registry.yaml'), 'schema_version: [')
-      const result = await loadSkillRegistryDefinitionResults(root)
-      expect(result.definitions.map((item) => item.id)).toEqual(['valid'])
-      expect(result.failures).toHaveLength(1)
-      expect(result.failures[0]?.registry).toBe('broken')
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
   })
 })

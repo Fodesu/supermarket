@@ -15,7 +15,7 @@ supermarket/
 ├── archive/                         # Shared TAR and gzip primitives
 ├── registry/                        # Registry model, sources, adapters, storage, refresh, and maintenance
 ├── server/                          # Nitro API routes and HTTP-facing services
-├── scripts/                         # Registry CLI entrypoints
+├── scripts/registry/                # Registry CLI entrypoints and deployment checks
 ├── workers/
 │   ├── api/wrangler.jsonc           # API Worker environments and bindings
 │   └── writer/                      # Container Writer source and deployment
@@ -27,7 +27,7 @@ supermarket/
 └── vite.config.ts
 ```
 
-Plugins are repository-owned bundles. Registry Skills are published from Registry definitions into immutable Snapshots and Artifacts stored under `.data/registries` locally or R2 in production. Generated Registry data is not committed.
+Plugins are repository-owned bundles. Registry Skills are published from Registry definitions into immutable Snapshots and Artifacts stored under `.data/registries` locally or R2 in production. A Snapshot is the serialized Catalog for one Registry revision: it contains the searchable Skill metadata and references digest-addressed Artifacts and images. The Registry's single mutable `state.json` selects the current Snapshot and records refresh status. Generated Registry data is not committed.
 
 ## API
 
@@ -50,6 +50,7 @@ Base URL: `https://supermarket.memoh.ai`
 | GET | `/api/tags` | List tags from Plugins and enabled Registry Skills |
 
 Registry Skills use the identity `(registry_id, package_id, skill_id)`. The reference client installs them into `<registry_id>+<package_id>+<skill_id>`.
+`runtime_requirements` is published only when the source provides structured compatibility metadata. An `os` filter returns only Skills that explicitly declare support for that OS; missing compatibility metadata is treated as unknown rather than as support for every platform.
 
 ## Contributing
 
@@ -68,9 +69,8 @@ author:
   name: Memoh
   email: support@memoh.ai
 icon:
-  kind: builtin | external_url
+  kind: builtin
   name: notion
-  url: https://example/icon.svg
 homepage: https://example.com
 tags:
   - productivity
@@ -80,7 +80,7 @@ install:
   - sh scripts/install.sh
 auth_requirements:
   - key: notion_oauth
-    type: none | managed_oauth | user_secret
+    type: managed_oauth
     client_ref: notion
     scopes: []
 mcps:
@@ -135,7 +135,8 @@ id: example
 name: Example
 enabled: true
 priority: 100
-adapter: skill_directory
+adapter:
+  type: skill_directory
 source:
   type: git
   url: https://github.com/example/skills.git
@@ -145,9 +146,20 @@ retention:
   snapshots: 30
 ```
 
-Supported sources are `local` and `git`; adapters are `skill_directory` and `codex_marketplace_skills`. Run `bun run registry:validate` before refreshing.
+Supported sources are `local` and HTTPS `git`; adapters are `skill_directory` and `codex_marketplace_skills`. Run `bun run registry:validate` before refreshing.
 
 The API Worker is read-only. The production Writer runs every 15 minutes and publishes immutable Snapshots and Artifacts before switching a Registry's `state.json` pointer. Test and production resources are declared under the matching environments in `workers/api/wrangler.jsonc` and `workers/writer/wrangler.jsonc`; both Workers must bind the same R2 bucket within an environment. The test Writer has no deployed cron. To exercise its scheduled handler locally, run `bun run registry:writer:dev`, then request `http://127.0.0.1:8787/__scheduled`.
+
+Before the first deployment, authenticate Wrangler, make sure the account has R2 and Containers enabled, and create the buckets named by the Wrangler environments:
+
+```bash
+bunx wrangler whoami
+bunx wrangler r2 bucket create test-memoh-supermarket
+bunx wrangler r2 bucket create memoh-supermarket
+bun run registry:config:check
+```
+
+Bucket creation is a one-time operation; use `bunx wrangler r2 bucket list` to check whether they already exist. Deploy the Writer before the API so the first refresh can publish data:
 
 ```bash
 # Test

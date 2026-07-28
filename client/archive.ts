@@ -105,7 +105,12 @@ export function validateSkillArchive(files: Map<string, ArchiveFile>) {
 
 export async function extractSkillArchive(files: Map<string, ArchiveFile>, destination: string, installID: string) {
   validateSkillArchive(files)
-  const root = path.resolve(destination, installID)
+  const destinationRoot = path.resolve(destination)
+  const root = path.resolve(destinationRoot, installID)
+  if (!installID || path.isAbsolute(installID)
+    || root === destinationRoot || !root.startsWith(`${destinationRoot}${path.sep}`)) {
+    throw new Error(`Install identity escapes destination: ${installID}`)
+  }
   await mkdir(path.dirname(root), { recursive: true })
   try {
     await lstat(root)

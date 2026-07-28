@@ -10,7 +10,9 @@ export const MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES = MAX_TAR_UNCOMPRESSED_BYTES
 export const MAX_SKILL_ARTIFACT_FILES = 10_000
 export const MAX_SKILL_IMAGE_BYTES = 512 * 1024
 
-export type SkillRegistryAdapter = 'skill_directory' | 'codex_marketplace_skills'
+export type SkillRegistryAdapter =
+  | { type: 'skill_directory' }
+  | { type: 'codex_marketplace_skills'; catalog_path: string }
 export type SkillRuntimeOS = 'darwin' | 'linux' | 'win32'
 
 export interface SkillRuntimeRequirements {
@@ -29,13 +31,8 @@ export interface SkillRegistryDefinition {
   priority: number
   adapter: SkillRegistryAdapter
   source: SkillRegistrySource
-  catalog_path?: string
   refresh_interval_seconds: number
   retention: { snapshots: number }
-  taxonomy?: { mappings?: Record<string, string> }
-  defaults?: { runtime_requirements?: SkillRuntimeRequirements }
-  package_overrides?: Record<string, { runtime_requirements?: SkillRuntimeRequirements }>
-  skill_overrides?: Record<string, { runtime_requirements?: SkillRuntimeRequirements }>
 }
 
 export interface SkillArtifactDescriptor {
@@ -45,12 +42,7 @@ export interface SkillArtifactDescriptor {
   content_type: 'application/gzip'
 }
 
-export interface SkillArtifactBlob {
-  format: 'memoh_skill_v1'
-  digest: string
-  size: number
-  content_type: 'application/gzip'
-}
+export type SkillArtifactBlob = SkillArtifactDescriptor
 
 export type SkillImageContentType = 'image/svg+xml' | 'image/png' | 'image/jpeg' | 'image/webp'
 
@@ -82,7 +74,7 @@ export interface CatalogSkill {
   category: string
   category_name: string
   source_category?: string
-  runtime_requirements: SkillRuntimeRequirements
+  runtime_requirements?: SkillRuntimeRequirements
   source: {
     type: SkillRegistrySource['type']
     revision: string
@@ -135,7 +127,7 @@ export interface SkillRegistrySummary {
   name: string
   enabled: boolean
   priority: number
-  adapter: SkillRegistryAdapter
+  adapter: SkillRegistryAdapter['type']
   revision?: string
   synced_at?: string
   skill_count: number

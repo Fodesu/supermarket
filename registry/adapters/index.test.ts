@@ -2,9 +2,10 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import type { SkillRegistryDefinition } from '../types'
-import { readDirectoryFiles } from '../artifacts/build'
+import type { SkillRegistryAdapter, SkillRegistryDefinition } from '../types'
+import { readDirectoryFiles } from '../filesystem'
 import { buildSkillCandidates } from './index'
+import { detectSkillImageContentType } from './codex-marketplace'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
@@ -16,12 +17,14 @@ async function writeSkill(root: string, relativePath: string, name: string, extr
   if (extra) await writeFile(path.join(directory, 'reference.md'), extra)
 }
 
-function definition(adapter: SkillRegistryDefinition['adapter']): SkillRegistryDefinition {
+function definition(adapterType: SkillRegistryAdapter['type']): SkillRegistryDefinition {
+  const adapter: SkillRegistryAdapter = adapterType === 'codex_marketplace_skills'
+    ? { type: adapterType, catalog_path: 'marketplace.json' }
+    : { type: adapterType }
   return {
     schema_version: '1', id: 'example', name: 'Example', enabled: true, priority: 10, adapter,
-    source: { type: 'local', path: 'source' }, catalog_path: adapter === 'codex_marketplace_skills' ? 'marketplace.json' : undefined,
+    source: { type: 'local', path: 'source' },
     refresh_interval_seconds: 43_200, retention: { snapshots: 30 },
-    defaults: { runtime_requirements: { os: ['darwin', 'linux', 'win32'] } },
   }
 }
 
@@ -61,7 +64,9 @@ describe('Skill Registry adapters', () => {
     }))
     await mkdir(path.join(root, 'packages/usable/assets'), { recursive: true })
     await writeFile(path.join(root, 'packages/usable/assets/icon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>')
-    await writeFile(path.join(root, 'packages/usable/assets/logo.png'), 'png')
+    await writeFile(path.join(root, 'packages/usable/assets/logo.png'), new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ]))
     await writeFile(path.join(root, 'packages/blocked/.codex-plugin/plugin.json'), JSON.stringify({
       name: 'blocked', skills: './skills', apps: ['./app'],
       mcpServers: { example: { url: 'https://example.test' } }, hooks: { sessionStart: ['./hook'] },
@@ -85,6 +90,31 @@ describe('Skill Registry adapters', () => {
       package_id: 'blocked', code: 'source_requires_runtime_components',
       message: 'Skipped package because it declares: apps, mcpServers, hooks',
     }])
+  })
+
+  test('identifies image MIME from bytes and rejects mislabeled images', async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    expect(detectSkillImageContentType(png)).toBe('image/png')
+    expect(detectSkillImageContentType(new TextEncoder().encode(
+      '<?xml version="1.0"?><!-- icon --><svg xmlns="http://www.w3.org/2000/svg"/>',
+    ))).toBe('image/svg+xml')
+
+    const root = await mkdtemp(path.join(os.tmpdir(), 'codex-mislabeled-image-'))
+    roots.push(root)
+    await mkdir(path.join(root, 'packages/demo/.codex-plugin'), { recursive: true })
+    await mkdir(path.join(root, 'packages/demo/assets'), { recursive: true })
+    await writeFile(path.join(root, 'marketplace.json'), JSON.stringify({ plugins: [
+      { name: 'demo', source: 'packages/demo' },
+    ] }))
+    await writeFile(path.join(root, 'packages/demo/.codex-plugin/plugin.json'), JSON.stringify({
+      name: 'demo', skills: './skills', interface: { logo: './assets/logo.webp' },
+    }))
+    await writeFile(path.join(root, 'packages/demo/assets/logo.webp'), png)
+    await writeSkill(root, 'packages/demo/skills/demo', 'Demo')
+
+    await expect(buildSkillCandidates({
+      definition: definition('codex_marketplace_skills'), sourceRoot: root,
+    })).rejects.toThrow('content does not match its file extension')
   })
 
   test('requires package scope for single-skill refreshes', async () => {

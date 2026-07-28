@@ -2,6 +2,11 @@ import type { SkillRegistryDefinition } from '../types'
 import { readCodexMarketplace } from './codex-marketplace'
 import { readSkillDirectory } from './skill-directory'
 
+export function skillAdapterBootstrapPaths(definition: SkillRegistryDefinition): string[] {
+  if (definition.adapter.type === 'codex_marketplace_skills') return [definition.adapter.catalog_path]
+  return []
+}
+
 export function buildSkillCandidates(input: {
   definition: SkillRegistryDefinition
   sourceRoot: string
@@ -22,7 +27,7 @@ export function buildSkillCandidates(input: {
   const adapterInput = {
     definition, sourceRoot, ensurePaths, packageFilter, skillFilter, allowMissingScope,
   }
-  if (definition.adapter === 'skill_directory') return readSkillDirectory(adapterInput)
-  if (definition.adapter === 'codex_marketplace_skills') return readCodexMarketplace(adapterInput)
-  throw new Error(`${definition.id}: unsupported adapter ${definition.adapter}`)
+  if (definition.adapter.type === 'skill_directory') return readSkillDirectory(adapterInput)
+  if (definition.adapter.type === 'codex_marketplace_skills') return readCodexMarketplace(adapterInput)
+  throw new Error(`${definition.id}: unsupported adapter`)
 }

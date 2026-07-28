@@ -1,6 +1,3 @@
-import { readFile } from 'node:fs/promises'
-import path from 'node:path'
-import { parse as parseYaml } from 'yaml'
 import type {
   CatalogSkill,
   RegistryDiagnostic,
@@ -9,50 +6,11 @@ import type {
   SkillRegistryDefinition,
   SkillRegistryStatus,
 } from '../types'
-import { parseSkillRegistryDefinition } from '../definition'
 import { sha256 } from '../digest'
 import { IndeterminateRemoteMutationError, type SkillRegistryStore } from '../storage/contracts'
-import { buildSkillCandidates } from '../adapters/index'
+import { buildSkillCandidates, skillAdapterBootstrapPaths } from '../adapters/index'
 import { packageSkill } from '../artifacts/build'
 import { materializeSkillRegistrySource } from '../sources/index'
-
-export interface SkillRegistryDefinitionFailure {
-  registry: string
-  path: string
-  error: unknown
-}
-
-export async function loadSkillRegistryDefinitionResults(projectRoot: string) {
-  const root = path.join(projectRoot, 'registries')
-  const definitions: SkillRegistryDefinition[] = []
-  const failures: SkillRegistryDefinitionFailure[] = []
-  const ids = new Set<string>()
-  for await (const relativePath of new Bun.Glob('*/registry.yaml').scan({ cwd: root })) {
-    try {
-      const definition = parseSkillRegistryDefinition(parseYaml(await readFile(path.join(root, relativePath), 'utf8')))
-      if (ids.has(definition.id)) throw new Error(`Duplicate registry ID: ${definition.id}`)
-      if (path.dirname(relativePath) !== definition.id) throw new Error(`${relativePath}: directory must match Registry ID`)
-      ids.add(definition.id)
-      definitions.push(definition)
-    } catch (error) {
-      failures.push({ registry: path.dirname(relativePath), path: relativePath, error })
-    }
-  }
-  definitions.sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id))
-  failures.sort((a, b) => a.path.localeCompare(b.path))
-  return { definitions, failures }
-}
-
-export async function loadSkillRegistryDefinitions(projectRoot: string) {
-  const result = await loadSkillRegistryDefinitionResults(projectRoot)
-  if (result.failures.length) {
-    throw new AggregateError(
-      result.failures.map((failure) => failure.error),
-      result.failures.map((failure) => `${failure.path}: ${failure.error instanceof Error ? failure.error.message : String(failure.error)}`).join('\n'),
-    )
-  }
-  return result.definitions
-}
 
 export function isSkillRegistryRefreshDue(
   definition: SkillRegistryDefinition,
@@ -176,7 +134,11 @@ export class SkillRegistryRefresher {
         throw new Error(`${definition.id}: scoped refresh requires an existing Catalog`)
       }
       this.onProgress({ type: 'source', registry: definition.id })
-      source = await materializeSkillRegistrySource(definition, this.projectRoot)
+      source = await materializeSkillRegistrySource(
+        definition,
+        this.projectRoot,
+        skillAdapterBootstrapPaths(definition),
+      )
       this.onProgress({ type: 'source_ready', registry: definition.id, revision: source.revision })
       this.assertWriterActive()
       const scopeExists = options.package ? Boolean(options.skill

@@ -18,7 +18,7 @@ afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recur
 function definition(id: string, retention = 2): SkillRegistryDefinition {
   return {
     schema_version: '1', id, name: id, enabled: true, priority: 10,
-    adapter: 'skill_directory', source: { type: 'local', path: 'skills' },
+    adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' },
     refresh_interval_seconds: 43_200, retention: { snapshots: retention },
   }
 }

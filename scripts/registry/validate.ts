@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { loadSkillRegistryDefinitions } from '#registry/refresh/refresher'
+import { loadSkillRegistryDefinitions } from '#registry/definitions/repository'
 
 const projectRoot = path.resolve(import.meta.dirname, '../..')
 const definitions = await loadSkillRegistryDefinitions(projectRoot)

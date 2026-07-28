@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { LocalSkillRegistryStore } from '#registry/storage/local'
 import { garbageCollectSkillRegistries } from '#registry/maintenance/gc'
-import { loadSkillRegistryDefinitions } from '#registry/refresh/refresher'
+import { loadSkillRegistryDefinitions } from '#registry/definitions/repository'
 import { acquireRegistryWriterLock } from '#registry/maintenance/writer-lock'
 
 if (import.meta.main) {

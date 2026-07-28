@@ -3,16 +3,11 @@ id: memoh
 name: Memoh
 enabled: true
 priority: 1000
-adapter: skill_directory
+adapter:
+  type: skill_directory
 source:
   type: local
   path: skills
 refresh_interval: 12h
 retention:
   snapshots: 30
-defaults:
-  runtime_requirements:
-    os:
-      - darwin
-      - linux
-      - win32

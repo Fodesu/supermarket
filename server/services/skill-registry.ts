@@ -12,9 +12,35 @@ import type { SkillRegistryStore } from '#registry/storage/contracts'
 
 let localStore: Promise<SkillRegistryStore> | undefined
 const r2Stores = new WeakMap<object, SkillRegistryStore>()
+const snapshotCaches = new WeakMap<object, Map<string, Promise<SkillRegistryCatalog | null>>>()
+const maxCachedSnapshotsPerStore = 64
 
 interface RuntimeEvent {
   req: { runtime?: unknown }
+}
+
+function cachedSnapshot(store: SkillRegistryStore, registryID: string, revision: string) {
+  let cache = snapshotCaches.get(store)
+  if (!cache) {
+    cache = new Map()
+    snapshotCaches.set(store, cache)
+  }
+  const key = `${registryID}/${revision}`
+  const existing = cache.get(key)
+  if (existing) {
+    cache.delete(key)
+    cache.set(key, existing)
+    return existing
+  }
+  const pending = store.getSnapshot(registryID, revision).catch((error) => {
+    cache!.delete(key)
+    throw error
+  })
+  cache.set(key, pending)
+  while (cache.size > maxCachedSnapshotsPerStore) {
+    cache.delete(cache.keys().next().value!)
+  }
+  return pending
 }
 
 export async function getRuntimeSkillRegistryStore(event?: RuntimeEvent): Promise<SkillRegistryStore> {
@@ -44,7 +70,7 @@ export async function getEnabledSkillRegistryCatalogs(
   const values = await Promise.all(ids.map(async (id) => {
     const state = await store.getState(id)
     if (!state?.definition.enabled || !state.current_snapshot) return null
-    const catalog = await store.getSnapshot(id, state.current_snapshot)
+    const catalog = await cachedSnapshot(store, id, state.current_snapshot)
     if (!catalog) throw new Error(`Current Registry snapshot is missing: ${id}/${state.current_snapshot}`)
     return catalog
   }))
@@ -92,7 +118,7 @@ async function getSkillRegistrySummary(store: SkillRegistryStore, registryID: st
   const registry = state.definition
   const status = state.status
   const catalog = state.current_snapshot
-    ? await store.getSnapshot(registryID, state.current_snapshot)
+    ? await cachedSnapshot(store, registryID, state.current_snapshot)
     : null
   if (state.current_snapshot && !catalog) throw new Error(`Current Registry snapshot is missing: ${registryID}/${state.current_snapshot}`)
   const lastSuccess = status?.last_success_at ? Date.parse(status.last_success_at) : Number.NaN
@@ -101,7 +127,7 @@ async function getSkillRegistrySummary(store: SkillRegistryStore, registryID: st
     : undefined
   return {
     id: registry.id, name: registry.name, enabled: registry.enabled, priority: registry.priority,
-    adapter: registry.adapter, revision: catalog?.revision, synced_at: catalog?.synced_at,
+    adapter: registry.adapter.type, revision: catalog?.revision, synced_at: catalog?.synced_at,
     skill_count: catalog?.skills.length ?? 0,
     package_count: new Set(catalog?.skills.map((skill) => skill.package_id) ?? []).size,
     category_count: summarizeSkillCategories(catalog?.skills ?? []).length,
@@ -117,7 +143,7 @@ export async function getSkillRegistryDetails(event: RuntimeEvent, registryID: s
   if (!summary) return undefined
   const state = await store.getState(registryID)
   if (!state) return undefined
-  const catalog = state.current_snapshot ? await store.getSnapshot(registryID, state.current_snapshot) : null
+  const catalog = state.current_snapshot ? await cachedSnapshot(store, registryID, state.current_snapshot) : null
   return { ...summary, definition: state.definition, status: state.status, source_revision: catalog?.source_revision, diagnostics: catalog?.diagnostics ?? [] }
 }
 

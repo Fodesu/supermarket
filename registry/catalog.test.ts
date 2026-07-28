@@ -29,6 +29,9 @@ describe('Skill Catalog search', () => {
     expect(searchCatalogSkills([
       skill({ runtime_requirements: { os: ['linux'] } }),
     ], { os: 'darwin' }).total).toBe(0)
+    expect(searchCatalogSkills([
+      skill({ runtime_requirements: undefined }),
+    ], { os: 'linux' }).total).toBe(0)
   })
 
   test('sanitizes pagination and sorts by name globally', () => {
@@ -43,6 +46,9 @@ describe('Skill Catalog search', () => {
   test('normalizes and summarizes categories', () => {
     expect(normalizeSkillCategory('Developer Tools')).toEqual({
       id: 'developer-tools', name: 'Developer Tools', sourceName: 'Developer Tools',
+    })
+    expect(normalizeSkillCategory('Data & Analytics')).toEqual({
+      id: 'data-analytics', name: 'Data & Analytics', sourceName: 'Data & Analytics',
     })
     expect(summarizeSkillCategories([skill(), skill({ registry_id: 'memoh', install_id: 'memoh--documents--pdf' })]))
       .toEqual([{ id: 'productivity', name: 'Productivity', count: 2, registries: [{ id: 'memoh', count: 1 }, { id: 'openai', count: 1 }] }])

@@ -6,8 +6,8 @@ import type {
   SkillRegistryDefinition,
 } from '../types'
 import { normalizeSkillCategory } from '../catalog'
-import { resolveSkillRuntimeRequirements } from '../definition'
-import { readDirectoryFiles, type SkillSourceFile } from '../artifacts/build'
+import { resolveSkillRuntimeRequirements, skillInstallID } from '../definition'
+import { readDirectoryFiles, type SkillSourceFile } from '../filesystem'
 import type { SkillCandidate } from './types'
 
 function uniqueStrings(...values: unknown[]) {
@@ -75,12 +75,11 @@ export async function buildSkillCandidate(input: {
   const packageAuthor = normalizeAuthor(packageManifest.author)
   const category = normalizeSkillCategory(
     String(metadata.category ?? data.category ?? sourceCategory ?? '').trim() || undefined,
-    definition.taxonomy?.mappings,
   )
   return {
     package_id: packageID,
     skill_id: skillID,
-    install_id: `${definition.id}+${packageID}+${skillID}`,
+    install_id: skillInstallID(definition.id, packageID, skillID),
     name: String(data.name ?? skillID),
     description: String(data.description ?? ''),
     author: normalizeAuthor(metadata.author, packageAuthor),

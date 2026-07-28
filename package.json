@@ -15,14 +15,15 @@
     "registry:refresh": "bun scripts/registry/refresh.ts",
     "registry:gc": "bun scripts/registry/gc.ts",
     "registry:validate": "bun scripts/registry/validate.ts",
+    "registry:config:check": "bun scripts/registry/check-config.ts",
     "registry:client": "bun client/skill-registry-client.ts",
     "registry:writer:dev": "wrangler dev --config workers/writer/wrangler.jsonc --env test --test-scheduled",
-    "registry:writer:check": "wrangler deploy --config workers/writer/wrangler.jsonc --env test --dry-run --containers-rollout=none",
-    "registry:writer:deploy:test": "wrangler deploy --config workers/writer/wrangler.jsonc --env test",
-    "registry:writer:deploy:production": "wrangler deploy --config workers/writer/wrangler.jsonc --env production",
+    "registry:writer:check": "bun run registry:config:check && wrangler deploy --config workers/writer/wrangler.jsonc --env test --dry-run --containers-rollout=none",
+    "registry:writer:deploy:test": "bun run registry:config:check && wrangler deploy --config workers/writer/wrangler.jsonc --env test",
+    "registry:writer:deploy:production": "bun run registry:config:check && wrangler deploy --config workers/writer/wrangler.jsonc --env production",
     "registry:api:dev": "bun run build && wrangler dev --config workers/api/wrangler.jsonc --env test",
-    "registry:api:deploy:test": "bun run build && wrangler deploy --config workers/api/wrangler.jsonc --env test",
-    "registry:api:deploy:production": "bun run build && wrangler deploy --config workers/api/wrangler.jsonc --env production"
+    "registry:api:deploy:test": "bun run registry:config:check && bun run build && wrangler deploy --config workers/api/wrangler.jsonc --env test",
+    "registry:api:deploy:production": "bun run registry:config:check && bun run build && wrangler deploy --config workers/api/wrangler.jsonc --env production"
   },
   "imports": {
     "#*": "./*"
