@@ -151,6 +151,25 @@ export class SkillRegistryRefresher {
       )
       this.onProgress({ type: 'source_ready', registry: definition.id, revision: source.revision })
       this.assertWriterActive()
+      if (
+        !options.package
+        && current
+        && current.source_revision === source.revision
+        && sameDefinition(current.registry, source.definition)
+      ) {
+        const succeededAt = new Date().toISOString()
+        const state = current.skills.length ? 'ready' : 'empty'
+        this.assertWriterActive()
+        await putState({
+          state, last_attempt_at: attemptedAt, last_success_at: succeededAt,
+        }, current.revision, definition)
+        return {
+          registry: definition.id,
+          revision: current.revision,
+          skills: current.skills.length,
+          skipped: 'unchanged',
+        }
+      }
       const scopeExists = options.package ? Boolean(options.skill
         ? current?.skills.some((skill) => skill.package_id === options.package && skill.skill_id === options.skill)
         : current?.skills.some((skill) => skill.package_id === options.package)
