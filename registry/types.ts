@@ -1,4 +1,4 @@
-import { MAX_TAR_UNCOMPRESSED_BYTES } from '#archive/tar'
+import { MAX_TAR_UNCOMPRESSED_BYTES } from '#lib/archive'
 
 export interface SkillAuthor {
   name: string

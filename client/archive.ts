@@ -1,7 +1,7 @@
 import { chmod, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createGzipDecoder, createTarDecoder, type ParsedTarEntry } from 'modern-tar'
-import { assertSafeArchivePath } from '#archive/tar'
+import { assertSafeArchivePath } from '#lib/archive'
 import {
   MAX_SKILL_ARTIFACT_FILES,
   MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,

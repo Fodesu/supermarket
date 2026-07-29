@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { packTar } from 'modern-tar'
-import { createTar, gzip } from '#archive/tar'
+import { createTar, gzip } from '#lib/archive'
 import { extractSkillArchive, parseGzipTarArchive, parseTarArchive, validateSkillArchive } from './archive'
 
 const roots: string[] = []

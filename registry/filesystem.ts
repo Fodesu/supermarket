@@ -1,7 +1,7 @@
 import { lstat, open, readdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { MAX_SKILL_ARTIFACT_FILES, MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES } from './types'
-import type { TarFileInput } from '#archive/tar'
+import type { TarFileInput } from '#lib/archive'
 
 const ignoredDirectories = new Set(['.git', 'node_modules'])
 

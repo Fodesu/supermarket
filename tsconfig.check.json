@@ -5,8 +5,8 @@
   },
   "include": [
     ".wrangler/types/*.d.ts",
-    "archive/**/*.ts",
     "client/**/*.ts",
+    "lib/**/*.ts",
     "plugin/**/*.ts",
     "registry/**/*.ts",
     "scripts/**/*.ts",

@@ -1,7 +1,7 @@
 import {
   MAX_SKILL_ARTIFACT_COMPRESSED_BYTES,
 } from '../types'
-import { createTar, gzip } from '#archive/tar'
+import { createTar, gzip } from '#lib/archive'
 import { sha256 } from '../digest'
 import type { SkillSourceFile } from '../filesystem'
 
