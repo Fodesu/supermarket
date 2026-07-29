@@ -14,6 +14,14 @@ import {
 } from './registry-access'
 import { processOutputWithTimeout, SingleFlight, startRunHeartbeat } from './run-control'
 
+// Secret set via `wrangler secret put WRITER_REFRESH_TOKEN`. It has no value in
+// wrangler config (secrets never do), so augment the generated env type here.
+declare global {
+  interface WriterEnv {
+    WRITER_REFRESH_TOKEN?: string
+  }
+}
+
 interface RefreshResult {
   exitCode: number
   output: string
@@ -198,27 +206,50 @@ export class RegistryWriter extends Container<WriterEnv> {
 
 export { ContainerProxy }
 
+async function runScheduledRefresh(env: WriterEnv, trigger: 'cron' | 'manual'): Promise<void> {
+  console.log(JSON.stringify({ event: 'registry_refresh_started', trigger }))
+  try {
+    const writer = getContainer(env.REGISTRY_WRITER, 'singleton')
+    const result = await writer.refreshDue()
+    console.log(JSON.stringify({
+      event: result.skipped ? 'registry_refresh_skipped' : 'registry_refresh_completed',
+      trigger,
+      reason: result.skipped,
+      output: result.output,
+    }))
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'registry_refresh_failed',
+      trigger,
+      error: error instanceof Error ? error.message : String(error),
+    }))
+    throw error
+  }
+}
+
+// Manual refresh trigger. The test Writer has no cron by design (see
+// scripts/registry/check-config.ts), so this token-guarded endpoint is how a
+// refresh is kicked off there on demand. The run happens in waitUntil so the
+// request returns immediately; poll R2 state to observe progress.
+async function handleManualRefresh(request: Request, env: WriterEnv, ctx: ExecutionContext): Promise<Response> {
+  const expected = env.WRITER_REFRESH_TOKEN
+  if (!expected) return new Response('Manual refresh is not configured', { status: 501 })
+  const provided = request.headers.get('x-writer-refresh-token')
+  if (!provided || provided !== expected) return new Response('Forbidden', { status: 403 })
+  ctx.waitUntil(runScheduledRefresh(env, 'manual'))
+  return new Response(null, { status: 202 })
+}
+
 export default {
-  async fetch(): Promise<Response> {
+  async fetch(request: Request, env: WriterEnv, ctx: ExecutionContext): Promise<Response> {
+    const url = new URL(request.url)
+    if (url.pathname === '/__refresh' && request.method === 'POST') {
+      return handleManualRefresh(request, env, ctx)
+    }
     return new Response('Not found', { status: 404 })
   },
 
-  async scheduled(controller: ScheduledController, env: WriterEnv): Promise<void> {
-    console.log(JSON.stringify({ event: 'registry_refresh_started', scheduled_at: controller.scheduledTime }))
-    try {
-      const writer = getContainer(env.REGISTRY_WRITER, 'singleton')
-      const result = await writer.refreshDue()
-      console.log(JSON.stringify({
-        event: result.skipped ? 'registry_refresh_skipped' : 'registry_refresh_completed',
-        reason: result.skipped,
-        output: result.output,
-      }))
-    } catch (error) {
-      console.error(JSON.stringify({
-        event: 'registry_refresh_failed',
-        error: error instanceof Error ? error.message : String(error),
-      }))
-      throw error
-    }
+  async scheduled(_controller: ScheduledController, env: WriterEnv): Promise<void> {
+    await runScheduledRefresh(env, 'cron')
   },
 } satisfies ExportedHandler<WriterEnv>
