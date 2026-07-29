@@ -18,4 +18,8 @@ COPY registry ./registry
 COPY scripts ./scripts
 COPY archive ./archive
 
+# The Writer uses this container via exec only; no service listens here.
+# Wrangler local dev still requires an exposed port to manage the container.
+EXPOSE 8080
+
 CMD ["sh", "-c", "while :; do sleep 3600; done"]

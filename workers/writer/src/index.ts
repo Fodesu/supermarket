@@ -154,7 +154,13 @@ export class RegistryWriter extends Container<WriterEnv> {
         { cwd: '/app' },
       )
       const stopHeartbeat = startRunHeartbeat(
-        () => this.renewRun(run.token),
+        () => {
+          // container.exec work is invisible to the SDK activity timeout that
+          // backs sleepAfter, so an active run must renew it explicitly or the
+          // Container base class stops the instance mid-refresh.
+          this.renewActivityTimeout()
+          return this.renewRun(run.token)
+        },
         (error) => {
           heartbeatFailure = error
           process?.kill(15)
