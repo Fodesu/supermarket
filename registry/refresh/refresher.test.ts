@@ -108,7 +108,7 @@ describe('SkillRegistryRefresher', () => {
     expect((await state(store, 'memoh'))?.status.last_success_at).toBe(lastSuccessAt)
   })
 
-  test('refreshes Git sources before deciding whether the snapshot changed', async () => {
+  test('skips Git scanning when the source revision and definition are unchanged', async () => {
     const repository = await mkdtemp(path.join(os.tmpdir(), 'skill-fastpath-repo-'))
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'skill-fastpath-project-'))
     const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'skill-fastpath-data-'))
@@ -141,18 +141,24 @@ describe('SkillRegistryRefresher', () => {
     events.length = 0
     expect(await refresher.refresh(definition)).toMatchObject({ revision: first.revision, skipped: 'unchanged' })
     expect(events.map((event) => event.type)).toContain('source')
+    expect(events.map((event) => event.type)).not.toContain('scanned')
+    expect(events.map((event) => event.type)).not.toContain('skill')
     expect(Date.parse((await state(store, 'gitreg'))!.status.last_success_at!))
       .toBeGreaterThanOrEqual(Date.parse(firstStatus!.last_success_at!))
 
     await writeFile(path.join(repository, 'README.md'), 'docs only')
     await git('add', '.')
     await git('commit', '-m', 'docs')
+    events.length = 0
     expect(await refresher.refresh(definition)).toMatchObject({ revision: first.revision, skipped: 'unchanged' })
+    expect(events.map((event) => event.type)).toContain('scanned')
 
     const reprioritized = { ...definition, priority: 101 }
+    events.length = 0
     const changedDefinition = await refresher.refresh(reprioritized)
     expect(changedDefinition.skipped).toBeUndefined()
     expect(changedDefinition.revision).not.toBe(first.revision)
+    expect(events.map((event) => event.type)).toContain('scanned')
 
     // A real Skill change publishes a new revision.
     await writeFile(path.join(repository, 'alpha/SKILL.md'), '---\nname: alpha\ndescription: Two\n---\n')
@@ -163,7 +169,7 @@ describe('SkillRegistryRefresher', () => {
     expect((await snapshot(store, 'gitreg'))?.skills[0]?.description).toBe('Two')
   })
 
-  test('reports progress for uploads, cache hits, and skipped publications', async () => {
+  test('reports uploads and stops progress after an unchanged source revision', async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'skill-progress-project-'))
     const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'skill-progress-data-'))
     roots.push(projectRoot, dataRoot)
@@ -186,8 +192,7 @@ describe('SkillRegistryRefresher', () => {
 
     events.length = 0
     await refresher.refresh(definition)
-    expect(events.find((event) => event.type === 'skill')).toMatchObject({ uploaded: false })
-    expect(events.some((event) => event.type === 'publishing')).toBe(false)
+    expect(events.map((event) => event.type)).toEqual(['source', 'source_ready'])
   })
 
   test('recovers success status when publication committed before a status write failed', async () => {
