@@ -34,6 +34,10 @@ const activeRunHeartbeatMs = 30 * 1000
 const refreshExecutionTimeoutMs = 45 * 60 * 1000
 const outputDecoder = new TextDecoder()
 const maxLoggedOutputChars = 12_000
+const registryContainerEnv = {
+  REGISTRY_BLOBS_URL: 'http://registry-blobs',
+  REGISTRY_STATE_URL: 'http://registry-state',
+} as const
 
 function clippedOutput(stdout: ArrayBuffer, stderr: ArrayBuffer) {
   const text = [outputDecoder.decode(stdout), outputDecoder.decode(stderr)].filter(Boolean).join('\n').trim()
@@ -42,7 +46,37 @@ function clippedOutput(stdout: ArrayBuffer, stderr: ArrayBuffer) {
 
 async function writeR2Object(request: Request, env: WriterEnv, key: string) {
   if (request.method !== 'PUT') return new Response('Method not allowed', { status: 405 })
-  const object = await env.SKILL_REGISTRY_BUCKET.put(key, request.body, { onlyIf: request.headers })
+  const contentLengthHeader = request.headers.get('content-length')
+  if (contentLengthHeader === null) return new Response('Content-Length is required', { status: 411 })
+  const contentLength = Number(contentLengthHeader)
+  if (!Number.isSafeInteger(contentLength) || contentLength < 0) {
+    return new Response('A valid Content-Length is required', { status: 411 })
+  }
+
+  const body = request.body
+  if (!body && contentLength !== 0) return new Response('Request body is missing', { status: 400 })
+
+  let object: R2Object | null
+  if (!body) {
+    object = await env.SKILL_REGISTRY_BUCKET.put(key, null, { onlyIf: request.headers })
+  } else {
+    // Container outbound requests arrive as generic streams. R2 accepts
+    // streams only when their length is carried by FixedLengthStream.
+    const fixed = new FixedLengthStream(contentLength)
+    const pipeController = new AbortController()
+    const piped = body.pipeTo(fixed.writable, { signal: pipeController.signal })
+    try {
+      object = await env.SKILL_REGISTRY_BUCKET.put(key, fixed.readable, { onlyIf: request.headers })
+    } catch (error) {
+      pipeController.abort(error)
+      await piped.catch(() => {})
+      throw error
+    }
+    if (!object) pipeController.abort()
+    await piped.catch((error) => {
+      if (!pipeController.signal.aborted) throw error
+    })
+  }
   if (!object) return new Response(null, { status: 412 })
   return new Response(null, { status: 201, headers: { etag: object.httpEtag } })
 }
@@ -97,6 +131,7 @@ async function mutableR2Request(request: Request, env: WriterEnv, ctx: OutboundH
 
 export class RegistryWriter extends Container<WriterEnv> {
   override sleepAfter = '1m'
+  override envVars = registryContainerEnv
 
   private mutationChain = Promise.resolve()
   private readonly refreshFlight = new SingleFlight<RefreshResult>()
@@ -158,8 +193,13 @@ export class RegistryWriter extends Container<WriterEnv> {
       if (replacedExpiredRun && this.ctx.container?.running) await this.stop('SIGKILL')
       await this.start()
       process = await this.ctx.container!.exec(
-        ['env', `REGISTRY_WRITER_TOKEN=${run.token}`, 'bun', 'scripts/registry/refresh.ts', '--due'],
-        { cwd: '/app' },
+        ['bun', 'scripts/registry/refresh.ts', '--due'],
+        {
+          cwd: '/app',
+          // exec's env replaces rather than extends the command environment,
+          // so include the Container-level routing variables here as well.
+          env: { ...registryContainerEnv, REGISTRY_WRITER_TOKEN: run.token },
+        },
       )
       const stopHeartbeat = startRunHeartbeat(
         () => {
@@ -198,10 +238,13 @@ export class RegistryWriter extends Container<WriterEnv> {
     })
   }
 
-  static override outboundByHost = {
-    'registry-r2': immutableR2Request,
-    'registry-mutable': mutableR2Request,
-  }
+}
+
+// `Container.outboundByHost` is an inherited static setter. A static class
+// field would shadow that setter instead of registering these handlers.
+RegistryWriter.outboundByHost = {
+  'registry-blobs': immutableR2Request,
+  'registry-state': mutableR2Request,
 }
 
 export { ContainerProxy }

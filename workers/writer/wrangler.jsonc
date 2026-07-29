@@ -19,6 +19,7 @@
   "env": {
     "test": {
       "name": "memohai-supermarket-writer-test",
+      "workers_dev": true,
       "containers": [
         {
           "name": "memohai-supermarket-writer-container-test",

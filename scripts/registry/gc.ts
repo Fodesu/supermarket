@@ -10,7 +10,7 @@ if (import.meta.main) {
   if (unsupported.length) throw new Error(`Unsupported registry:gc option: ${unsupported[0]}`)
 
   const projectRoot = path.resolve(import.meta.dirname, '../..')
-  if (process.env.REGISTRY_R2_INTERNAL_URL) {
+  if (process.env.REGISTRY_BLOBS_URL) {
     throw new Error('registry:gc is local-only and cannot use the deployed Writer Store')
   }
   const store = new LocalSkillRegistryStore(
