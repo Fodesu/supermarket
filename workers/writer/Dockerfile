@@ -10,7 +10,7 @@ RUN bun install --frozen-lockfile --production
 COPY registries ./registries
 COPY registry ./registry
 COPY scripts ./scripts
-COPY archive ./archive
+COPY lib ./lib
 
 # The Writer uses this container via exec only; no service listens here.
 # Wrangler local dev still requires an exposed port to manage the container.
