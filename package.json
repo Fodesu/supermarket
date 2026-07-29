@@ -26,7 +26,7 @@
     "registry:api:deploy:production": "bun run registry:config:check && bun run build && wrangler deploy --config workers/api/wrangler.jsonc --env production"
   },
   "imports": {
-    "#*": "./*"
+    "#*": "./*.ts"
   },
   "devDependencies": {
     "@cloudflare/containers": "^0.3.7",
