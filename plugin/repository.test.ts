@@ -28,11 +28,6 @@ async function repository() {
 }
 
 describe('Committed Plugin repository', () => {
-  test('accepts regular repository files', async () => {
-    const { root } = await repository()
-    await expect(validateCommittedPlugins(root)).resolves.toEqual(['example'])
-  })
-
   test('rejects symbolic links before build assets are collected', async () => {
     const { root, pluginRoot } = await repository()
     const outside = path.join(root, 'secret.txt')

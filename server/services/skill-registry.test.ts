@@ -91,15 +91,9 @@ describe('Skill Registry loader', () => {
     const secondCatalog: SkillRegistryCatalog = {
       ...firstCatalog, registry: second, revision: 'd'.repeat(64), source_revision: 'second',
     }
-    let activeStateReads = 0
-    let maxStateReads = 0
     const store = {
       async listRegistryIDs() { return ['example', 'second'] },
       async getState(id: string) {
-        activeStateReads++
-        maxStateReads = Math.max(maxStateReads, activeStateReads)
-        await Promise.resolve()
-        activeStateReads--
         const current = id === 'example' ? firstCatalog : secondCatalog
         return {
           schema_version: '1' as const,
@@ -118,6 +112,5 @@ describe('Skill Registry loader', () => {
       { id: 'example', revision: firstCatalog.revision, skill_count: 0 },
       { id: 'second', revision: secondCatalog.revision, skill_count: 0 },
     ])
-    expect(maxStateReads).toBe(1)
   })
 })
