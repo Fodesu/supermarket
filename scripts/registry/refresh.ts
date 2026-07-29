@@ -125,8 +125,8 @@ if (import.meta.main) {
 
   const coordinatedWriter = Boolean(
     process.env.REGISTRY_WRITER_TOKEN
-    && process.env.REGISTRY_R2_INTERNAL_URL
-    && process.env.REGISTRY_R2_MUTABLE_URL,
+    && process.env.REGISTRY_BLOBS_URL
+    && process.env.REGISTRY_STATE_URL,
   )
   const lockPath = process.env.REGISTRY_REFRESH_LOCK_DIR || path.join(projectRoot, '.data/registry-refresh.lock')
   const store = createSkillRegistryStore(projectRoot)

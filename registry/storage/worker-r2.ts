@@ -13,7 +13,7 @@ export class WorkerR2BlobBackend implements BlobBackend {
     private readonly fetcher: (input: string | URL | Request, init?: RequestInit) => Promise<Response> = fetch,
     private readonly requestTimeoutMs = Number(process.env.REGISTRY_R2_REQUEST_TIMEOUT_MS || 60_000),
   ) {
-    if (!/^http:\/\/[a-z0-9.-]+$/i.test(baseURL)) throw new Error('REGISTRY_R2_INTERNAL_URL must be an HTTP virtual hostname')
+    if (!/^http:\/\/[a-z0-9.-]+$/i.test(baseURL)) throw new Error('REGISTRY_BLOBS_URL must be an HTTP virtual hostname')
   }
   async get(key: string) {
     const response = await this.request(`objects/${encodeURIComponent(key)}`, 'GET')
@@ -68,10 +68,10 @@ export class WorkerR2BlobBackend implements BlobBackend {
   ) {
     try {
       const requestHeaders = new Headers(headers)
-      const target = mutable ? process.env.REGISTRY_R2_MUTABLE_URL : this.baseURL
+      const target = mutable ? process.env.REGISTRY_STATE_URL : this.baseURL
       if (mutable) {
         const token = process.env.REGISTRY_WRITER_TOKEN
-        if (!target || !token) throw new Error('Mutable Registry writes require REGISTRY_R2_MUTABLE_URL and REGISTRY_WRITER_TOKEN')
+        if (!target || !token) throw new Error('Mutable Registry writes require REGISTRY_STATE_URL and REGISTRY_WRITER_TOKEN')
         requestHeaders.set('x-registry-writer-token', token)
       }
       return await this.fetcher(new URL(path, `${target}/`).toString(), {
