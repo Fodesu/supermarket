@@ -12,7 +12,13 @@ import {
   objectKey,
   type ActiveRegistryRun,
 } from './registry-access'
-import { processOutputWithTimeout, SingleFlight, startRunHeartbeat } from './run-control'
+import { decideRegistryRefresh, nextRegistryRefreshFromBucket } from './refresh-schedule'
+import {
+  processOutputWithTimeout,
+  registryRefreshCommand,
+  SingleFlight,
+  startRunHeartbeat,
+} from './run-control'
 
 // Secret set via `wrangler secret put WRITER_REFRESH_TOKEN`. It has no value in
 // wrangler config (secrets never do), so augment the generated env type here.
@@ -25,13 +31,17 @@ declare global {
 interface RefreshResult {
   exitCode: number
   output: string
-  skipped?: 'already_running'
+  skipped?: 'already_running' | 'not_due'
+  nextRefreshAt?: string
 }
 
 const activeRunStorageKey = 'active-run'
+const handledWorkerVersionStorageKey = 'handled-worker-version'
+const scheduledRefreshCallback = 'scheduledRefresh'
 const activeRunTtlMs = 2 * 60 * 1000
 const activeRunHeartbeatMs = 30 * 1000
 const refreshExecutionTimeoutMs = 45 * 60 * 1000
+const scheduleRetrySeconds = 15 * 60
 const outputDecoder = new TextDecoder()
 const maxLoggedOutputChars = 12_000
 const registryContainerEnv = {
@@ -143,7 +153,11 @@ export class RegistryWriter extends Container<WriterEnv> {
   }
 
   async refreshDue(): Promise<RefreshResult> {
-    return this.refreshFlight.run(() => this.runRefreshDue())
+    return this.refreshFlight.run(() => this.runRefresh(false, true))
+  }
+
+  async refreshNow(): Promise<RefreshResult> {
+    return this.refreshFlight.run(() => this.runRefresh(true, false))
   }
 
   private async beginRun() {
@@ -181,7 +195,62 @@ export class RegistryWriter extends Container<WriterEnv> {
     })
   }
 
-  private async runRefreshDue(): Promise<RefreshResult> {
+  private async nextRefreshAt() {
+    return nextRegistryRefreshFromBucket(this.env.SKILL_REGISTRY_BUCKET)
+  }
+
+  private async replaceScheduledRefresh(nextRefreshAt: number | null) {
+    this.deleteSchedules(scheduledRefreshCallback)
+    if (nextRefreshAt === null) return
+    await this.schedule(
+      new Date(Math.max(nextRefreshAt, Date.now() + 1_000)),
+      scheduledRefreshCallback,
+    )
+  }
+
+  private async runRefresh(force: boolean, scheduleNext: boolean): Promise<RefreshResult> {
+    const now = Date.now()
+    const workerVersion = this.env.WORKER_VERSION.id
+    const handledWorkerVersion = await this.ctx.storage.get<string>(handledWorkerVersionStorageKey)
+    const scheduled = force ? [] : await this.listSchedules(scheduledRefreshCallback)
+    const scheduledRefreshAt = scheduled[0]?.time == null ? undefined : scheduled[0].time * 1_000
+    const decision = decideRegistryRefresh({
+      force, workerVersion, handledWorkerVersion, scheduledRefreshAt, now,
+    })
+    if (decision.action === 'skip') {
+      return {
+        exitCode: 0,
+        output: 'Registry refresh is not due',
+        skipped: 'not_due',
+        nextRefreshAt: new Date(decision.nextRefreshAt).toISOString(),
+      }
+    }
+    if (decision.action === 'inspect_state') {
+      const nextRefreshAt = await this.nextRefreshAt()
+      if (nextRefreshAt === null || nextRefreshAt > now) {
+        await this.replaceScheduledRefresh(nextRefreshAt)
+        return {
+          exitCode: 0,
+          output: 'Registry refresh is not due',
+          skipped: 'not_due',
+          nextRefreshAt: nextRefreshAt === null ? undefined : new Date(nextRefreshAt).toISOString(),
+        }
+      }
+    }
+
+    const result = await this.executeRefresh(force)
+    if (result.skipped !== 'already_running') {
+      await this.ctx.storage.put(handledWorkerVersionStorageKey, workerVersion)
+      if (scheduleNext) {
+        const nextRefreshAt = await this.nextRefreshAt()
+        await this.replaceScheduledRefresh(nextRefreshAt)
+        result.nextRefreshAt = nextRefreshAt === null ? undefined : new Date(nextRefreshAt).toISOString()
+      }
+    }
+    return result
+  }
+
+  private async executeRefresh(force: boolean): Promise<RefreshResult> {
     const started = await this.beginRun()
     if (!started) {
       return { exitCode: 0, output: 'Registry refresh already running', skipped: 'already_running' }
@@ -193,7 +262,7 @@ export class RegistryWriter extends Container<WriterEnv> {
       if (replacedExpiredRun && this.ctx.container?.running) await this.stop('SIGKILL')
       await this.start()
       process = await this.ctx.container!.exec(
-        ['bun', 'scripts/registry/refresh.ts', '--due'],
+        registryRefreshCommand(force),
         {
           cwd: '/app',
           // exec's env replaces rather than extends the command environment,
@@ -228,6 +297,28 @@ export class RegistryWriter extends Container<WriterEnv> {
     }
   }
 
+  async scheduledRefresh(): Promise<void> {
+    try {
+      const result = await this.refreshDue()
+      console.log(JSON.stringify({
+        event: result.skipped ? 'registry_refresh_skipped' : 'registry_refresh_completed',
+        trigger: 'alarm',
+        reason: result.skipped,
+        next_refresh_at: result.nextRefreshAt,
+        output: result.output,
+      }))
+    } catch (error) {
+      this.deleteSchedules(scheduledRefreshCallback)
+      await this.schedule(scheduleRetrySeconds, scheduledRefreshCallback)
+      console.error(JSON.stringify({
+        event: 'registry_refresh_failed',
+        trigger: 'alarm',
+        error: error instanceof Error ? error.message : String(error),
+      }))
+      throw error
+    }
+  }
+
   async writeState(token: string, request: Request): Promise<Response> {
     return this.serialized(async () => {
       const run = activeRegistryRun(await this.ctx.storage.get(activeRunStorageKey))
@@ -253,11 +344,14 @@ async function runScheduledRefresh(env: WriterEnv, trigger: 'cron' | 'manual'): 
   console.log(JSON.stringify({ event: 'registry_refresh_started', trigger }))
   try {
     const writer = getContainer(env.REGISTRY_WRITER, 'singleton')
-    const result = await writer.refreshDue()
+    const result = trigger === 'manual'
+      ? await writer.refreshNow()
+      : await writer.refreshDue()
     console.log(JSON.stringify({
       event: result.skipped ? 'registry_refresh_skipped' : 'registry_refresh_completed',
       trigger,
       reason: result.skipped,
+      next_refresh_at: result.nextRefreshAt,
       output: result.output,
     }))
   } catch (error) {

@@ -1,5 +1,5 @@
 import { parse as parseYaml } from 'yaml'
-import { z } from 'zod'
+import * as z from 'zod/mini'
 import type {
   BundledPluginSkill,
   PluginManifest,
@@ -7,22 +7,25 @@ import type {
 
 const pluginIDPattern = /^[a-z0-9][a-z0-9._-]*$/
 
-const trimmed = z.string().transform((value) => value.trim())
-const nonEmpty = trimmed.refine((value) => value.length > 0, 'is required')
-const optionalNonEmpty = nonEmpty.optional()
-const stringList = z.array(nonEmpty).optional()
+const trimmed = z.pipe(z.string(), z.transform((value) => value.trim()))
+const nonEmpty = trimmed.check(z.minLength(1, 'is required'))
+const optionalNonEmpty = z.optional(nonEmpty)
+const stringList = z.optional(z.array(nonEmpty))
 
 function httpsURL(message: string) {
-  return nonEmpty.refine(
+  return nonEmpty.check(z.refine(
     (value) => URL.canParse(value) && new URL(value).protocol === 'https:',
     message,
-  )
+  ))
 }
 
-const authorSchema = z.object({
-  name: nonEmpty,
-  email: optionalNonEmpty,
-}).transform((value) => ({ name: value.name, email: value.email ?? '' }))
+const authorSchema = z.pipe(
+  z.object({
+    name: nonEmpty,
+    email: optionalNonEmpty,
+  }),
+  z.transform((value) => ({ name: value.name, email: value.email ?? '' })),
+)
 
 const iconSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('builtin'), name: nonEmpty }),
@@ -49,7 +52,7 @@ const mcpBaseShape = {
   display_name: optionalNonEmpty,
   description: optionalNonEmpty,
   auth_ref: optionalNonEmpty,
-  visibility: z.enum(['hidden', 'visible']).optional(),
+  visibility: z.optional(z.enum(['hidden', 'visible'])),
   capabilities: stringList,
 }
 
@@ -68,15 +71,15 @@ const skillSchema = z.object({
 const bundledSkillFrontmatterSchema = z.object({
   name: nonEmpty,
   description: nonEmpty,
-  metadata: z.object({
-    author: authorSchema.optional(),
+  metadata: z.optional(z.object({
+    author: z.optional(authorSchema),
     tags: stringList,
     homepage: optionalNonEmpty,
-  }).optional(),
+  })),
 })
 
 function uniqueKeys(label: string) {
-  return (items: Array<{ key: string }>, ctx: z.RefinementCtx) => {
+  return (items: Array<{ key: string }>, ctx: z.core.$RefinementCtx<Array<{ key: string }>>) => {
     const seen = new Set<string>()
     for (const item of items) {
       if (seen.has(item.key)) ctx.addIssue({ code: 'custom', message: `${label} contains duplicate key: ${item.key}` })
@@ -87,35 +90,35 @@ function uniqueKeys(label: string) {
 
 const pluginManifestSchema = z.object({
   schema_version: z.literal('1'),
-  id: nonEmpty.refine((value) => pluginIDPattern.test(value), 'Invalid Plugin ID'),
+  id: nonEmpty.check(z.refine((value) => pluginIDPattern.test(value), 'Invalid Plugin ID')),
   name: nonEmpty,
   version: nonEmpty,
   description: nonEmpty,
   author: authorSchema,
-  icon: iconSchema.optional(),
+  icon: z.optional(iconSchema),
   homepage: optionalNonEmpty,
   tags: stringList,
   capabilities: stringList,
-  install: z.union([nonEmpty, z.array(nonEmpty)]).optional(),
-  variables: z.array(variableSchema).optional(),
-  auth_requirements: z.array(authRequirementSchema).superRefine(uniqueKeys('auth_requirements')).optional(),
-  mcps: z.array(mcpSchema).superRefine(uniqueKeys('mcps')).optional(),
-  skills: z.array(skillSchema).optional(),
-}).superRefine((manifest, ctx) => {
+  install: z.optional(z.union([nonEmpty, z.array(nonEmpty)])),
+  variables: z.optional(z.array(variableSchema)),
+  auth_requirements: z.optional(z.array(authRequirementSchema).check(z.superRefine(uniqueKeys('auth_requirements')))),
+  mcps: z.optional(z.array(mcpSchema).check(z.superRefine(uniqueKeys('mcps')))),
+  skills: z.optional(z.array(skillSchema)),
+}).check(z.superRefine((manifest, ctx) => {
   const authKeys = new Set((manifest.auth_requirements ?? []).map((item) => item.key))
   manifest.mcps?.forEach((mcp, index) => {
     if (mcp.auth_ref && !authKeys.has(mcp.auth_ref)) {
       ctx.addIssue({ code: 'custom', path: ['mcps', index, 'auth_ref'], message: 'references unknown auth requirement' })
     }
   })
-})
+}))
 
 function object(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`)
   return value as Record<string, unknown>
 }
 
-function decode<T>(schema: z.ZodType<T>, value: unknown): T {
+function decode<T>(schema: z.ZodMiniType<T>, value: unknown): T {
   const result = schema.safeParse(value)
   if (result.success) return result.data
   const issue = result.error.issues[0]!
@@ -157,4 +160,3 @@ export function parseBundledSkillDocument(id: string, text: string): BundledPlug
     files: [],
   }
 }
-

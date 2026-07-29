@@ -4,6 +4,7 @@ import path from 'node:path'
 interface WranglerEnvironment {
   r2_buckets?: Array<{ binding?: string; bucket_name?: string }>
   triggers?: { crons?: string[] }
+  version_metadata?: { binding?: string }
 }
 
 interface WranglerConfig {
@@ -35,6 +36,9 @@ export async function checkRegistryDeploymentConfig(projectRoot: string) {
     const writerBucket = registryBucket(writer, environment, writerPath)
     if (apiBucket !== writerBucket) {
       throw new Error(`${environment} bucket mismatch: API=${apiBucket}, Writer=${writerBucket}`)
+    }
+    if (writer.env?.[environment]?.version_metadata?.binding !== 'WORKER_VERSION') {
+      throw new Error(`${writerPath} ${environment} is missing WORKER_VERSION metadata`)
     }
   }
   if (writer.env?.test?.triggers?.crons?.length) {

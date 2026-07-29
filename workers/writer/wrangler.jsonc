@@ -20,6 +20,9 @@
     "test": {
       "name": "memohai-supermarket-writer-test",
       "workers_dev": true,
+      "version_metadata": {
+        "binding": "WORKER_VERSION"
+      },
       "containers": [
         {
           "name": "memohai-supermarket-writer-container-test",
@@ -46,6 +49,9 @@
     },
     "production": {
       "name": "memohai-supermarket-writer",
+      "version_metadata": {
+        "binding": "WORKER_VERSION"
+      },
       "triggers": {
         "crons": ["*/15 * * * *"]
       },

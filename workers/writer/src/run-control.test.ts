@@ -1,7 +1,17 @@
 import { describe, expect, test } from 'bun:test'
-import { processOutputWithTimeout, SingleFlight, startRunHeartbeat } from './run-control'
+import {
+  processOutputWithTimeout,
+  registryRefreshCommand,
+  SingleFlight,
+  startRunHeartbeat,
+} from './run-control'
 
 describe('Writer run control', () => {
+  test('forces manual refreshes but only processes due scheduled refreshes', () => {
+    expect(registryRefreshCommand(true)).toEqual(['bun', 'scripts/registry/refresh.ts', '--force'])
+    expect(registryRefreshCommand(false)).toEqual(['bun', 'scripts/registry/refresh.ts', '--due'])
+  })
+
   test('coalesces concurrent scheduled refreshes', async () => {
     const flight = new SingleFlight<number>()
     let starts = 0

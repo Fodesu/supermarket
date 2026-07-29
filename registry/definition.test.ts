@@ -55,6 +55,12 @@ describe('Skill Registry definitions', () => {
     expect(() => parseSkillRegistryDefinition({
       schema_version: '1', id: 'bad', name: 'Bad', adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' },
     })).toThrow('refresh_interval')
+    for (const refreshInterval of ['59s', '366d', '99999999999d']) {
+      expect(() => parseSkillRegistryDefinition({
+        schema_version: '1', id: 'bad', name: 'Bad', adapter: { type: 'skill_directory' },
+        source: { type: 'local', path: 'skills' }, refresh_interval: refreshInterval,
+      })).toThrow('between 1m and 365d')
+    }
     expect(parseSkillRegistryDefinition({
       schema_version: '1', id: 'bad', name: 'Bad', adapter: { type: 'skill_directory' },
       source: { type: 'local', path: 'skills' }, refresh_interval: '12h',
