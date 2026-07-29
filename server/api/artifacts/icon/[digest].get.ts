@@ -4,15 +4,15 @@ import { getRuntimeSkillRegistryStore } from '#server/services/skill-registry'
 
 export default defineHandler(async (event) => {
   const digest = getRouterParam(event, 'digest')!
-  if (!/^[a-f0-9]{64}$/.test(digest)) throw new HTTPError('Invalid Skill image digest', { statusCode: 400 })
+  if (!/^[a-f0-9]{64}$/.test(digest)) throw new HTTPError('Invalid Skill icon digest', { statusCode: 400 })
   const store = await getRuntimeSkillRegistryStore(event)
-  const skillImage = store.getImageStream
+  const skillIcon = store.getImageStream
     ? await store.getImageStream(digest)
     : await store.getImage(digest).then((value) => value && ({ descriptor: value.descriptor, body: value.bytes }))
-  if (!skillImage) throw new HTTPError(`Skill image "${digest}" not found`, { statusCode: 404 })
+  if (!skillIcon) throw new HTTPError(`Skill icon "${digest}" not found`, { statusCode: 404 })
   const etag = `"${digest}"`
-  setResponseHeader(event, 'content-type', skillImage.descriptor.content_type)
-  setResponseHeader(event, 'content-length', String(skillImage.descriptor.size))
+  setResponseHeader(event, 'content-type', skillIcon.descriptor.content_type)
+  setResponseHeader(event, 'content-length', String(skillIcon.descriptor.size))
   setResponseHeader(event, 'etag', etag)
   setResponseHeader(event, 'x-content-sha256', digest)
   setResponseHeader(event, 'cache-control', 'public, max-age=31536000, immutable')
@@ -23,5 +23,5 @@ export default defineHandler(async (event) => {
     setResponseStatus(event, 304)
     return null
   }
-  return skillImage.body
+  return skillIcon.body
 })

@@ -1,7 +1,7 @@
 import { defineHandler, HTTPError } from 'nitro'
 import { getRouterParam, setResponseHeader } from 'h3'
 import { getPluginById, getPluginFiles } from '#server/services/plugin'
-import { createTar, gzip } from '#archive/tar'
+import { createTar, gzip } from '#lib/archive'
 
 export default defineHandler(async (event) => {
   const id = getRouterParam(event, 'id')!

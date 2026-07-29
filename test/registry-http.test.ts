@@ -4,13 +4,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { H3 } from 'h3'
 import { extractSkillArchive, parseGzipTarArchive } from '../client/archive'
-import artifactDownload from '../server/api/artifacts/[digest]/download.get'
-import skillImage from '../server/api/skill-images/[digest].get'
+import artifactDownload from '../server/api/artifacts/skill/[digest].get'
+import skillIcon from '../server/api/artifacts/icon/[digest].get'
 import registrySkill from '../server/api/registries/[id]/packages/[packageId]/skills/[skillId].get'
 import registries from '../server/api/registries/index.get'
 import skills from '../server/api/skills/index.get'
 import type { CatalogSkill, SkillArtifactDescriptor, SkillRegistryCatalog, SkillRegistryDefinition } from '#registry/types'
-import { createTar, gzip } from '#archive/tar'
+import { createTar, gzip } from '#lib/archive'
 import { R2BlobBackend } from '#registry/storage/r2'
 import { sha256 } from '#registry/digest'
 import { BlobSkillRegistryStore } from '#registry/storage/blob'
@@ -111,8 +111,8 @@ describe('Skill Registry HTTP protocol', () => {
     app.get('/api/registries', registries)
     app.get('/api/skills', skills)
     app.get('/api/registries/:id/packages/:packageId/skills/:skillId', registrySkill)
-    app.get('/api/artifacts/:digest/download', artifactDownload)
-    app.get('/api/skill-images/:digest', skillImage)
+    app.get('/api/artifacts/skill/:digest', artifactDownload)
+    app.get('/api/artifacts/icon/:digest', skillIcon)
 
     const registryResponse = await app.fetch(new Request('http://local/api/registries'))
     expect(registryResponse.status).toBe(200)
@@ -127,9 +127,9 @@ describe('Skill Registry HTTP protocol', () => {
 
     const detailResponse = await app.fetch(new Request('http://local/api/registries/example/packages/tools/skills/demo'))
     const detail = await detailResponse.json() as any
-    expect(detail.artifact.download_url).toBe(`/api/artifacts/${digest}/download`)
-    expect(detail.icon.card.download_url).toBe(`/api/skill-images/${image.digest}`)
-    const imageResponse = await app.fetch(new Request(`http://local${detail.icon.card.download_url}`))
+    expect(detail.artifact.download_url).toBe(`/api/artifacts/skill/${digest}`)
+    expect(detail.icon.card).toEqual(image)
+    const imageResponse = await app.fetch(new Request(`http://local/api/artifacts/icon/${detail.icon.card.digest}`))
     expect(imageResponse.headers.get('content-type')).toBe('image/svg+xml')
     expect(imageResponse.headers.get('cache-control')).toContain('immutable')
     expect(new Uint8Array(await imageResponse.arrayBuffer())).toEqual(imageBytes)

@@ -125,7 +125,8 @@ async function packageIcon(packageRoot: string, manifest: Record<string, unknown
   const brandColor = typeof ui.brandColor === 'string' && /^#[0-9a-f]{6}$/i.test(ui.brandColor)
     ? ui.brandColor.toUpperCase()
     : undefined
-  const icon: SkillIcon = { brand_color: brandColor }
+  const icon: SkillIcon = {}
+  if (brandColor) icon.brand_color = brandColor
   const assets: Array<{ descriptor: SkillImageAsset; bytes: Uint8Array }> = []
   for (const [kind, imagePath] of Object.entries(paths) as Array<[keyof typeof paths, string | undefined]>) {
     if (!imagePath) continue
