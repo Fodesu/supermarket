@@ -5,7 +5,7 @@ import type {
   SkillRegistryCatalog,
   SkillRegistryState,
 } from '../types'
-import { z } from 'zod'
+import * as z from 'zod/mini'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../types'
 import { assertRegistryID } from '../definition'
 import { summarizeCurrentCatalog } from '../catalog'
@@ -28,10 +28,10 @@ export const MAX_REGISTRY_STATE_BYTES = 256 * 1024
 export const MAX_REGISTRY_SNAPSHOT_BYTES = 8 * 1024 * 1024
 
 const summaryCountsSchema = z.object({
-  skill_count: z.number().int().min(0),
-  package_count: z.number().int().min(0),
-  category_count: z.number().int().min(0),
-  skipped_package_count: z.number().int().min(0),
+  skill_count: z.number().check(z.int(), z.minimum(0)),
+  package_count: z.number().check(z.int(), z.minimum(0)),
+  category_count: z.number().check(z.int(), z.minimum(0)),
+  skipped_package_count: z.number().check(z.int(), z.minimum(0)),
 })
 
 function validateState(state: SkillRegistryState, id: string) {

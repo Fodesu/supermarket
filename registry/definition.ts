@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { z } from 'zod'
+import * as z from 'zod/mini'
 import type {
   SkillRegistryDefinition,
   SkillRuntimeOS,
@@ -9,6 +9,7 @@ import type {
 export const supportedSkillRuntimeOS: SkillRuntimeOS[] = ['darwin', 'linux', 'win32']
 const runtimeOS = new Set<string>(supportedSkillRuntimeOS)
 const safeIDPattern = /^[a-z0-9][a-z0-9._-]*$/
+const maxRefreshIntervalSeconds = 365 * 24 * 60 * 60
 
 function unsupportedFieldError(label: string) {
   return { error: (issue: z.core.$ZodRawIssue) => issue.code === 'unrecognized_keys'
@@ -49,7 +50,7 @@ export function safeRelativePath(value: string, label = 'path'): string {
 function parseRuntimeRequirements(raw: unknown, label: string): SkillRuntimeRequirements | undefined {
   if (raw == null) return undefined
   const schema = z.strictObject({
-    os: z.array(z.unknown()).nonempty(),
+    os: z.array(z.unknown()).check(z.minLength(1)),
   }, unsupportedFieldError(label))
   const result = schema.safeParse(raw)
   if (!result.success) {
@@ -72,7 +73,9 @@ function parseRefreshInterval(raw: unknown, label: string): number {
   const amount = Number(match[1])
   const multiplier = { s: 1, m: 60, h: 3_600, d: 86_400 }[match[2]!]!
   const seconds = amount * multiplier
-  if (!Number.isSafeInteger(seconds) || seconds < 60) throw new Error(`${label} must be at least 1m`)
+  if (!Number.isSafeInteger(seconds) || seconds < 60 || seconds > maxRefreshIntervalSeconds) {
+    throw new Error(`${label} must be between 1m and 365d`)
+  }
   return seconds
 }
 
@@ -82,7 +85,7 @@ function parseRetention(raw: unknown, registryID: string): SkillRegistryDefiniti
     throw new Error(`${registryID}.retention must be an object`)
   }
   const parsed = z.strictObject({
-    snapshots: z.number().int().min(1).max(10_000),
+    snapshots: z.number().check(z.int(), z.minimum(1), z.maximum(10_000)),
   }, {
     error: (issue) => issue.code === 'unrecognized_keys' ? `${registryID}.retention contains unsupported fields` : undefined,
   }).safeParse(raw)
@@ -107,15 +110,16 @@ function parseAdapter(raw: unknown, id: string): SkillRegistryDefinition['adapte
   const data = object(raw, `${id}: adapter`)
   const type = String(data.type ?? '')
   if (type === 'skill_directory') {
-    z.strictObject({ type: z.literal('skill_directory') }, {
+    const parsed = z.strictObject({ type: z.literal('skill_directory') }, {
       error: (issue) => issue.code === 'unrecognized_keys' ? `${id}: skill_directory adapter contains unsupported fields` : undefined,
-    }).parse(data)
+    }).safeParse(data)
+    if (!parsed.success) throw new Error(parsed.error.issues[0]!.message)
     return { type: 'skill_directory' }
   }
   if (type === 'codex_marketplace_skills') {
     const parsed = z.strictObject({
       type: z.literal('codex_marketplace_skills'),
-      catalog_path: z.string().trim().min(1),
+      catalog_path: z.pipe(z.string(), z.transform((value) => value.trim())).check(z.minLength(1)),
     }, {
       error: (issue) => issue.code === 'unrecognized_keys' ? `${id}: codex_marketplace_skills adapter contains unsupported fields` : undefined,
     }).safeParse(data)
@@ -130,7 +134,7 @@ function parseSource(raw: unknown, id: string): SkillRegistryDefinition['source'
   if (data.type === 'local') {
     const parsed = z.strictObject({
       type: z.literal('local'),
-      path: z.string().trim().min(1),
+      path: z.pipe(z.string(), z.transform((value) => value.trim())).check(z.minLength(1)),
     }, unsupportedFieldError(`${id}: local source`)).safeParse(data)
     if (!parsed.success) {
       const issue = parsed.error.issues[0]!
@@ -142,9 +146,10 @@ function parseSource(raw: unknown, id: string): SkillRegistryDefinition['source'
   if (data.type === 'git') {
     const parsed = z.strictObject({
       type: z.literal('git'),
-      url: z.string().trim().refine((value) => /^https:\/\//.test(value), `${id}: git source URL must use HTTPS`),
-      ref: z.string().optional(),
-      path: z.string().optional(),
+      url: z.pipe(z.string(), z.transform((value) => value.trim()))
+        .check(z.refine((value) => /^https:\/\//.test(value), `${id}: git source URL must use HTTPS`)),
+      ref: z.optional(z.string()),
+      path: z.optional(z.string()),
     }, unsupportedFieldError(`${id}: git source`)).safeParse(data)
     if (!parsed.success) throw new Error(parsed.error.issues[0]!.message)
     return {
@@ -162,13 +167,13 @@ export function parseSkillRegistryDefinition(raw: unknown): SkillRegistryDefinit
   const parsed = z.strictObject({
     schema_version: z.unknown(),
     id: z.unknown(),
-    name: z.string().transform((value) => value.trim()).pipe(z.string().min(1)),
-    enabled: z.unknown().optional(),
-    priority: z.unknown().optional(),
+    name: z.pipe(z.string(), z.transform((value) => value.trim())).check(z.minLength(1)),
+    enabled: z.optional(z.unknown()),
+    priority: z.optional(z.unknown()),
     adapter: z.unknown(),
     source: z.unknown(),
-    refresh_interval: z.unknown().optional(),
-    retention: z.unknown().optional(),
+    refresh_interval: z.optional(z.unknown()),
+    retention: z.optional(z.unknown()),
   }, {
     error: (issue) => issue.code === 'unrecognized_keys'
       ? `${id}: unsupported Registry field ${(issue as { keys: string[] }).keys.join(', ')}`

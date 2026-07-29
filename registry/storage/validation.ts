@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { z } from 'zod'
+import * as z from 'zod/mini'
 import type {
   SkillArtifactBlob,
   SkillImageAsset,
@@ -17,13 +17,13 @@ const artifactBlobSchema = z.object({
   format: z.literal('memoh_skill_v1'),
   content_type: z.literal('application/gzip'),
   digest: z.string(),
-  size: z.number().int().min(0).max(MAX_SKILL_ARTIFACT_COMPRESSED_BYTES),
+  size: z.number().check(z.int(), z.minimum(0), z.maximum(MAX_SKILL_ARTIFACT_COMPRESSED_BYTES)),
 })
 
 const imageAssetSchema = z.object({
   content_type: z.enum(['image/svg+xml', 'image/png', 'image/jpeg', 'image/webp']),
   digest: z.string(),
-  size: z.number().int().min(1).max(512 * 1024),
+  size: z.number().check(z.int(), z.minimum(1), z.maximum(512 * 1024)),
 })
 
 export function validateArtifactBlob(descriptor: SkillArtifactBlob, digest: string) {

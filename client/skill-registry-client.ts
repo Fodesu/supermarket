@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { z } from 'zod'
+import * as z from 'zod/mini'
 import { sha256 } from '#registry/digest'
 import { skillInstallID } from '#registry/definition'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '#registry/types'
@@ -46,8 +46,8 @@ const installableSkillSchema = z.object({
   install_id: z.string(),
   artifact: z.object({
     format: z.literal('memoh_skill_v1'),
-    digest: z.string().regex(/^[a-f0-9]{64}$/),
-    size: z.number().int().min(0).max(MAX_SKILL_ARTIFACT_COMPRESSED_BYTES),
+    digest: z.string().check(z.regex(/^[a-f0-9]{64}$/)),
+    size: z.number().check(z.int(), z.minimum(0), z.maximum(MAX_SKILL_ARTIFACT_COMPRESSED_BYTES)),
     download_url: z.string(),
   }),
 })

@@ -3,6 +3,10 @@ export interface KillableExecProcess {
   kill(signal?: number): void
 }
 
+export function registryRefreshCommand(force: boolean) {
+  return ['bun', 'scripts/registry/refresh.ts', force ? '--force' : '--due']
+}
+
 export class SingleFlight<T> {
   private active: Promise<T> | undefined
 

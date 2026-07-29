@@ -14,6 +14,7 @@ async function writeConfigs(apiBucket: string, writerBucket: string) {
   await mkdir(path.join(root, 'workers/writer'), { recursive: true })
   const environment = (bucket: string, production = false) => ({
     r2_buckets: [{ binding: 'SKILL_REGISTRY_BUCKET', bucket_name: bucket }],
+    version_metadata: { binding: 'WORKER_VERSION' },
     ...(production ? { triggers: { crons: ['*/15 * * * *'] } } : {}),
   })
   await writeFile(path.join(root, 'workers/api/wrangler.jsonc'), JSON.stringify({
