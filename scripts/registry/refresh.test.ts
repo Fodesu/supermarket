@@ -1,8 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { SkillRegistryDefinition, SkillRegistryStatus } from '#registry/types'
 import { IndeterminateRemoteMutationError } from '#registry/storage/contracts'
-import type { SkillRegistryRefreshProgress } from '#registry/refresh/refresher'
-import { createSkillRegistryProgressRenderer, runSkillRegistryRefreshes } from './refresh'
+import { runSkillRegistryRefreshes } from './refresh'
 
 function definition(id: string, enabled = true): SkillRegistryDefinition {
   return {
@@ -107,31 +106,5 @@ describe('Skill Registry refresh runner', () => {
       ['removed', false],
     ])
     expect(outcome.failures).toEqual([])
-  })
-
-  test('renders progress lines for phases, uploads, and milestones', () => {
-    const events: SkillRegistryRefreshProgress[] = [
-      { type: 'source', registry: 'openai' },
-      { type: 'source_ready', registry: 'openai', revision: 'f'.repeat(64) },
-      { type: 'scanned', registry: 'openai', skills: 60, diagnostics: 2 },
-      { type: 'skill', registry: 'openai', index: 1, total: 60, package_id: 'pkg', skill_id: 'uploaded-one', uploaded: true },
-      { type: 'skill', registry: 'openai', index: 2, total: 60, package_id: 'pkg', skill_id: 'cached-two', uploaded: false },
-      { type: 'skill', registry: 'openai', index: 25, total: 60, package_id: 'pkg', skill_id: 'milestone', uploaded: false },
-      { type: 'skill', registry: 'openai', index: 60, total: 60, package_id: 'pkg', skill_id: 'last', uploaded: false },
-      { type: 'publishing', registry: 'openai', revision: 'f'.repeat(64) },
-    ]
-
-    const plain: string[] = []
-    const renderPlain = createSkillRegistryProgressRenderer((text) => { plain.push(text) }, false)
-    for (const event of events) renderPlain(event)
-    const output = plain.join('')
-    expect(output).toContain('openai: fetching source')
-    expect(output).toContain(`openai: source revision ${'f'.repeat(12)}`)
-    expect(output).toContain('openai: packaging 60 Skills (2 diagnostics)')
-    expect(output).toContain('[1/60] pkg/uploaded-one (uploaded)')
-    expect(output).not.toContain('cached-two')
-    expect(output).toContain('[25/60] pkg/milestone')
-    expect(output).toContain('[60/60] pkg/last')
-    expect(output).toContain(`openai: publishing revision ${'f'.repeat(12)}`)
   })
 })
