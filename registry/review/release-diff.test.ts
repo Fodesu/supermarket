@@ -85,6 +85,124 @@ function candidate(
 }
 
 describe('Registry release review', () => {
+  test('renders the complete review report for added, changed, and removed Skills', () => {
+    const report = renderRegistryReleaseDiff({
+      registry: 'example',
+      source_before: '1'.repeat(40),
+      source_after: '2'.repeat(40),
+      snapshot_before: 'a'.repeat(64),
+      snapshot_after: 'b'.repeat(64),
+      packages: [
+        {
+          package_id: 'added-package',
+          status: 'added',
+          skills: [{
+            skill_id: 'new-skill',
+            status: 'added',
+            artifact_after: 'c'.repeat(64),
+            metadata: [],
+            files: [{ path: 'SKILL.md', status: 'added' }],
+            skill_md_patch: '+new\n',
+          }],
+        },
+        {
+          package_id: 'changed-package',
+          status: 'changed',
+          skills: [{
+            skill_id: 'changed-skill',
+            status: 'changed',
+            artifact_before: 'd'.repeat(64),
+            artifact_after: 'e'.repeat(64),
+            metadata: ['description'],
+            files: [{ path: 'SKILL.md', status: 'changed' }],
+            skill_md_patch: '-old\n+new\n',
+          }],
+        },
+        {
+          package_id: 'removed-package',
+          status: 'removed',
+          skills: [{
+            skill_id: 'old-skill',
+            status: 'removed',
+            artifact_before: 'f'.repeat(64),
+            metadata: [],
+            files: [{ path: 'SKILL.md', status: 'removed' }],
+            skill_md_patch: '-old\n',
+          }],
+        },
+      ],
+      summary: {
+        packages_changed: 3,
+        skills_added: 1,
+        skills_removed: 1,
+        skills_changed: 1,
+      },
+    }, 'https://github.com/example/skills/compare/one...two')
+
+    expect(report).toBe(`## example Registry update
+
+Source: \`111111111111\` → [\`222222222222\`](https://github.com/example/skills/compare/one...two)
+
+Snapshot: \`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\` → \`bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\`
+
+### Summary
+
+- Packages changed: 3
+- Skills added: 1
+- Skills removed: 1
+- Skills changed: 1
+
+<details>
+<summary><code>added-package</code> — added, 1 Skill(s)</summary>
+
+#### \` new-skill \` — added
+
+- Artifact: — → \` cccccccccccc \`
+- Files:
+  - added: \` SKILL.md \`
+
+\`\`\`diff
++new
+\`\`\`
+
+</details>
+
+<details>
+<summary><code>changed-package</code> — changed, 1 Skill(s)</summary>
+
+#### \` changed-skill \` — changed
+
+- Artifact: \` dddddddddddd \` → \` eeeeeeeeeeee \`
+- Metadata: \` description \`
+- Files:
+  - changed: \` SKILL.md \`
+
+\`\`\`diff
+-old
++new
+\`\`\`
+
+</details>
+
+<details>
+<summary><code>removed-package</code> — removed, 1 Skill(s)</summary>
+
+#### \` old-skill \` — removed
+
+- Artifact: \` ffffffffffff \` → —
+- Files:
+  - removed: \` SKILL.md \`
+
+\`\`\`diff
+-old
+\`\`\`
+
+</details>
+
+Merging this PR approves the pinned source and release.lock.json. R2 publication rebuilds the Snapshot and requires its revision to match that lock.
+`)
+  })
+
   test('groups Skill metadata, file, Artifact, and SKILL.md changes by package', () => {
     const previous = candidate('1'.repeat(40), 'a'.repeat(64), 'Before', '# Before\n')
     const next = candidate(
@@ -114,6 +232,21 @@ describe('Registry release review', () => {
     expect(report).toContain('+# After')
     expect(report).toContain('```md')
     expect(report).toContain('````\n')
+  })
+
+  test('includes a SKILL.md patch when a Skill is added', () => {
+    const previous = candidate('1'.repeat(40), 'a'.repeat(64), 'Before', '# Before\n')
+    previous.skills = []
+    previous.snapshot.skills = []
+    previous.review.clear()
+    const next = candidate('2'.repeat(40), 'b'.repeat(64), 'Added', '# Added\n')
+
+    const diff = diffRegistryCandidates(previous, next)
+
+    expect(diff.packages[0]?.skills[0]).toMatchObject({
+      status: 'added',
+      skill_md_patch: expect.stringContaining('+# Added'),
+    })
   })
 
   test('truncates only between complete Skill blocks', () => {
