@@ -102,7 +102,7 @@ describe('Registry release review', () => {
             artifact_after: 'c'.repeat(64),
             metadata: [],
             files: [{ path: 'SKILL.md', status: 'added' }],
-            skill_md_patch: '+new\n',
+            text_patches: [{ path: 'SKILL.md', patch: '+new\n' }],
           }],
         },
         {
@@ -115,7 +115,7 @@ describe('Registry release review', () => {
             artifact_after: 'e'.repeat(64),
             metadata: ['description'],
             files: [{ path: 'SKILL.md', status: 'changed' }],
-            skill_md_patch: '-old\n+new\n',
+            text_patches: [{ path: 'SKILL.md', patch: '-old\n+new\n' }],
           }],
         },
         {
@@ -127,7 +127,7 @@ describe('Registry release review', () => {
             artifact_before: 'f'.repeat(64),
             metadata: [],
             files: [{ path: 'SKILL.md', status: 'removed' }],
-            skill_md_patch: '-old\n',
+            text_patches: [{ path: 'SKILL.md', patch: '-old\n' }],
           }],
         },
       ],
@@ -245,8 +245,30 @@ Merging this PR approves the pinned source and release.lock.json. R2 publication
 
     expect(diff.packages[0]?.skills[0]).toMatchObject({
       status: 'added',
-      skill_md_patch: expect.stringContaining('+# Added'),
+      text_patches: [{
+        path: 'SKILL.md',
+        patch: expect.stringContaining('+# Added'),
+      }],
     })
+  })
+
+  test('includes bounded UTF-8 diffs for changed files beyond SKILL.md', () => {
+    const previous = candidate('1'.repeat(40), 'a'.repeat(64), 'Same', '# Same\n')
+    const next = candidate('2'.repeat(40), 'a'.repeat(64), 'Same', '# Same\n')
+    previous.review.get('tools/demo')!.files['scripts/run.sh'] = {
+      digest: 'c'.repeat(64), size: 18, mode: 0o755, text: '#!/bin/sh\necho old\n',
+    }
+    next.review.get('tools/demo')!.files['scripts/run.sh'] = {
+      digest: 'd'.repeat(64), size: 18, mode: 0o755, text: '#!/bin/sh\necho new\n',
+    }
+
+    const report = renderRegistryReleaseDiff(diffRegistryCandidates(previous, next))
+
+    expect(report).toContain('--- scripts/run.sh (approved)')
+    expect(report).toContain('+++ scripts/run.sh (candidate)')
+    expect(report).toContain('-echo old')
+    expect(report).toContain('+echo new')
+    expect(report).toContain(`\` ${'c'.repeat(64)} \` (18 B, 0755) → \` ${'d'.repeat(64)} \` (18 B, 0755)`)
   })
 
   test('truncates only between complete Skill blocks', () => {
@@ -264,7 +286,10 @@ Merging this PR approves the pinned source and release.lock.json. R2 publication
           status: 'changed',
           metadata: [],
           files: [],
-          skill_md_patch: `-${'a'.repeat(7_900)}\n+${'b'.repeat(7_900)}`,
+          text_patches: [{
+            path: 'SKILL.md',
+            patch: `-${'a'.repeat(7_900)}\n+${'b'.repeat(7_900)}`,
+          }],
         })),
       }],
       summary: {

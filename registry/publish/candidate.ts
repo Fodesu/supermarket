@@ -17,7 +17,7 @@ import {
 } from '../snapshot'
 import { compareCanonicalText } from '#lib/order'
 
-const maxReviewTextBytes = 128 * 1024
+const maxReviewTextBytes = 64 * 1024
 
 export interface CandidateFile {
   digest: string
@@ -60,8 +60,8 @@ export type SkillRegistryBuildProgress =
   | { type: 'source_ready'; registry: string; revision: string }
   | { type: 'scanned'; registry: string; skills: number; diagnostics: number }
 
-function reviewText(name: string, bytes: Uint8Array) {
-  if (name !== 'SKILL.md' || bytes.length > maxReviewTextBytes) return undefined
+function reviewText(bytes: Uint8Array) {
+  if (bytes.length > maxReviewTextBytes) return undefined
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
   } catch {
@@ -144,7 +144,7 @@ export async function buildSkillRegistryCandidate(
           digest: await sha256(file.bytes),
           size: file.bytes.length,
           mode: file.mode,
-          text: reviewText(name, file.bytes),
+          text: reviewText(file.bytes),
         }])))
       review.set(`${candidate.package_id}/${candidate.skill_id}`, {
         package_id: candidate.package_id,
