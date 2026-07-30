@@ -1,6 +1,7 @@
 import type {
   CatalogSkill,
   SkillArtifactDescriptor,
+  SkillRegistryState,
   SkillRegistrySnapshot,
   SkillRegistrySummary,
 } from '#registry/types'
@@ -108,8 +109,12 @@ async function getSkillRegistrySummary(
   registryID: string,
 ): Promise<SkillRegistrySummary | null> {
   const state = await store.getState(registryID)
-  if (!state) return null
+  return state ? publicRegistrySummary(state) : null
+}
+
+function publicRegistrySummary(state: SkillRegistryState): SkillRegistrySummary | null {
   const registry = state.definition
+  if (!registry.enabled) return null
   const current = state.current_summary
   return {
     id: registry.id, name: registry.name, enabled: registry.enabled, priority: registry.priority,
@@ -122,11 +127,14 @@ async function getSkillRegistrySummary(
 }
 
 export async function getSkillRegistryDetails(event: RuntimeEvent, registryID: string) {
-  const store = await getRuntimeSkillRegistryStore(event)
-  const summary = await getSkillRegistrySummary(store, registryID)
-  if (!summary) return undefined
+  return getSkillRegistryDetailsForStore(await getRuntimeSkillRegistryStore(event), registryID)
+}
+
+export async function getSkillRegistryDetailsForStore(store: SkillRegistryStore, registryID: string) {
   const state = await store.getState(registryID)
   if (!state) return undefined
+  const summary = publicRegistrySummary(state)
+  if (!summary) return undefined
   const snapshot = state.current_snapshot ? await cachedSnapshot(store, registryID, state.current_snapshot) : null
   return { ...summary, definition: state.definition, source_revision: snapshot?.source.revision, diagnostics: snapshot?.diagnostics ?? [] }
 }
