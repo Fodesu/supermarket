@@ -10,7 +10,7 @@ describe('Registry definition repository', () => {
     try {
       await mkdir(path.join(root, 'registries/valid'), { recursive: true })
       await mkdir(path.join(root, 'registries/broken'), { recursive: true })
-      await writeFile(path.join(root, 'registries/valid/registry.yaml'), `schema_version: "1"\nid: valid\nname: Valid\nadapter:\n  type: skill_directory\nsource:\n  type: local\n  path: skills\nrefresh_interval: 12h\nretention:\n  snapshots: 30\n`)
+      await writeFile(path.join(root, 'registries/valid/registry.yaml'), `schema_version: "1"\nid: valid\nname: Valid\nadapter:\n  type: skill_directory\nsource:\n  type: local\n  path: skills\n`)
       await writeFile(path.join(root, 'registries/broken/registry.yaml'), 'schema_version: [')
       const result = await loadSkillRegistryDefinitionResults(root)
       expect(result.definitions.map((item) => item.id)).toEqual(['valid'])

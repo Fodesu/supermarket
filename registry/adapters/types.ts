@@ -36,7 +36,4 @@ export interface SkillAdapterInput {
   definition: SkillRegistryDefinition
   sourceRoot: string
   ensurePaths: (paths: string[]) => Promise<void>
-  packageFilter?: string
-  skillFilter?: string
-  allowMissingScope: boolean
 }

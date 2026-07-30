@@ -43,8 +43,7 @@ describe('Skill Registry Git sources', () => {
     const definition: SkillRegistryDefinition = {
       schema_version: '1', id: 'example', name: 'Example', enabled: true, priority: 10,
       adapter: { type: 'codex_marketplace_skills', catalog_path: 'marketplace.json' },
-      source: { type: 'git', url: repository, ref: 'main' }, refresh_interval_seconds: 43_200,
-      retention: { snapshots: 30 },
+      source: { type: 'git', url: repository, revision: await revParseHead(repository) },
     }
     const source = await materializeSkillRegistrySource(definition, projectRoot)
     try {
@@ -81,8 +80,6 @@ describe('Skill Registry local sources', () => {
       schema_version: '1', id: 'example', name: 'Example', enabled: true, priority: 10,
       adapter: { type: 'skill_directory' },
       source: { type: 'local', path: 'skills' },
-      refresh_interval_seconds: 43_200,
-      retention: { snapshots: 30 },
     }
 
     const source = await materializeSkillRegistrySource(definition, projectRoot)

@@ -2,12 +2,13 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import type { SkillRegistryCatalog, SkillRegistryDefinition } from '#registry/types'
+import type { SkillRegistryDefinition, SkillRegistrySnapshot } from '#registry/types'
 import { LocalSkillRegistryStore } from '#registry/storage/local'
-import { summarizeCurrentCatalog } from '#registry/catalog'
+import { summarizeCurrentSnapshot } from '#registry/catalog'
 import type { SkillRegistryStore } from '#registry/storage/contracts'
+import { registrySnapshotRevision, serializeRegistrySnapshot } from '#registry/snapshot'
 import {
-  getEnabledSkillRegistryCatalogs,
+  getEnabledSkillRegistrySnapshots,
   getRuntimeSkillRegistryStore,
   getSkillRegistrySummariesForStore,
 } from './skill-registry'
@@ -17,8 +18,28 @@ afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recur
 
 const definition: SkillRegistryDefinition = {
   schema_version: '1', id: 'example', name: 'Example', enabled: true, priority: 10,
-  adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
-  retention: { snapshots: 30 },
+  adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' },
+}
+
+function snapshot(registryID = 'example', sourceRevision = 'source'): SkillRegistrySnapshot {
+  return {
+    schema_version: '1',
+    registry_id: registryID,
+    registry_priority: 10,
+    source: { type: 'local', revision: sourceRevision },
+    skills: [],
+    diagnostics: [],
+  }
+}
+
+function snapshotState(
+  value: SkillRegistrySnapshot,
+) {
+  const revision = registrySnapshotRevision(serializeRegistrySnapshot(value))
+  return {
+    revision,
+    summary: summarizeCurrentSnapshot(value, revision, '2026-01-01T00:00:00.000Z'),
+  }
 }
 
 describe('Skill Registry loader', () => {
@@ -27,35 +48,29 @@ describe('Skill Registry loader', () => {
       .rejects.toThrow('SKILL_REGISTRY_BUCKET')
   })
 
-  test('stops serving a previous Catalog when its Registry is disabled', async () => {
+  test('stops serving a previous Snapshot when its Registry is disabled', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'skill-registry-loader-'))
     roots.push(root)
     const store = new LocalSkillRegistryStore(root)
-    const revision = 'a'.repeat(64)
-    const catalog: SkillRegistryCatalog = {
-      schema_version: '1', registry: definition, revision,
-      source_revision: revision, synced_at: '2026-01-01T00:00:00.000Z', skills: [], diagnostics: [],
-    }
-    await store.publishSnapshot(catalog, {
-      schema_version: '1', definition, current_snapshot: revision, current_summary: summarizeCurrentCatalog(catalog),
-      status: { state: 'ready' },
+    const approved = snapshot()
+    const revision = await store.publishSnapshot(serializeRegistrySnapshot(approved), definition, {
+      publishedAt: '2026-01-01T00:00:00.000Z',
     })
-    expect(await getEnabledSkillRegistryCatalogs(store)).toEqual([catalog])
+    expect(await getEnabledSkillRegistrySnapshots(store)).toEqual([approved])
 
     await store.putState({
-      schema_version: '1', definition: { ...definition, enabled: false }, current_snapshot: revision, current_summary: summarizeCurrentCatalog(catalog),
-      status: { state: 'disabled' },
+      schema_version: '1',
+      definition: { ...definition, enabled: false },
+      current_snapshot: revision,
+      current_summary: summarizeCurrentSnapshot(approved, revision, '2026-01-01T00:00:00.000Z'),
     })
-    expect(await getEnabledSkillRegistryCatalogs(store)).toEqual([])
-    expect(await getEnabledSkillRegistryCatalogs(store, definition.id)).toEqual([])
+    expect(await getEnabledSkillRegistrySnapshots(store)).toEqual([])
+    expect(await getEnabledSkillRegistrySnapshots(store, definition.id)).toEqual([])
   })
 
   test('reuses immutable Snapshots while still reading mutable state', async () => {
-    const revision = 'b'.repeat(64)
-    const catalog: SkillRegistryCatalog = {
-      schema_version: '1', registry: definition, revision,
-      source_revision: revision, synced_at: '2026-01-01T00:00:00.000Z', skills: [], diagnostics: [],
-    }
+    const approved = snapshot('example', 'source')
+    const { revision, summary } = snapshotState(approved)
     let stateReads = 0
     let snapshotReads = 0
     const store = {
@@ -66,41 +81,38 @@ describe('Skill Registry loader', () => {
           schema_version: '1' as const,
           definition,
           current_snapshot: revision,
-          current_summary: summarizeCurrentCatalog(catalog),
-          status: { state: 'ready' as const },
+          current_summary: summary,
         }
       },
       async getSnapshot() {
         snapshotReads++
-        return catalog
+        return approved
       },
     } as unknown as SkillRegistryStore
 
-    await getEnabledSkillRegistryCatalogs(store)
-    await getEnabledSkillRegistryCatalogs(store)
+    await getEnabledSkillRegistrySnapshots(store)
+    await getEnabledSkillRegistrySnapshots(store)
     expect(stateReads).toBe(2)
     expect(snapshotReads).toBe(1)
   })
 
   test('loads Registry summaries from state without reading Snapshots', async () => {
     const second = { ...definition, id: 'second', name: 'Second' }
-    const firstCatalog: SkillRegistryCatalog = {
-      schema_version: '1', registry: definition, revision: 'c'.repeat(64),
-      source_revision: 'first', synced_at: '2026-01-01T00:00:00.000Z', skills: [], diagnostics: [],
-    }
-    const secondCatalog: SkillRegistryCatalog = {
-      ...firstCatalog, registry: second, revision: 'd'.repeat(64), source_revision: 'second',
-    }
+    const firstSnapshot = snapshot('example', 'first')
+    const secondSnapshot = snapshot('second', 'second')
+    const first = snapshotState(firstSnapshot)
+    const secondState = snapshotState(secondSnapshot)
     const store = {
       async listRegistryIDs() { return ['example', 'second'] },
       async getState(id: string) {
-        const current = id === 'example' ? firstCatalog : secondCatalog
+        const current = id === 'example'
+          ? { definition, ...first }
+          : { definition: second, ...secondState }
         return {
           schema_version: '1' as const,
-          definition: current.registry,
+          definition: current.definition,
           current_snapshot: current.revision,
-          current_summary: summarizeCurrentCatalog(current),
-          status: { state: 'ready' as const },
+          current_summary: current.summary,
         }
       },
       async getSnapshot() {
@@ -109,8 +121,8 @@ describe('Skill Registry loader', () => {
     } as unknown as SkillRegistryStore
 
     await expect(getSkillRegistrySummariesForStore(store)).resolves.toMatchObject([
-      { id: 'example', revision: firstCatalog.revision, skill_count: 0 },
-      { id: 'second', revision: secondCatalog.revision, skill_count: 0 },
+      { id: 'example', revision: first.revision, skill_count: 0 },
+      { id: 'second', revision: secondState.revision, skill_count: 0 },
     ])
   })
 })

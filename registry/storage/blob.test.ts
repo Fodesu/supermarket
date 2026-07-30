@@ -3,60 +3,67 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../types'
-import type { SkillArtifactDescriptor, SkillImageAsset, SkillRegistryCatalog, SkillRegistryDefinition } from '../types'
+import type { SkillArtifactDescriptor, SkillImageAsset, SkillRegistryDefinition, SkillRegistrySnapshot } from '../types'
 import { LocalSkillRegistryStore } from './local'
 import { R2BlobBackend } from './r2'
 import { sha256 } from '../digest'
-import { summarizeCurrentCatalog } from '../catalog'
 import {
   BlobSkillRegistryStore,
   MAX_REGISTRY_STATE_BYTES,
 } from './blob'
-import { validateStoredCatalog } from './validation'
-import { IndeterminateRemoteMutationError, type BlobBackend } from './contracts'
+import { validateStoredSnapshot } from './validation'
+import type { BlobBackend } from './contracts'
+import { summarizeCurrentSnapshot } from '../catalog'
+import { registrySnapshotRevision, serializeRegistrySnapshot } from '../snapshot'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
 
 const definition: SkillRegistryDefinition = {
   schema_version: '1', id: 'example', name: 'Example', enabled: true, priority: 10,
-  adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
-  retention: { snapshots: 30 },
+  adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' },
 }
 
-function catalog(revision: string): SkillRegistryCatalog {
+function snapshot(
+  sourceRevision = 'source',
+): SkillRegistrySnapshot {
   return {
-    schema_version: '1', registry: definition, revision,
-    source_revision: revision, synced_at: '2026-01-01T00:00:00.000Z', skills: [], diagnostics: [],
+    schema_version: '1',
+    registry_id: definition.id,
+    registry_priority: definition.priority,
+    source: { type: 'local', revision: sourceRevision },
+    skills: [],
+    diagnostics: [],
   }
 }
 
 async function exerciseStore(store: LocalSkillRegistryStore | BlobSkillRegistryStore) {
-  const revision = 'a'.repeat(64)
-  const readyState = {
-    schema_version: '1' as const, definition, current_snapshot: revision, current_summary: summarizeCurrentCatalog(catalog(revision)),
-    status: { state: 'ready' as const },
-  }
-  await store.publishSnapshot(catalog(revision), readyState)
-  await expect(store.publishSnapshot({ ...catalog(revision), synced_at: '2026-01-02T00:00:00.000Z' }, readyState)).resolves.toBeUndefined()
+  const firstSnapshot = snapshot()
+  const bytes = serializeRegistrySnapshot(firstSnapshot)
+  const revision = await store.publishSnapshot(bytes, definition, {
+    publishedAt: '2026-01-01T00:00:00.000Z',
+  })
+  await expect(store.publishSnapshot(bytes, definition, {
+    publishedAt: '2026-01-02T00:00:00.000Z',
+  })).resolves.toBe(revision)
   expect((await store.getState('example'))?.definition.name).toBe('Example')
-  expect((await store.getSnapshot('example', revision))?.revision).toBe(revision)
+  expect(await store.getSnapshot('example', revision)).toEqual(firstSnapshot)
   expect(await store.listRegistryIDs()).toEqual(['example'])
 
-  const bytes = new TextEncoder().encode('artifact')
-  const digest = await sha256(bytes)
+  const artifactBytes = new TextEncoder().encode('artifact')
+  const digest = await sha256(artifactBytes)
   const descriptor: SkillArtifactDescriptor = {
-    format: 'memoh_skill_v1', digest, size: bytes.length, content_type: 'application/gzip',
+    format: 'memoh_skill_v1', digest, size: artifactBytes.length, content_type: 'application/gzip',
   }
-  await store.putArtifact(descriptor, bytes)
+  await store.putArtifact(descriptor, artifactBytes)
   const artifact = await store.getArtifact(digest)
-  expect(artifact?.bytes).toEqual(bytes)
+  expect(artifact?.bytes).toEqual(artifactBytes)
   expect(artifact?.descriptor).toEqual({
-    format: 'memoh_skill_v1', digest, size: bytes.length, content_type: 'application/gzip',
+    format: 'memoh_skill_v1', digest, size: artifactBytes.length, content_type: 'application/gzip',
   })
-  await expect(store.putArtifact(descriptor, bytes)).resolves.toEqual({ stored: false })
-  await expect(store.putArtifact({ ...descriptor, size: bytes.length + 1 }, bytes)).rejects.toThrow('size')
-  await expect(store.putArtifact({ ...descriptor, size: MAX_SKILL_ARTIFACT_COMPRESSED_BYTES + 1 }, bytes))
+  await expect(store.putArtifact(descriptor, artifactBytes)).resolves.toEqual({ stored: false })
+  await expect(store.putArtifact({ ...descriptor, size: artifactBytes.length + 1 }, artifactBytes)).rejects.toThrow('size')
+  await expect(store.putArtifact({ ...descriptor, size: MAX_SKILL_ARTIFACT_COMPRESSED_BYTES + 1 }, artifactBytes))
     .rejects.toThrow('compressed size limit')
   const imageBytes = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"/>')
   const image: SkillImageAsset = {
@@ -70,17 +77,21 @@ async function exerciseStore(store: LocalSkillRegistryStore | BlobSkillRegistryS
 function memoryBackend() {
   const objects = new Map<string, Uint8Array>()
   const gets = new Map<string, number>()
-  const behavior = { failPuts: 0, landDespiteError: false }
+  const behavior: {
+    failPuts: number
+    landDespiteError: boolean
+    failKey?: string
+  } = { failPuts: 0, landDespiteError: false }
   const backend: BlobBackend = {
     async get(key) {
       gets.set(key, (gets.get(key) ?? 0) + 1)
       return objects.get(key)?.slice() ?? null
     },
     async put(key, value) {
-      if (behavior.failPuts > 0) {
+      if (behavior.failPuts > 0 && (!behavior.failKey || behavior.failKey === key)) {
         behavior.failPuts--
         if (behavior.landDespiteError) objects.set(key, value.slice())
-        throw new IndeterminateRemoteMutationError(`S3 PUT outcome is unknown: ${key}`)
+        throw new Error(`S3 PUT outcome is unknown: ${key}`)
       }
       objects.set(key, value.slice())
     },
@@ -99,38 +110,63 @@ function memoryBackend() {
 }
 
 describe('Immutable digest-addressed uploads', () => {
-  test('rejects Catalog install identities that disagree with Skill coordinates', () => {
-    const revision = 'a'.repeat(64)
-    const stored = catalog(revision)
+  test('rejects Snapshot Skills with invalid Artifact metadata', () => {
+    const stored = snapshot()
     stored.skills.push({
-      schema_version: '1',
-      registry_id: 'example',
-      registry_priority: 10,
       package_id: 'package',
       skill_id: 'skill',
-      install_id: '../escaped',
       name: 'Skill',
       description: '',
-      author: { name: '', email: '' },
+      author: { name: '' },
       tags: [],
       category: 'other',
       category_name: 'Other',
       runtime_requirements: { os: ['linux'] },
-      source: { type: 'local', revision: 'source', path: 'skill' },
+      source_path: 'skill',
       files: ['SKILL.md'],
       artifact: {
-        format: 'memoh_skill_v1',
         digest: 'b'.repeat(64),
-        size: 1,
-        content_type: 'application/gzip',
+        size: -1,
       },
     })
-    expect(() => validateStoredCatalog(
+    expect(() => validateStoredSnapshot(
       stored,
       'example',
-      revision,
+      'registries/example/snapshot.json',
+    )).toThrow('Snapshot Artifact reference')
+  })
+
+  test('rejects stored Snapshot bytes that do not match their revision', async () => {
+    const { backend, objects } = memoryBackend()
+    const store = new BlobSkillRegistryStore(backend)
+    const bytes = serializeRegistrySnapshot(snapshot())
+    const revision = registrySnapshotRevision(bytes)
+    objects.set(
       `skill-registries/example/snapshots/${revision}.json`,
-    )).toThrow('Catalog Artifact reference')
+      serializeRegistrySnapshot(snapshot('tampered')),
+    )
+    await expect(store.getSnapshot('example', revision)).rejects.toThrow('does not match its revision')
+  })
+
+  test('recovers when a Snapshot lands before its state pointer', async () => {
+    const { backend, behavior } = memoryBackend()
+    const store = new BlobSkillRegistryStore(backend)
+    const firstAttempt = serializeRegistrySnapshot(snapshot('source'))
+
+    behavior.failPuts = 1
+    behavior.failKey = 'skill-registries/example/state.json'
+    await expect(store.publishSnapshot(firstAttempt, definition, {
+      publishedAt: '2026-01-01T00:00:00.000Z',
+    })).rejects.toThrow('state.json')
+
+    const revision = registrySnapshotRevision(firstAttempt)
+    await expect(store.publishSnapshot(firstAttempt, definition, {
+      publishedAt: '2026-01-02T00:00:00.000Z',
+    })).resolves.toBe(revision)
+
+    const state = await store.getState('example')
+    expect(state?.current_snapshot).toBe(revision)
+    expect(state?.current_summary?.published_at).toBe('2026-01-02T00:00:00.000Z')
   })
 
   test('settles unknown outcomes, retries transient failures, and skips stored archives', async () => {
@@ -164,8 +200,7 @@ describe('Immutable digest-addressed uploads', () => {
     await expect(store.putArtifact(secondDescriptor, secondBytes)).resolves.toEqual({ stored: true })
 
     // A failure that never lands surfaces a PLAIN error after retries: a late
-    // duplicate PUT of identical bytes is harmless, so the writer run must
-    // not be poisoned by Artifact or image uploads.
+    // duplicate PUT of identical bytes is harmless, so publication can retry.
     const imageBytes = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><title>retry</title></svg>')
     const image: SkillImageAsset = {
       digest: await sha256(imageBytes), size: imageBytes.length, content_type: 'image/svg+xml',
@@ -173,7 +208,6 @@ describe('Immutable digest-addressed uploads', () => {
     behavior.failPuts = Number.POSITIVE_INFINITY
     const failure = await store.putImage(image, imageBytes).catch((error) => error)
     expect(failure).toBeInstanceOf(Error)
-    expect(failure).not.toBeInstanceOf(IndeterminateRemoteMutationError)
     expect(String(failure)).toContain('upload did not complete')
 
     // Once the network recovers, the same upload succeeds cleanly.
@@ -188,6 +222,112 @@ describe('Immutable digest-addressed uploads', () => {
   }, 15_000)
 })
 
+function mockR2Bucket() {
+  const objects = new Map<string, Uint8Array>()
+  const versions = new Map<string, string>()
+  let version = 0
+  return {
+    objects,
+    versions,
+    async get(key: string) {
+      const value = objects.get(key)
+      return value ? { arrayBuffer: async () => value.slice().buffer, etag: versions.get(key)! } : null
+    },
+    async put(key: string, value: Uint8Array, options?: { onlyIf?: { etagMatches?: string; etagDoesNotMatch?: string } }) {
+      const current = versions.get(key)
+      if (options?.onlyIf?.etagDoesNotMatch === '*' && current) return null
+      if (options?.onlyIf?.etagMatches != null && options.onlyIf.etagMatches !== current) return null
+      const etag = `version-${++version}`
+      objects.set(key, value.slice())
+      versions.set(key, etag)
+      return { etag }
+    },
+    async delete(key: string) {
+      objects.delete(key)
+      versions.delete(key)
+    },
+    async list({ prefix = '', cursor, delimiter }: { prefix?: string; cursor?: string; delimiter?: string } = {}) {
+      const keys = [...objects.keys()].filter((key) => key.startsWith(prefix)).sort()
+      if (delimiter) {
+        const delimitedPrefixes = [...new Set(keys.flatMap((key) => {
+          const remainder = key.slice(prefix.length)
+          const separator = remainder.indexOf(delimiter)
+          return separator >= 0 ? [`${prefix}${remainder.slice(0, separator + 1)}`] : []
+        }))]
+        return { objects: [], delimitedPrefixes, truncated: false, cursor: undefined }
+      }
+      const offset = cursor ? Number(cursor) : 0
+      const page = keys.slice(offset, offset + 1)
+      return { objects: page.map((key) => ({ key })), truncated: offset + page.length < keys.length, cursor: String(offset + page.length) }
+    },
+  }
+}
+
+describe('Registry state compare-and-swap', () => {
+  test('rejects a stale putState write instead of clobbering a concurrent publish', async () => {
+    const store = new BlobSkillRegistryStore(new R2BlobBackend(mockR2Bucket()))
+    const first = snapshot('source')
+    const firstBytes = serializeRegistrySnapshot(first)
+    const firstRevision = await store.publishSnapshot(firstBytes, definition, {
+      publishedAt: '2026-01-01T00:00:00.000Z',
+    })
+
+    const { state: readBeforeRace, version: staleVersion } = await store.getStateWithVersion('example')
+    expect(readBeforeRace?.current_snapshot).toBe(firstRevision)
+    expect(staleVersion).not.toBeNull()
+
+    // A second publish run wins the race and moves the pointer forward.
+    const second = snapshot('source-two')
+    const secondBytes = serializeRegistrySnapshot(second)
+    const secondRevision = await store.publishSnapshot(secondBytes, definition, {
+      publishedAt: '2026-01-02T00:00:00.000Z',
+    })
+    const { version: currentVersion } = await store.getStateWithVersion('example')
+    expect(currentVersion).not.toBe(staleVersion)
+
+    // A late write from the first run, still holding the stale version, must
+    // not be allowed to overwrite the second run's newer pointer.
+    await expect(store.putState({
+      schema_version: '1',
+      definition,
+      current_snapshot: firstRevision,
+      current_summary: summarizeCurrentSnapshot(
+        first,
+        firstRevision,
+        '2026-01-01T00:00:00.000Z',
+      ),
+    }, staleVersion)).rejects.toThrow('changed concurrently')
+
+    const final = await store.getState('example')
+    expect(final?.current_snapshot).toBe(secondRevision)
+  })
+
+  test('publishSnapshot forwards its expected version and rejects a stale race', async () => {
+    const store = new BlobSkillRegistryStore(new R2BlobBackend(mockR2Bucket()))
+    const first = serializeRegistrySnapshot(snapshot('source'))
+    await store.publishSnapshot(first, definition)
+    const { version: staleVersion } = await store.getStateWithVersion('example')
+
+    const concurrent = serializeRegistrySnapshot(snapshot('source-two'))
+    const concurrentRevision = await store.publishSnapshot(concurrent, definition)
+
+    const stale = serializeRegistrySnapshot(snapshot('source-three'))
+    await expect(store.publishSnapshot(stale, definition, {
+      expectedVersion: staleVersion,
+    })).rejects.toThrow('changed concurrently')
+    expect((await store.getState('example'))?.current_snapshot).toBe(concurrentRevision)
+  })
+
+  test('Local backend has no version tracking, so putState always writes through', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'skill-registry-cas-'))
+    roots.push(root)
+    const store = new LocalSkillRegistryStore(root)
+    await store.publishSnapshot(serializeRegistrySnapshot(snapshot()), definition)
+    const { version } = await store.getStateWithVersion('example')
+    expect(version).toBeNull()
+  })
+})
+
 describe('SkillRegistryStore contract', () => {
   test('Local store publishes snapshots before state and stores content-addressed artifacts', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'skill-registry-store-'))
@@ -195,56 +335,23 @@ describe('SkillRegistryStore contract', () => {
     const store = new LocalSkillRegistryStore(root)
     const digest = await exerciseStore(store)
     const state = JSON.parse(await readFile(path.join(root, 'skill-registries/example/state.json'), 'utf8'))
-    expect(state.current_snapshot).toBe('a'.repeat(64))
-    expect(state.current_summary).toMatchObject({ revision: 'a'.repeat(64), skill_count: 0 })
+    const revision = registrySnapshotRevision(serializeRegistrySnapshot(snapshot()))
+    expect(state.current_snapshot).toBe(revision)
+    expect(state.current_summary).toMatchObject({ revision, skill_count: 0 })
     await Bun.write(path.join(root, 'skill-registries/example/state.json'), JSON.stringify({ ...state, current_snapshot: '../invalid' }))
     await expect(store.getState('example')).rejects.toThrow('digest')
     await Bun.write(path.join(root, 'skill-registries/example/state.json'), JSON.stringify(state))
     await expect(store.putState({
       ...state,
-      status: { ...state.status, last_error: 'x'.repeat(MAX_REGISTRY_STATE_BYTES) },
+      definition: { ...state.definition, name: 'x'.repeat(MAX_REGISTRY_STATE_BYTES) },
     })).rejects.toThrow('state exceeds')
     await Bun.write(path.join(root, `skill-artifacts/${digest}.tar.gz`), 'corrupt')
     await expect(store.getArtifact(digest)).rejects.toThrow('corrupt')
   })
 
   test('R2 backend handles paginated object listings', async () => {
-    const objects = new Map<string, Uint8Array>()
-    const versions = new Map<string, string>()
-    let version = 0
-    const bucket = {
-      async get(key: string) {
-        const value = objects.get(key)
-        return value ? { arrayBuffer: async () => value.slice().buffer, etag: versions.get(key)! } : null
-      },
-      async put(key: string, value: Uint8Array, options?: { onlyIf?: { etagMatches?: string; etagDoesNotMatch?: string } }) {
-        const current = versions.get(key)
-        if (options?.onlyIf?.etagDoesNotMatch === '*' && current) return null
-        if (options?.onlyIf?.etagMatches != null && options.onlyIf.etagMatches !== current) return null
-        const etag = `version-${++version}`
-        objects.set(key, value.slice())
-        versions.set(key, etag)
-        return { etag }
-      },
-      async delete(key: string) {
-        objects.delete(key)
-        versions.delete(key)
-      },
-      async list({ prefix = '', cursor, delimiter }: { prefix?: string; cursor?: string; delimiter?: string } = {}) {
-        const keys = [...objects.keys()].filter((key) => key.startsWith(prefix)).sort()
-        if (delimiter) {
-          const delimitedPrefixes = [...new Set(keys.flatMap((key) => {
-            const remainder = key.slice(prefix.length)
-            const separator = remainder.indexOf(delimiter)
-            return separator >= 0 ? [`${prefix}${remainder.slice(0, separator + 1)}`] : []
-          }))]
-          return { objects: [], delimitedPrefixes, truncated: false, cursor: undefined }
-        }
-        const offset = cursor ? Number(cursor) : 0
-        const page = keys.slice(offset, offset + 1)
-        return { objects: page.map((key) => ({ key })), truncated: offset + page.length < keys.length, cursor: String(offset + page.length) }
-      },
-    }
+    const bucket = mockR2Bucket()
+    const { objects } = bucket
     const store = new BlobSkillRegistryStore(new R2BlobBackend(bucket))
     const digest = await exerciseStore(store)
     const streamed = await store.getArtifactStream(digest)

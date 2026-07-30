@@ -1,11 +1,12 @@
 import type {
   CatalogSkill,
   SkillArtifactDescriptor,
-  SkillRegistryCatalog,
+  SkillRegistrySnapshot,
   SkillRegistrySummary,
 } from '#registry/types'
 import type { SkillCatalogSearchOptions } from '#registry/catalog'
 import { searchCatalogSkills, summarizeSkillCategories } from '#registry/catalog'
+import { catalogSkillsFromSnapshot } from '#registry/snapshot'
 import { R2BlobBackend } from '#registry/storage/r2'
 import { BlobSkillRegistryStore } from '#registry/storage/blob'
 import type { SkillRegistryStore } from '#registry/storage/contracts'
@@ -51,21 +52,21 @@ export async function getRuntimeSkillRegistryStore(event?: RuntimeEvent): Promis
   return localStore
 }
 
-export async function getEnabledSkillRegistryCatalogs(
+export async function getEnabledSkillRegistrySnapshots(
   store: SkillRegistryStore,
   registryID?: string,
-): Promise<SkillRegistryCatalog[]> {
+): Promise<SkillRegistrySnapshot[]> {
   const ids = registryID ? [registryID] : await store.listRegistryIDs()
-  const values: SkillRegistryCatalog[] = []
   const cache = snapshotCache(store)
-  for (const id of ids) {
+  const snapshots = await Promise.all(ids.map(async (id) => {
     const state = await store.getState(id)
-    if (!state?.definition.enabled || !state.current_snapshot) continue
-    const catalog = await cachedSnapshot(store, id, state.current_snapshot)
-    if (!catalog) throw new Error(`Current Registry snapshot is missing: ${id}/${state.current_snapshot}`)
-    values.push(catalog)
-    cache.assertRequestBudget(values)
-  }
+    if (!state?.definition.enabled || !state.current_snapshot) return null
+    const snapshot = await cachedSnapshot(store, id, state.current_snapshot)
+    if (!snapshot) throw new Error(`Current Registry snapshot is missing: ${id}/${state.current_snapshot}`)
+    return snapshot
+  }))
+  const values = snapshots.filter((snapshot): snapshot is SkillRegistrySnapshot => snapshot !== null)
+  cache.assertRequestBudget(values)
   return values
 }
 
@@ -80,14 +81,15 @@ export function publicCatalogSkill(skill: CatalogSkill) {
 
 export async function getCatalogSkills(event: RuntimeEvent, options: SkillCatalogSearchOptions = {}) {
   const store = await getRuntimeSkillRegistryStore(event)
-  const skills = (await getEnabledSkillRegistryCatalogs(store, options.registry)).flatMap((catalog) => catalog.skills)
+  const skills = (await getEnabledSkillRegistrySnapshots(store, options.registry)).flatMap(catalogSkillsFromSnapshot)
   const result = searchCatalogSkills(skills, options)
   return { ...result, data: result.data.map(publicCatalogSkill) }
 }
 
 export async function getCatalogSkill(event: RuntimeEvent, registryID: string, packageID: string, skillID: string) {
-  const [catalog] = await getEnabledSkillRegistryCatalogs(await getRuntimeSkillRegistryStore(event), registryID)
-  return catalog?.skills.find((skill) => skill.package_id === packageID && skill.skill_id === skillID)
+  const [snapshot] = await getEnabledSkillRegistrySnapshots(await getRuntimeSkillRegistryStore(event), registryID)
+  return snapshot && catalogSkillsFromSnapshot(snapshot)
+    .find((skill) => skill.package_id === packageID && skill.skill_id === skillID)
 }
 
 export async function getSkillRegistrySummaries(event: RuntimeEvent): Promise<SkillRegistrySummary[]> {
@@ -96,11 +98,8 @@ export async function getSkillRegistrySummaries(event: RuntimeEvent): Promise<Sk
 
 export async function getSkillRegistrySummariesForStore(store: SkillRegistryStore): Promise<SkillRegistrySummary[]> {
   const ids = await store.listRegistryIDs()
-  const summaries: SkillRegistrySummary[] = []
-  for (const id of ids) {
-    const summary = await getSkillRegistrySummary(store, id)
-    if (summary) summaries.push(summary)
-  }
+  const values = await Promise.all(ids.map((id) => getSkillRegistrySummary(store, id)))
+  const summaries = values.filter((summary): summary is SkillRegistrySummary => summary !== null)
   return summaries.sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id))
 }
 
@@ -111,21 +110,14 @@ async function getSkillRegistrySummary(
   const state = await store.getState(registryID)
   if (!state) return null
   const registry = state.definition
-  const status = state.status
   const current = state.current_summary
-  const lastSuccess = status?.last_success_at ? Date.parse(status.last_success_at) : Number.NaN
-  const nextRefreshAt = Number.isFinite(lastSuccess)
-    ? new Date(lastSuccess + registry.refresh_interval_seconds * 1000).toISOString()
-    : undefined
   return {
     id: registry.id, name: registry.name, enabled: registry.enabled, priority: registry.priority,
-    adapter: registry.adapter.type, revision: current?.revision, synced_at: current?.synced_at,
+    adapter: registry.adapter.type, revision: current?.revision, published_at: current?.published_at,
     skill_count: current?.skill_count ?? 0,
     package_count: current?.package_count ?? 0,
     category_count: current?.category_count ?? 0,
     skipped_package_count: current?.skipped_package_count ?? 0,
-    refresh_interval_seconds: registry.refresh_interval_seconds, next_refresh_at: nextRefreshAt,
-    status: status.state, last_error: status.last_error,
   }
 }
 
@@ -135,19 +127,19 @@ export async function getSkillRegistryDetails(event: RuntimeEvent, registryID: s
   if (!summary) return undefined
   const state = await store.getState(registryID)
   if (!state) return undefined
-  const catalog = state.current_snapshot ? await cachedSnapshot(store, registryID, state.current_snapshot) : null
-  return { ...summary, definition: state.definition, status: state.status, source_revision: catalog?.source_revision, diagnostics: catalog?.diagnostics ?? [] }
+  const snapshot = state.current_snapshot ? await cachedSnapshot(store, registryID, state.current_snapshot) : null
+  return { ...summary, definition: state.definition, source_revision: snapshot?.source.revision, diagnostics: snapshot?.diagnostics ?? [] }
 }
 
 export async function getSkillCategories(event: RuntimeEvent, registryID?: string) {
   const store = await getRuntimeSkillRegistryStore(event)
-  return summarizeSkillCategories((await getEnabledSkillRegistryCatalogs(store, registryID)).flatMap((catalog) => catalog.skills))
+  return summarizeSkillCategories((await getEnabledSkillRegistrySnapshots(store, registryID)).flatMap(catalogSkillsFromSnapshot))
 }
 
 export async function getRegistrySkillTags(event: RuntimeEvent) {
   const tags = new Set<string>()
   const store = await getRuntimeSkillRegistryStore(event)
-  for (const skill of (await getEnabledSkillRegistryCatalogs(store)).flatMap((catalog) => catalog.skills)) {
+  for (const skill of (await getEnabledSkillRegistrySnapshots(store)).flatMap(catalogSkillsFromSnapshot)) {
     for (const tag of skill.tags) tags.add(tag)
   }
   return [...tags].sort()

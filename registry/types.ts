@@ -21,7 +21,13 @@ export interface SkillRuntimeRequirements {
 
 export type SkillRegistrySource =
   | { type: 'local'; path: string }
-  | { type: 'git'; url: string; ref?: string; path?: string }
+  | {
+    type: 'git'
+    url: string
+    revision: string
+    tracking_ref?: string
+    path?: string
+  }
 
 export interface SkillRegistryDefinition {
   schema_version: '1'
@@ -31,8 +37,6 @@ export interface SkillRegistryDefinition {
   priority: number
   adapter: SkillRegistryAdapter
   source: SkillRegistrySource
-  refresh_interval_seconds: number
-  retention: { snapshots: number }
 }
 
 export interface SkillArtifactDescriptor {
@@ -86,41 +90,60 @@ export interface CatalogSkill {
   artifact: SkillArtifactDescriptor
 }
 
+/**
+ * The compact, immutable representation stored in a Registry Snapshot.
+ * Registry and source fields that every Skill shares live on the Snapshot
+ * itself; API readers hydrate this back into CatalogSkill at their boundary.
+ */
+export interface SnapshotSkill {
+  package_id: string
+  skill_id: string
+  name: string
+  description: string
+  author: { name: string; email?: string }
+  homepage?: string
+  tags: string[]
+  category: string
+  category_name: string
+  source_category?: string
+  runtime_requirements?: SkillRuntimeRequirements
+  source_path: string
+  files: string[]
+  icon?: SkillIcon
+  artifact: Pick<SkillArtifactDescriptor, 'digest' | 'size'>
+}
+
+export interface SnapshotSource {
+  type: SkillRegistrySource['type']
+  revision: string
+  repository?: string
+}
+
 export interface RegistryDiagnostic {
   package_id?: string
   skill_id?: string
-  code: 'source_requires_runtime_components' | 'no_skills'
+  code: 'source_requires_runtime_components' | 'no_skills' | 'package_invalid'
   message: string
 }
 
-export interface SkillRegistryCatalog {
+export interface SkillRegistrySnapshot {
   schema_version: '1'
-  registry: SkillRegistryDefinition
-  revision: string
-  source_revision: string
-  synced_at: string
-  skills: CatalogSkill[]
+  registry_id: string
+  registry_priority: number
+  source: SnapshotSource
+  skills: SnapshotSkill[]
   diagnostics: RegistryDiagnostic[]
-}
-
-export interface SkillRegistryStatus {
-  state: 'ready' | 'refreshing' | 'stale' | 'empty' | 'disabled'
-  last_attempt_at?: string
-  last_success_at?: string
-  last_error?: string
 }
 
 /**
  * The only mutable object for one Registry. A state update switches the
- * complete reader-visible view together: its definition, active snapshot,
- * and refresh status.
+ * complete reader-visible view together: its definition and active snapshot.
  */
 export interface SkillRegistryState {
   schema_version: '1'
   definition: SkillRegistryDefinition
   current_snapshot?: string
   current_summary?: SkillRegistryCurrentSummary
-  status: SkillRegistryStatus
 }
 
 /**
@@ -130,7 +153,7 @@ export interface SkillRegistryState {
 export interface SkillRegistryCurrentSummary {
   revision: string
   source_revision: string
-  synced_at: string
+  published_at: string
   skill_count: number
   package_count: number
   category_count: number
@@ -144,15 +167,11 @@ export interface SkillRegistrySummary {
   priority: number
   adapter: SkillRegistryAdapter['type']
   revision?: string
-  synced_at?: string
+  published_at?: string
   skill_count: number
   package_count: number
   category_count: number
   skipped_package_count: number
-  refresh_interval_seconds: number
-  next_refresh_at?: string
-  status: SkillRegistryStatus['state']
-  last_error?: string
 }
 
 export interface SkillCategorySummary {

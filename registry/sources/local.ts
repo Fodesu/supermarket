@@ -4,6 +4,7 @@ import { lstat, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import type { SkillRegistryDefinition } from '../types'
 import { resolveRealInside } from '../filesystem'
+import { compareCanonicalText } from '#lib/order'
 import type { MaterializedSkillRegistrySource } from './types'
 
 const maxRegistryRevisionFiles = 100_000
@@ -16,7 +17,7 @@ async function directoryRevision(root: string) {
   let totalBytes = 0
   const visit = async (directory: string) => {
     const entries = await readdir(directory, { withFileTypes: true })
-    entries.sort((a, b) => a.name.localeCompare(b.name))
+    entries.sort((a, b) => compareCanonicalText(a.name, b.name))
     for (const entry of entries) {
       if (entry.name === '.git' || entry.name === 'node_modules') continue
       const target = path.join(directory, entry.name)

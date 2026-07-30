@@ -1,4 +1,5 @@
-import type { CatalogSkill, SkillCategorySummary, SkillRegistryCatalog, SkillRegistryCurrentSummary, SkillRuntimeOS } from './types'
+import type { CatalogSkill, SkillCategorySummary, SkillRegistryCurrentSummary, SkillRegistrySnapshot, SkillRuntimeOS } from './types'
+import { catalogSkillsFromSnapshot } from './snapshot'
 
 function slugify(value: string) {
   return value.normalize('NFKD').toLowerCase().trim().replace(/&/g, ' ').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
@@ -14,7 +15,8 @@ function categoryName(value: string) {
 export function normalizeSkillCategory(value?: string) {
   const sourceName = value?.trim() || undefined
   if (!sourceName) return { id: 'other', name: 'Other' }
-  const id = slugify(sourceName) || 'other'
+  const id = slugify(sourceName)
+  if (!id) return { id: 'other', name: 'Other', sourceName }
   return { id, name: categoryName(sourceName), sourceName }
 }
 
@@ -100,14 +102,18 @@ export function summarizeSkillCategories(skills: CatalogSkill[]): SkillCategoryS
   })).sort((a, b) => a.name.localeCompare(b.name))
 }
 
-export function summarizeCurrentCatalog(catalog: SkillRegistryCatalog): SkillRegistryCurrentSummary {
+export function summarizeCurrentSnapshot(
+  snapshot: SkillRegistrySnapshot,
+  revision: string,
+  publishedAt: string,
+): SkillRegistryCurrentSummary {
   return {
-    revision: catalog.revision,
-    source_revision: catalog.source_revision,
-    synced_at: catalog.synced_at,
-    skill_count: catalog.skills.length,
-    package_count: new Set(catalog.skills.map((skill) => skill.package_id)).size,
-    category_count: summarizeSkillCategories(catalog.skills).length,
-    skipped_package_count: new Set(catalog.diagnostics.map((item) => item.package_id).filter(Boolean)).size,
+    revision,
+    source_revision: snapshot.source.revision,
+    published_at: publishedAt,
+    skill_count: snapshot.skills.length,
+    package_count: new Set(snapshot.skills.map((skill) => skill.package_id)).size,
+    category_count: summarizeSkillCategories(catalogSkillsFromSnapshot(snapshot)).length,
+    skipped_package_count: new Set(snapshot.diagnostics.map((item) => item.package_id).filter(Boolean)).size,
   }
 }

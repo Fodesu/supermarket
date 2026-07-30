@@ -9,7 +9,7 @@ import type {
 export const supportedSkillRuntimeOS: SkillRuntimeOS[] = ['darwin', 'linux', 'win32']
 const runtimeOS = new Set<string>(supportedSkillRuntimeOS)
 const safeIDPattern = /^[a-z0-9][a-z0-9._-]*$/
-const maxRefreshIntervalSeconds = 365 * 24 * 60 * 60
+const gitRevisionPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/
 
 function unsupportedFieldError(label: string) {
   return { error: (issue: z.core.$ZodRawIssue) => issue.code === 'unrecognized_keys'
@@ -66,37 +66,6 @@ function parseRuntimeRequirements(raw: unknown, label: string): SkillRuntimeRequ
   return { os: supportedSkillRuntimeOS.filter((item) => selected.has(item)) }
 }
 
-function parseRefreshInterval(raw: unknown, label: string): number {
-  if (typeof raw !== 'string') throw new Error(`${label} must be a duration such as 30m, 12h, or 1d`)
-  const match = raw.trim().toLowerCase().match(/^(\d+)([smhd])$/)
-  if (!match) throw new Error(`${label} must be a duration such as 30m, 12h, or 1d`)
-  const amount = Number(match[1])
-  const multiplier = { s: 1, m: 60, h: 3_600, d: 86_400 }[match[2]!]!
-  const seconds = amount * multiplier
-  if (!Number.isSafeInteger(seconds) || seconds < 60 || seconds > maxRefreshIntervalSeconds) {
-    throw new Error(`${label} must be between 1m and 365d`)
-  }
-  return seconds
-}
-
-function parseRetention(raw: unknown, registryID: string): SkillRegistryDefinition['retention'] {
-  if (raw == null) return { snapshots: 30 }
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error(`${registryID}.retention must be an object`)
-  }
-  const parsed = z.strictObject({
-    snapshots: z.number().check(z.int(), z.minimum(1), z.maximum(10_000)),
-  }, {
-    error: (issue) => issue.code === 'unrecognized_keys' ? `${registryID}.retention contains unsupported fields` : undefined,
-  }).safeParse(raw)
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0]!
-    if (issue.code === 'unrecognized_keys') throw new Error(issue.message)
-    throw new Error(`${registryID}.retention.snapshots must be an integer from 1 to 10000`)
-  }
-  return { snapshots: parsed.data.snapshots }
-}
-
 export function resolveSkillRuntimeRequirements(
   definition: SkillRegistryDefinition,
   packageID: string,
@@ -148,13 +117,21 @@ function parseSource(raw: unknown, id: string): SkillRegistryDefinition['source'
       type: z.literal('git'),
       url: z.pipe(z.string(), z.transform((value) => value.trim()))
         .check(z.refine((value) => /^https:\/\//.test(value), `${id}: git source URL must use HTTPS`)),
-      ref: z.optional(z.string()),
+      revision: z.pipe(z.string(), z.transform((value) => value.trim().toLowerCase()))
+        .check(z.regex(gitRevisionPattern)),
+      tracking_ref: z.optional(z.pipe(z.string(), z.transform((value) => value.trim())).check(z.minLength(1))),
       path: z.optional(z.string()),
     }, unsupportedFieldError(`${id}: git source`)).safeParse(data)
-    if (!parsed.success) throw new Error(parsed.error.issues[0]!.message)
+    if (!parsed.success) {
+      if (parsed.error.issues.some((issue) => issue.path[0] === 'revision')) {
+        throw new Error(`${id}: git source.revision must be a full commit hash`)
+      }
+      throw new Error(parsed.error.issues[0]!.message)
+    }
     return {
       type: 'git', url: parsed.data.url,
-      ref: parsed.data.ref ? String(parsed.data.ref) : undefined,
+      revision: parsed.data.revision,
+      tracking_ref: parsed.data.tracking_ref,
       path: parsed.data.path ? safeRelativePath(String(parsed.data.path), 'git source path') : undefined,
     }
   }
@@ -172,8 +149,6 @@ export function parseSkillRegistryDefinition(raw: unknown): SkillRegistryDefinit
     priority: z.optional(z.unknown()),
     adapter: z.unknown(),
     source: z.unknown(),
-    refresh_interval: z.optional(z.unknown()),
-    retention: z.optional(z.unknown()),
   }, {
     error: (issue) => issue.code === 'unrecognized_keys'
       ? `${id}: unsupported Registry field ${(issue as { keys: string[] }).keys.join(', ')}`
@@ -192,7 +167,5 @@ export function parseSkillRegistryDefinition(raw: unknown): SkillRegistryDefinit
     priority: Number.isFinite(Number(data.priority)) ? Number(data.priority) : 0,
     adapter: parseAdapter(data.adapter, id),
     source: parseSource(data.source, id),
-    refresh_interval_seconds: parseRefreshInterval(data.refresh_interval, `${id}.refresh_interval`),
-    retention: parseRetention(data.retention, id),
   }
 }

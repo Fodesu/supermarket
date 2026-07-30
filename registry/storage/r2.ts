@@ -4,6 +4,7 @@ interface R2ObjectLike {
   arrayBuffer(): Promise<ArrayBuffer>
   body?: ReadableStream<Uint8Array>
   size?: number
+  etag?: string
 }
 
 interface R2BucketLike {
@@ -25,6 +26,13 @@ export class R2BlobBackend implements BlobBackend {
   async get(key: string) {
     const object = await this.bucket.get(key)
     return object ? new Uint8Array(await object.arrayBuffer()) : null
+  }
+
+  async getWithVersion(key: string) {
+    const object = await this.bucket.get(key)
+    if (!object) return null
+    if (!object.etag) throw new Error(`R2 object read without an ETag: ${key}`)
+    return { value: new Uint8Array(await object.arrayBuffer()), version: object.etag }
   }
 
   async put(key: string, value: Uint8Array) {

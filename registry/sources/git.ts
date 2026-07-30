@@ -33,22 +33,26 @@ async function exec(command: string, args: string[], timeoutMs = gitCommandTimeo
   }
 }
 
-async function checkoutGit(url: string, ref?: string, sparsePaths: string[] = []) {
+async function checkoutGit(url: string, revision: string, sparsePaths: string[] = []) {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'supermarket-skills-git-'))
   const repository = path.join(temporaryRoot, 'repository')
   try {
     await exec('git', ['init', repository])
     await exec('git', ['-C', repository, 'remote', 'add', 'origin', url])
-    await exec('git', ['-C', repository, 'fetch', '--depth', '1', '--filter=blob:none', 'origin', ref || 'HEAD'], gitFetchTimeoutMs)
+    await exec('git', ['-C', repository, 'fetch', '--depth', '1', '--filter=blob:none', 'origin', revision], gitFetchTimeoutMs)
     if (sparsePaths.length) {
       await exec('git', ['-C', repository, 'sparse-checkout', 'init', '--no-cone'])
       await exec('git', ['-C', repository, 'sparse-checkout', 'set', '--no-cone', ...sparsePaths])
     }
     await exec('git', ['-C', repository, 'checkout', '--detach', 'FETCH_HEAD'])
+    const resolvedRevision = await exec('git', ['-C', repository, 'rev-parse', 'HEAD'])
+    if (resolvedRevision !== revision) {
+      throw new Error(`Git source resolved an unexpected revision: expected ${revision}, got ${resolvedRevision}`)
+    }
     return {
       temporaryRoot,
       repository,
-      revision: await exec('git', ['-C', repository, 'rev-parse', 'HEAD']),
+      revision: resolvedRevision,
     }
   } catch (error) {
     await rm(temporaryRoot, { recursive: true, force: true })
@@ -67,7 +71,7 @@ export async function materializeGitSource(
     : sourceBase ? [sourceBase] : []
   const checkout = await checkoutGit(
     definition.source.url,
-    definition.source.ref,
+    definition.source.revision,
     initialPaths,
   )
   try {

@@ -1,9 +1,0 @@
-.git
-.data
-.output
-.wrangler
-node_modules
-docs
-
-# Plugin bundles are embedded by the API build; the Registry Writer does not publish them.
-registries/*/plugins
