@@ -47,7 +47,8 @@ export class S3BlobBackend implements BlobBackend {
         Bucket: this.options.bucket,
         Key: key,
       }))
-      if (!response.Body || !response.ETag) return null
+      if (!response.Body) return null
+      if (!response.ETag) throw new Error(`S3 object read without an ETag: ${key}`)
       return { value: new Uint8Array(await response.Body.transformToByteArray()), version: response.ETag }
     } catch (error) {
       const failure = error as { name?: string; $metadata?: { httpStatusCode?: number } }

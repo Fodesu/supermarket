@@ -9,6 +9,7 @@ import type { SkillRegistryStore } from '#registry/storage/contracts'
 import { registrySnapshotRevision, serializeRegistrySnapshot } from '#registry/snapshot'
 import {
   getEnabledSkillRegistrySnapshots,
+  getSkillRegistryDetailsForStore,
   getRuntimeSkillRegistryStore,
   getSkillRegistrySummariesForStore,
 } from './skill-registry'
@@ -66,6 +67,46 @@ describe('Skill Registry loader', () => {
     })
     expect(await getEnabledSkillRegistrySnapshots(store)).toEqual([])
     expect(await getEnabledSkillRegistrySnapshots(store, definition.id)).toEqual([])
+  })
+
+  test('does not expose disabled Registries through summaries or details', async () => {
+    const disabled = { ...definition, enabled: false }
+    const current = snapshotState(snapshot())
+    const store = {
+      async listRegistryIDs() { return ['example'] },
+      async getState() {
+        return {
+          schema_version: '1' as const,
+          definition: disabled,
+          current_snapshot: current.revision,
+          current_summary: current.summary,
+        }
+      },
+    } as unknown as SkillRegistryStore
+
+    await expect(getSkillRegistrySummariesForStore(store)).resolves.toEqual([])
+    await expect(getSkillRegistryDetailsForStore(store, 'example')).resolves.toBeUndefined()
+  })
+
+  test('reads one state version when loading Registry details', async () => {
+    const approved = snapshot('example', 'source')
+    const current = snapshotState(approved)
+    let stateReads = 0
+    const store = {
+      async getState() {
+        stateReads++
+        return {
+          schema_version: '1' as const,
+          definition,
+          current_snapshot: current.revision,
+          current_summary: current.summary,
+        }
+      },
+      async getSnapshot() { return approved },
+    } as unknown as SkillRegistryStore
+
+    await expect(getSkillRegistryDetailsForStore(store, 'example')).resolves.toMatchObject({ source_revision: 'source' })
+    expect(stateReads).toBe(1)
   })
 
   test('reuses immutable Snapshots while still reading mutable state', async () => {
