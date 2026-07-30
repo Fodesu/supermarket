@@ -11,6 +11,19 @@ type ChangeStatus = 'added' | 'removed' | 'changed'
 export interface FileChange {
   path: string
   status: ChangeStatus
+  before?: FileRevision
+  after?: FileRevision
+}
+
+export interface FileRevision {
+  digest: string
+  size: number
+  mode: number
+}
+
+export interface TextFilePatch {
+  path: string
+  patch: string
 }
 
 export interface SkillReleaseDiff {
@@ -20,7 +33,7 @@ export interface SkillReleaseDiff {
   artifact_after?: string
   metadata: string[]
   files: FileChange[]
-  skill_md_patch?: string
+  text_patches: TextFilePatch[]
 }
 
 export interface PackageReleaseDiff {
@@ -81,21 +94,25 @@ function fileChanges(
   return [...paths].sort().flatMap((path): FileChange[] => {
     const before = previous?.files[path]
     const after = candidate?.files[path]
-    if (!before) return [{ path, status: 'added' }]
-    if (!after) return [{ path, status: 'removed' }]
+    if (!before) return [{ path, status: 'added', after: fileRevision(after) }]
+    if (!after) return [{ path, status: 'removed', before: fileRevision(before) }]
     if (before.digest !== after.digest || before.mode !== after.mode) {
-      return [{ path, status: 'changed' }]
+      return [{ path, status: 'changed', before: fileRevision(before), after: fileRevision(after) }]
     }
     return []
   })
 }
 
-function skillMarkdownPatch(previous?: CandidateFile, candidate?: CandidateFile) {
+function fileRevision(file: CandidateFile | undefined): FileRevision | undefined {
+  return file && { digest: file.digest, size: file.size, mode: file.mode }
+}
+
+function textFilePatch(path: string, previous?: CandidateFile, candidate?: CandidateFile) {
   if (previous?.text === undefined && candidate?.text === undefined) return undefined
   if (previous?.digest && previous.digest === candidate?.digest) return undefined
   const patch = createTwoFilesPatch(
-    'SKILL.md (approved)',
-    'SKILL.md (candidate)',
+    `${path} (approved)`,
+    `${path} (candidate)`,
     previous?.text ?? '',
     candidate?.text ?? '',
     '',
@@ -104,6 +121,17 @@ function skillMarkdownPatch(previous?: CandidateFile, candidate?: CandidateFile)
   )
   const maximum = 8_000
   return patch.length > maximum ? `${patch.slice(0, maximum)}\n... diff truncated ...\n` : patch
+}
+
+function textFilePatches(previous?: CandidateSkillReview, candidate?: CandidateSkillReview) {
+  const paths = new Set([
+    ...Object.keys(previous?.files ?? {}),
+    ...Object.keys(candidate?.files ?? {}),
+  ])
+  return [...paths].sort().flatMap((path): TextFilePatch[] => {
+    const patch = textFilePatch(path, previous?.files[path], candidate?.files[path])
+    return patch ? [{ path, patch }] : []
+  })
 }
 
 function indexSkills(candidate: SkillRegistryCandidate) {
@@ -144,10 +172,7 @@ export function diffRegistryCandidates(
           artifact_after: newSkill.artifact.digest,
           metadata: [],
           files: fileChanges(undefined, candidate.review.get(key)),
-          skill_md_patch: skillMarkdownPatch(
-            undefined,
-            candidate.review.get(key)?.files['SKILL.md'],
-          ),
+          text_patches: textFilePatches(undefined, candidate.review.get(key)),
         })
         continue
       }
@@ -158,10 +183,7 @@ export function diffRegistryCandidates(
           artifact_before: oldSkill.artifact.digest,
           metadata: [],
           files: fileChanges(previous.review.get(key), undefined),
-          skill_md_patch: skillMarkdownPatch(
-            previous.review.get(key)?.files['SKILL.md'],
-            undefined,
-          ),
+          text_patches: textFilePatches(previous.review.get(key), undefined),
         })
         continue
       }
@@ -176,10 +198,7 @@ export function diffRegistryCandidates(
         artifact_after: newSkill.artifact.digest,
         metadata,
         files,
-        skill_md_patch: skillMarkdownPatch(
-          previous.review.get(key)?.files['SKILL.md'],
-          candidate.review.get(key)?.files['SKILL.md'],
-        ),
+        text_patches: textFilePatches(previous.review.get(key), candidate.review.get(key)),
       })
     }
     if (!skills.length) continue
@@ -227,6 +246,11 @@ function shortDigest(value?: string) {
   return value ? inlineCode(value.slice(0, 12)) : '—'
 }
 
+function fileRevisionLabel(file?: FileRevision) {
+  if (!file) return '—'
+  return `${inlineCode(file.digest)} (${file.size} B, ${file.mode.toString(8).padStart(4, '0')})`
+}
+
 function renderSkill(skill: SkillReleaseDiff) {
   const lines = [`#### ${inlineCode(skill.skill_id)} — ${skill.status}`, '']
   if (skill.artifact_before || skill.artifact_after) {
@@ -237,10 +261,15 @@ function renderSkill(skill: SkillReleaseDiff) {
   }
   if (skill.files.length) {
     lines.push('- Files:')
-    for (const file of skill.files) lines.push(`  - ${file.status}: ${inlineCode(file.path)}`)
+    for (const file of skill.files) {
+      const revisions = file.before || file.after
+        ? ` — ${fileRevisionLabel(file.before)} → ${fileRevisionLabel(file.after)}`
+        : ''
+      lines.push(`  - ${file.status}: ${inlineCode(file.path)}${revisions}`)
+    }
   }
-  if (skill.skill_md_patch) {
-    lines.push('', ...fencedCode(skill.skill_md_patch, 'diff'))
+  for (const { patch } of skill.text_patches) {
+    lines.push('', ...fencedCode(patch, 'diff'))
   }
   lines.push('')
   return lines

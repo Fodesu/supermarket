@@ -1,7 +1,7 @@
 import { createGzipEncoder, packTar, type TarEntry } from 'modern-tar'
 import { compareCanonicalText } from './order'
 
-export const MAX_TAR_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
+export const MAX_TAR_UNCOMPRESSED_BYTES = 5 * 1024 * 1024
 const gzipHeaderLength = 10
 const gzipMinimumLength = gzipHeaderLength + 8
 

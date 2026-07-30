@@ -5,9 +5,9 @@ export interface SkillAuthor {
   email: string
 }
 
-export const MAX_SKILL_ARTIFACT_COMPRESSED_BYTES = 25 * 1024 * 1024
+export const MAX_SKILL_ARTIFACT_COMPRESSED_BYTES = 6 * 1024 * 1024
 export const MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES = MAX_TAR_UNCOMPRESSED_BYTES
-export const MAX_SKILL_ARTIFACT_FILES = 10_000
+export const MAX_SKILL_ARTIFACT_FILES = 1_000
 export const MAX_SKILL_IMAGE_BYTES = 512 * 1024
 
 export type SkillRegistryAdapter =
