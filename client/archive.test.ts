@@ -10,7 +10,7 @@ const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
 
 describe('Skill Registry client archives', () => {
-  test('creates deterministic content-addressed archives', async () => {
+  test('creates archives with a canonical gzip header', async () => {
     const files = {
       'SKILL.md': new TextEncoder().encode('---\nname: deterministic\n---\n'),
       'scripts/run.sh': { bytes: new TextEncoder().encode('#!/bin/sh\n'), mode: 0o755 as const },
@@ -18,7 +18,9 @@ describe('Skill Registry client archives', () => {
     const first = await createTar(files, '')
     const second = await createTar(files, '')
     expect(second).toEqual(first)
-    expect(await gzip(second)).toEqual(await gzip(first))
+    const compressed = await gzip(second)
+    expect(compressed).toEqual(await gzip(first))
+    expect([...compressed.slice(0, 10)]).toEqual([0x1f, 0x8b, 0x08, 0, 0, 0, 0, 0, 0, 0xff])
   })
 
   test('round-trips long USTAR paths and installs a namespaced Skill', async () => {
