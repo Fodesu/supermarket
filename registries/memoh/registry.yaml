@@ -8,6 +8,3 @@ adapter:
 source:
   type: local
   path: skills
-refresh_interval: 12h
-retention:
-  snapshots: 30

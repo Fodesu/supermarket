@@ -11,22 +11,9 @@ export function buildSkillCandidates(input: {
   definition: SkillRegistryDefinition
   sourceRoot: string
   ensurePaths?: (paths: string[]) => Promise<void>
-  packageFilter?: string
-  skillFilter?: string
-  allowMissingScope?: boolean
 }) {
-  const {
-    definition,
-    sourceRoot,
-    packageFilter,
-    skillFilter,
-    allowMissingScope = false,
-    ensurePaths = async () => {},
-  } = input
-  if (skillFilter && !packageFilter) throw new Error('--skill requires --package')
-  const adapterInput = {
-    definition, sourceRoot, ensurePaths, packageFilter, skillFilter, allowMissingScope,
-  }
+  const { definition, sourceRoot, ensurePaths = async () => {} } = input
+  const adapterInput = { definition, sourceRoot, ensurePaths }
   if (definition.adapter.type === 'skill_directory') return readSkillDirectory(adapterInput)
   if (definition.adapter.type === 'codex_marketplace_skills') return readCodexMarketplace(adapterInput)
   throw new Error(`${definition.id}: unsupported adapter`)

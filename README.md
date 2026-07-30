@@ -11,24 +11,22 @@ supermarket/
 │   │   ├── registry.yaml            # Repository-owned Registry definition
 │   │   ├── plugins/<plugin-id>/     # Plugin manifests and optional bundle files
 │   │   └── skills/<skill-id>/       # Repository-owned Skill sources
-│   └── openai/registry.yaml         # External Registry definition
+│   └── openai/
+│       ├── registry.yaml            # External Registry definition
+│       └── release.lock.json        # Approved Snapshot revision
 ├── lib/archive.ts                   # Shared safe TAR/Gzip primitives
 ├── plugin/                          # Plugin manifest parsing and repository validation
-├── registry/                        # Registry model, sources, adapters, storage, refresh, and maintenance
+├── registry/                        # Registry model, sources, adapters, publishing, and storage
 ├── server/                          # Nitro API routes and HTTP-facing services
-├── scripts/registry/                # Registry CLI entrypoints and deployment checks
-├── workers/
-│   ├── api/wrangler.jsonc           # API Worker environments and bindings
-│   └── writer/                      # Container Writer source and deployment
-│       ├── src/
-│       ├── Dockerfile
-│       └── wrangler.jsonc
+├── scripts/registry/                # Validation, update checking, and publishing commands
+├── workers/api/wrangler.jsonc       # Read-only API Worker environments and R2 bindings
+├── .github/workflows/               # CI, candidate update PRs, and approved publication
 ├── client/                          # Reference Registry client and safe extractor
 ├── nitro.config.mjs
 └── vite.config.ts
 ```
 
-Plugins are repository-owned bundles. Registry Skills are published from Registry definitions into immutable Snapshots and Artifacts stored under `.data/registries` locally or R2 in production. A Snapshot is the serialized Catalog for one Registry revision: it contains the searchable Skill metadata and references digest-addressed Artifacts and images. The Registry's single mutable `state.json` selects the current Snapshot, carries its compact listing summary, and records refresh status. Generated Registry data is not committed.
+Plugins are repository-owned bundles. Registry Skills are published from Registry definitions into immutable Snapshots and Artifacts stored under `.data/registries` locally or R2 when deployed. A Snapshot is the complete runtime catalog: shared Registry and source metadata appears once at its root, while each Skill retains its searchable metadata, complete file list, and digest-addressed archive and icon references. Git commits the source definition and `release.lock.json`, which locks the canonical Snapshot revision; R2 stores the full Snapshot. The Registry's single mutable `state.json` selects the active Snapshot and carries its compact listing summary and publication time.
 
 ## API
 
@@ -40,8 +38,8 @@ Base URL: `https://supermarket.memoh.ai`
 | GET | `/api/plugins/:id` | Get Plugin details |
 | GET | `/api/plugins/:id/download` | Download Plugin package (`plugin.yaml` plus allowed bundle assets) |
 | GET | `/api/skills` | Search enabled Registry Skills. Query: `q`, `registry`, `package`, `category`, `tag`, `os`, `page`, `limit`, `sort` |
-| GET | `/api/registries` | List Registries, counts, refresh state, and next refresh time |
-| GET | `/api/registries/:registryId` | Get Registry definition, status, source revision, and diagnostics |
+| GET | `/api/registries` | List Registries and current counts |
+| GET | `/api/registries/:registryId` | Get the approved Registry definition, source revision, and diagnostics |
 | GET | `/api/registries/:registryId/categories` | List categories in one Registry |
 | GET | `/api/registries/:registryId/skills` | Search Skills in one Registry |
 | GET | `/api/registries/:registryId/packages/:packageId/skills/:skillId` | Get one Registry Skill |
@@ -121,7 +119,7 @@ Instructions and documentation go here.
 
 ```bash
 bun run registry:validate
-bun run registry:refresh -- --registry memoh
+bun run registry:publish -- --registry memoh
 bun run dev
 ```
 
@@ -140,40 +138,41 @@ adapter:
 source:
   type: git
   url: https://github.com/example/skills.git
-  ref: main
-refresh_interval: 12h
-retention:
-  snapshots: 30
+  revision: 0123456789abcdef0123456789abcdef01234567
+  tracking_ref: main
 ```
 
-Supported sources are `local` and HTTPS `git`; adapters are `skill_directory` and `codex_marketplace_skills`. A local source path is relative to the directory containing its `registry.yaml`. `retention.snapshots` is currently applied only by the explicit local maintenance command. Production retains all immutable history until consumer-reference-aware production GC is introduced. Run `bun run registry:validate` before refreshing.
+Supported sources are `local` and HTTPS `git`; adapters are `skill_directory` and `codex_marketplace_skills`. A local source path is relative to the directory containing its `registry.yaml`. A Git source must pin an exact commit in `revision`; optional `tracking_ref` tells the update workflow which upstream ref to check. Every enabled Registry must commit `release.lock.json`, whose `snapshot_revision` must equal the canonical Snapshot rebuilt from the approved source. Run `bun run registry:validate` before publishing.
 
-The API Worker is read-only. The production Cron calls the Writer Durable Object every 15 minutes as a deployment and failure watchdog; the Durable Object starts the Container only for a new Worker version or when a Registry is due, then schedules the exact next deadline itself. A refresh uploads immutable Skill archives and icons, publishes an immutable Snapshot, and updates the Registry's `state.json` last. Test and production resources are declared in the matching environments of `workers/api/wrangler.jsonc` and `workers/writer/wrangler.jsonc`; the API and Writer must bind the same R2 bucket within each environment.
+The scheduled `Check Registry updates` GitHub workflow resolves each `tracking_ref`. If every resolved commit already equals its approved `revision`, it makes no change and opens no PR. Each changed Registry gets its own candidate PR, so unrelated upstreams can be reviewed and approved independently. An open PR is updated only when its candidate definition changes; repeated checks of the same upstream revision leave its commit and existing reviews untouched. The PR groups changes by package and Skill, lists metadata and file changes, and includes a bounded `SKILL.md` diff. It commits the candidate source revision and the resulting `release.lock.json`; CI rebuilds the candidate and requires the Snapshot revision to match the lock before publication. Merging that PR is the explicit approval step. The schedule is configured in `.github/workflows/registry-updates.yml`, and a manual run can optionally select one Registry.
 
-The test Writer has no deployed cron. For local scheduled-handler testing, run `bun run registry:writer:dev`, then request `http://127.0.0.1:8787/__scheduled`. A deployed test Writer can instead be refreshed through the token-protected `POST /__refresh` endpoint.
+If publisher, Adapter, or archive code intentionally changes the generated Snapshot without changing the pinned upstream commit, regenerate the lock with `bun run registry:lock -- --registry <id>` and review its revision change in the same PR.
 
-Before the first deployment, authenticate Wrangler, make sure the account has R2 and Containers enabled, and create the buckets named by the Wrangler environments:
+After an approved change reaches `main`, the `Publish approved Registries` workflow uploads digest-addressed archives and icons, then an immutable Snapshot, and switches `state.json` last. The API Worker remains read-only. Historical immutable objects are retained; reference-aware GC is intentionally deferred until Memoh can provide authoritative Artifact references.
+
+Test and production bucket names have a single source of truth: the matching environments in `workers/api/wrangler.jsonc`. Before the first deployment, authenticate Wrangler, enable R2, and create those buckets:
 
 ```bash
 bunx wrangler whoami
 bunx wrangler r2 bucket create test-memoh-supermarket
 bunx wrangler r2 bucket create memoh-supermarket
-bun run registry:config:check
 ```
 
-Bucket creation is a one-time operation; use `bunx wrangler r2 bucket list` to check whether they already exist. Deploy the Writer before the API so the first refresh can publish data:
+Bucket creation is a one-time operation; use `bunx wrangler r2 bucket list` to check whether they already exist. Configure GitHub environments named `test` and `production`, each with bucket-scoped `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` secrets, plus `CLOUDFLARE_ACCOUNT_ID`. Protect the `production` environment if publication should require an additional approval.
+
+Repository governance is part of the publication boundary. Allow GitHub Actions to create pull requests, require the CI check and at least one human review on `main`, dismiss stale approvals when a candidate commit changes, and restrict bypasses. Pull-request workflows created with the repository `GITHUB_TOKEN` may appear in an approval-required state; a maintainer must approve those workflow runs unless the repository uses a narrowly scoped GitHub App installation token.
+
+Deploy the read-only API Worker with:
 
 ```bash
 # Test
-bun run registry:writer:deploy:test
 bun run registry:api:deploy:test
 
 # Production
-bun run registry:writer:deploy:production
 bun run registry:api:deploy:production
 ```
 
-Local garbage collection remains available with `bun run registry:gc` (add `-- --apply` to apply it), and applies each Registry's `retention.snapshots` setting. The deployed Writer does not run GC, so production currently retains all immutable Snapshots, Artifacts, and images.
+Use the `Publish approved Registries` workflow with the `test` environment to test publication without touching production. For a local build, `bun run registry:publish` writes to `.data/registries`.
 
 ## License
 

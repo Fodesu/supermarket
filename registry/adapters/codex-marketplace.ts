@@ -9,6 +9,7 @@ import type {
 import { MAX_SKILL_IMAGE_BYTES } from '../types'
 import { assertRegistryID, safeRelativePath } from '../definition'
 import { resolveRealInside } from '../filesystem'
+import { compareCanonicalText } from '#lib/order'
 import { sha256 } from '../digest'
 import { buildSkillCandidate, hasComponent } from './common'
 import type { SkillAdapterInput, SkillAdapterResult, SkillCandidate } from './types'
@@ -17,6 +18,18 @@ interface MarketplaceEntry {
   name: string
   category?: string
   source: unknown
+}
+
+function packageDiagnosticMessage(error: unknown, sourceRoot: string) {
+  const message = error instanceof Error ? error.message : String(error)
+  const roots = new Set([
+    path.resolve(sourceRoot),
+    path.resolve(sourceRoot).replaceAll(path.sep, '/'),
+    path.resolve(sourceRoot).replaceAll(path.sep, '\\'),
+  ])
+  let stable = message
+  for (const root of roots) stable = stable.replaceAll(root, '<source>')
+  return `Skipped package: ${stable}`
 }
 
 function parseMarketplace(raw: unknown): MarketplaceEntry[] {
@@ -147,7 +160,7 @@ async function discoverSkillRoots(packageRoot: string, declaredPath: string) {
   }
   const entries = await readdir(declaredRoot, { withFileTypes: true })
   const roots: Array<{ id: string; root: string; relativePath: string }> = []
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+  for (const entry of entries.sort((a, b) => compareCanonicalText(a.name, b.name))) {
     if (!entry.isDirectory()) continue
     const root = await resolveRealInside(declaredRoot, entry.name)
     try {
@@ -162,26 +175,24 @@ async function discoverSkillRoots(packageRoot: string, declaredPath: string) {
 }
 
 export async function readCodexMarketplace(input: SkillAdapterInput): Promise<SkillAdapterResult> {
-  const { definition, sourceRoot, ensurePaths, packageFilter, skillFilter, allowMissingScope } = input
+  const { definition, sourceRoot, ensurePaths } = input
   if (definition.adapter.type !== 'codex_marketplace_skills') {
     throw new Error(`${definition.id}: expected codex_marketplace_skills adapter`)
   }
   const catalogPath = await resolveRealInside(sourceRoot, definition.adapter.catalog_path)
   const entries = parseMarketplace(JSON.parse(await readFile(catalogPath, 'utf8')))
-    .filter((entry) => !packageFilter || entry.name === packageFilter)
-  if (packageFilter && !entries.length) {
-    if (allowMissingScope && skillFilter) {
-      throw new Error(`${definition.id}/${packageFilter}: package is missing; refresh the whole package`)
-    }
-    if (allowMissingScope) return { skills: [], diagnostics: [] }
-    throw new Error(`${definition.id}: package "${packageFilter}" not found`)
-  }
-  const packages = entries.map((entry) => {
+
+  const diagnostics: RegistryDiagnostic[] = []
+  const candidates: Array<{ entry: MarketplaceEntry; packagePath: string }> = []
+  for (const entry of entries) {
     const packagePath = localPackagePath(entry.source)
-    if (!packagePath) throw new Error(`${definition.id}: package "${entry.name}" uses an unsupported source`)
-    return { entry, packagePath }
-  })
-  await ensurePaths(packages.map(({ packagePath }) => `${packagePath}/.codex-plugin/plugin.json`))
+    if (!packagePath) {
+      diagnostics.push({ package_id: entry.name, code: 'package_invalid', message: 'Skipped package: uses an unsupported source' })
+      continue
+    }
+    candidates.push({ entry, packagePath })
+  }
+  await ensurePaths(candidates.map(({ packagePath }) => `${packagePath}/.codex-plugin/plugin.json`))
 
   const prepared: Array<{
     entry: MarketplaceEntry
@@ -191,41 +202,48 @@ export async function readCodexMarketplace(input: SkillAdapterInput): Promise<Sk
     skillPaths: string[]
     iconPaths: string[]
   }> = []
-  const diagnostics: RegistryDiagnostic[] = []
-  for (const item of packages) {
-    const packageRoot = await resolveRealInside(sourceRoot, item.packagePath)
-    const manifestPath = await resolveRealInside(packageRoot, '.codex-plugin/plugin.json')
-    const parsed = JSON.parse(await readFile(manifestPath, 'utf8'))
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error(`${definition.id}: package "${item.entry.name}" manifest must be an object`)
-    }
-    const manifest = parsed as Record<string, unknown>
-    if (String(manifest.name ?? '') !== item.entry.name) {
-      throw new Error(`${definition.id}: package "${item.entry.name}" manifest name does not match`)
-    }
-    const unsupported = ['apps', 'mcpServers', 'hooks'].filter((key) => hasComponent(manifest[key]))
-    if (unsupported.length) {
+  for (const item of candidates) {
+    try {
+      const packageRoot = await resolveRealInside(sourceRoot, item.packagePath)
+      const manifestPath = await resolveRealInside(packageRoot, '.codex-plugin/plugin.json')
+      const parsed = JSON.parse(await readFile(manifestPath, 'utf8'))
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('manifest must be an object')
+      }
+      const manifest = parsed as Record<string, unknown>
+      if (String(manifest.name ?? '') !== item.entry.name) {
+        throw new Error('manifest name does not match its Marketplace entry')
+      }
+      const unsupported = ['apps', 'mcpServers', 'hooks'].filter((key) => hasComponent(manifest[key]))
+      if (unsupported.length) {
+        diagnostics.push({
+          package_id: item.entry.name,
+          code: 'source_requires_runtime_components',
+          message: `Skipped package because it declares: ${unsupported.join(', ')}`,
+        })
+        continue
+      }
+      if (!hasComponent(manifest.skills)) {
+        diagnostics.push({ package_id: item.entry.name, code: 'no_skills', message: 'Skipped package because it declares no skills' })
+        continue
+      }
+      const skillPaths = codexSkillPaths(manifest.skills)
+      const ui = manifest.interface && typeof manifest.interface === 'object'
+        ? manifest.interface as Record<string, unknown>
+        : {}
+      const iconPaths = [
+        declaredImagePath(ui.composerIcon, 'interface.composerIcon'),
+        declaredImagePath(ui.logo, 'interface.logo'),
+        declaredImagePath(ui.logoDark, 'interface.logoDark'),
+      ].filter((value): value is string => Boolean(value))
+      prepared.push({ ...item, packageRoot, manifest, skillPaths, iconPaths })
+    } catch (error) {
       diagnostics.push({
         package_id: item.entry.name,
-        code: 'source_requires_runtime_components',
-        message: `Skipped package because it declares: ${unsupported.join(', ')}`,
+        code: 'package_invalid',
+        message: packageDiagnosticMessage(error, sourceRoot),
       })
-      continue
     }
-    if (!hasComponent(manifest.skills)) {
-      diagnostics.push({ package_id: item.entry.name, code: 'no_skills', message: 'Skipped package because it declares no skills' })
-      continue
-    }
-    const skillPaths = codexSkillPaths(manifest.skills)
-    const ui = manifest.interface && typeof manifest.interface === 'object'
-      ? manifest.interface as Record<string, unknown>
-      : {}
-    const iconPaths = [
-      declaredImagePath(ui.composerIcon, 'interface.composerIcon'),
-      declaredImagePath(ui.logo, 'interface.logo'),
-      declaredImagePath(ui.logoDark, 'interface.logoDark'),
-    ].filter((value): value is string => Boolean(value))
-    prepared.push({ ...item, packageRoot, manifest, skillPaths, iconPaths })
   }
   await ensurePaths(prepared.flatMap((item) => [
     ...item.skillPaths.map((skillPath) => `${item.packagePath}/${skillPath}`),
@@ -234,30 +252,36 @@ export async function readCodexMarketplace(input: SkillAdapterInput): Promise<Sk
 
   const skills: SkillCandidate[] = []
   for (const item of prepared) {
-    const presentation = await packageIcon(item.packageRoot, item.manifest)
-    const seen = new Set<string>()
-    for (const skillPath of item.skillPaths) {
-      for (const root of await discoverSkillRoots(item.packageRoot, skillPath)) {
-        if (seen.has(root.id)) throw new Error(`${definition.id}/${item.entry.name}: duplicate skill ID ${root.id}`)
-        seen.add(root.id)
-        if (skillFilter && root.id !== skillFilter) continue
-        skills.push(await buildSkillCandidate({
-          definition,
-          packageID: item.entry.name,
-          skillID: root.id,
-          sourcePath: `${item.packagePath}/${root.relativePath}`,
-          root: root.root,
-          allowedRoot: item.packageRoot,
-          packageManifest: item.manifest,
-          sourceCategory: item.entry.category,
-          icon: presentation.icon,
-          iconAssets: presentation.assets,
-        }))
+    try {
+      const packageSkills: SkillCandidate[] = []
+      const presentation = await packageIcon(item.packageRoot, item.manifest)
+      const seen = new Set<string>()
+      for (const skillPath of item.skillPaths) {
+        for (const root of await discoverSkillRoots(item.packageRoot, skillPath)) {
+          if (seen.has(root.id)) throw new Error(`duplicate skill ID ${root.id}`)
+          seen.add(root.id)
+          packageSkills.push(await buildSkillCandidate({
+            definition,
+            packageID: item.entry.name,
+            skillID: root.id,
+            sourcePath: `${item.packagePath}/${root.relativePath}`,
+            root: root.root,
+            allowedRoot: item.packageRoot,
+            packageManifest: item.manifest,
+            sourceCategory: item.entry.category,
+            icon: presentation.icon,
+            iconAssets: presentation.assets,
+          }))
+        }
       }
+      skills.push(...packageSkills)
+    } catch (error) {
+      diagnostics.push({
+        package_id: item.entry.name,
+        code: 'package_invalid',
+        message: packageDiagnosticMessage(error, sourceRoot),
+      })
     }
-  }
-  if (skillFilter && !skills.length && !allowMissingScope) {
-    throw new Error(`${definition.id}/${packageFilter}: skill "${skillFilter}" not found`)
   }
   return { skills, diagnostics }
 }

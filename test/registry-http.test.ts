@@ -9,12 +9,13 @@ import skillIcon from '../server/api/artifacts/icon/[digest].get'
 import registrySkill from '../server/api/registries/[id]/packages/[packageId]/skills/[skillId].get'
 import registries from '../server/api/registries/index.get'
 import skills from '../server/api/skills/index.get'
-import type { CatalogSkill, SkillArtifactDescriptor, SkillRegistryCatalog, SkillRegistryDefinition } from '#registry/types'
+import type { CatalogSkill, SkillArtifactDescriptor, SkillRegistryDefinition, SkillRegistrySnapshot } from '#registry/types'
+import { compactCatalogSkill } from '#registry/snapshot'
 import { createTar, gzip } from '#lib/archive'
 import { R2BlobBackend } from '#registry/storage/r2'
 import { sha256 } from '#registry/digest'
 import { BlobSkillRegistryStore } from '#registry/storage/blob'
-import { summarizeCurrentCatalog } from '#registry/catalog'
+import { serializeRegistrySnapshot } from '#registry/snapshot'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
@@ -70,8 +71,7 @@ describe('Skill Registry HTTP protocol', () => {
     const store = new BlobSkillRegistryStore(new R2BlobBackend(bucket))
     const definition: SkillRegistryDefinition = {
       schema_version: '1', id: 'example', name: 'Example', enabled: true, priority: 10,
-      adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' }, refresh_interval_seconds: 43_200,
-      retention: { snapshots: 30 },
+      adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' },
     }
     const installID = 'example+tools+demo'
     const archive = await gzip(await createTar({
@@ -94,16 +94,14 @@ describe('Skill Registry HTTP protocol', () => {
       source: { type: 'local', revision: 'source', path: 'skills/demo' },
       files: ['SKILL.md', 'scripts/run.sh'], icon: { card: image, detail: image, brand_color: '#0B7285' }, artifact,
     }
-    const revision = await sha256('catalog')
-    const catalog: SkillRegistryCatalog = {
-      schema_version: '1', registry: definition, revision,
-      source_revision: 'source', synced_at: '2026-01-01T00:00:00.000Z', skills: [skill], diagnostics: [],
+    const snapshot: SkillRegistrySnapshot = {
+      schema_version: '1', registry_id: 'example', registry_priority: 10,
+      source: { type: 'local', revision: 'source' }, skills: [compactCatalogSkill(skill)], diagnostics: [],
     }
     await store.putArtifact(artifact, archive)
     await store.putImage(image, imageBytes)
-    await store.publishSnapshot(catalog, {
-      schema_version: '1', definition, current_snapshot: revision, current_summary: summarizeCurrentCatalog(catalog),
-      status: { state: 'ready' },
+    await store.publishSnapshot(serializeRegistrySnapshot(snapshot), definition, {
+      publishedAt: '2026-01-01T00:00:00.000Z',
     })
 
     const app = new H3()

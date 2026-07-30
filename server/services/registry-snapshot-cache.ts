@@ -1,8 +1,8 @@
-import type { SkillRegistryCatalog } from '#registry/types'
+import type { SkillRegistrySnapshot } from '#registry/types'
 import type { SkillRegistryStore } from '#registry/storage/contracts'
 
 interface SnapshotCacheEntry {
-  value: Promise<SkillRegistryCatalog | null>
+  value: Promise<SkillRegistrySnapshot | null>
   bytes: number
 }
 
@@ -13,7 +13,7 @@ const encoder = new TextEncoder()
 
 export class RegistrySnapshotCache {
   private readonly entries = new Map<string, SnapshotCacheEntry>()
-  private readonly sizes = new WeakMap<SkillRegistryCatalog, number>()
+  private readonly sizes = new WeakMap<SkillRegistrySnapshot, number>()
 
   get(store: SkillRegistryStore, registryID: string, revision: string) {
     const key = `${registryID}/${revision}`
@@ -26,12 +26,12 @@ export class RegistrySnapshotCache {
 
     const entry: SnapshotCacheEntry = { value: Promise.resolve(null), bytes: 0 }
     entry.value = store.getSnapshot(registryID, revision)
-      .then((catalog) => {
-        if (catalog) {
-          entry.bytes = this.byteLength(catalog)
+      .then((snapshot) => {
+        if (snapshot) {
+          entry.bytes = this.byteLength(snapshot)
           if (this.entries.get(key) === entry) this.trim()
         }
-        return catalog
+        return snapshot
       })
       .catch((error) => {
         if (this.entries.get(key) === entry) this.entries.delete(key)
@@ -42,18 +42,18 @@ export class RegistrySnapshotCache {
     return entry.value
   }
 
-  assertRequestBudget(catalogs: SkillRegistryCatalog[]) {
-    const bytes = catalogs.reduce((total, catalog) => total + this.byteLength(catalog), 0)
+  assertRequestBudget(snapshots: SkillRegistrySnapshot[]) {
+    const bytes = snapshots.reduce((total, snapshot) => total + this.byteLength(snapshot), 0)
     if (bytes > maxRequestBytes) {
-      throw new Error(`Enabled Registry Catalogs exceed the ${maxRequestBytes}-byte request budget`)
+      throw new Error(`Enabled Registry Snapshots exceed the ${maxRequestBytes}-byte request budget`)
     }
   }
 
-  private byteLength(catalog: SkillRegistryCatalog) {
-    const cached = this.sizes.get(catalog)
+  private byteLength(snapshot: SkillRegistrySnapshot) {
+    const cached = this.sizes.get(snapshot)
     if (cached != null) return cached
-    const bytes = encoder.encode(JSON.stringify(catalog)).length
-    this.sizes.set(catalog, bytes)
+    const bytes = encoder.encode(JSON.stringify(snapshot)).length
+    this.sizes.set(snapshot, bytes)
     return bytes
   }
 

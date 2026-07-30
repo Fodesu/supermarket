@@ -1,0 +1,116 @@
+name: Check Registry updates
+
+on:
+  schedule:
+    # Change this cron to adjust how often upstream sources are checked.
+    - cron: "0 */12 * * *"
+  workflow_dispatch:
+    inputs:
+      registry:
+        description: Optional Registry ID to check
+        required: false
+        type: string
+
+concurrency:
+  group: registry-updates
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.updates.outputs.changed }}
+      matrix: ${{ steps.updates.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: main
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - id: updates
+        env:
+          REGISTRY: ${{ inputs.registry }}
+        run: |
+          if [[ -n "$REGISTRY" ]]; then
+            bun run registry:updates -- --check-registry "$REGISTRY"
+          else
+            bun run registry:updates
+          fi
+
+  propose:
+    needs: discover
+    if: needs.discover.outputs.changed == 'true'
+    permissions:
+      contents: write
+      pull-requests: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          fetch-depth: 0
+          ref: main
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - id: branch
+        env:
+          REGISTRY: ${{ matrix.registry }}
+        run: |
+          branch="automation/registry-update/$REGISTRY"
+          git fetch origin "$branch:refs/remotes/origin/$branch" || true
+          git switch -C "$branch"
+          echo "name=$branch" >> "$GITHUB_OUTPUT"
+      - name: Build approved and candidate releases
+        env:
+          REGISTRY: ${{ matrix.registry }}
+          CANDIDATE_REVISION: ${{ matrix.candidate_revision }}
+        run: |
+          bun run registry:updates -- \
+            --registry "$REGISTRY" \
+            --candidate "$CANDIDATE_REVISION" \
+            --report "$RUNNER_TEMP/registry-update.md"
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REGISTRY: ${{ matrix.registry }}
+          BRANCH: ${{ steps.branch.outputs.name }}
+        run: |
+          open_pr="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [[ -n "$open_pr" ]] \
+            && git rev-parse --verify "refs/remotes/origin/$BRANCH" >/dev/null 2>&1 \
+            && git diff --quiet "refs/remotes/origin/$BRANCH" -- \
+              "registries/$REGISTRY/registry.yaml" \
+              "registries/$REGISTRY/release.lock.json"; then
+            gh pr edit "$open_pr" \
+              --title "chore(registry): review $REGISTRY revision" \
+              --body-file "$RUNNER_TEMP/registry-update.md"
+            echo "$REGISTRY candidate is already proposed; left the reviewed commit unchanged."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            "registries/$REGISTRY/registry.yaml" \
+            "registries/$REGISTRY/release.lock.json"
+          git commit -m "chore(registry): propose $REGISTRY revision"
+          git push --force-with-lease origin "$BRANCH"
+          if [[ -n "$open_pr" ]]; then
+            gh pr edit "$open_pr" \
+              --title "chore(registry): review $REGISTRY revision" \
+              --body-file "$RUNNER_TEMP/registry-update.md"
+          else
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "chore(registry): review $REGISTRY revision" \
+              --body-file "$RUNNER_TEMP/registry-update.md"
+          fi

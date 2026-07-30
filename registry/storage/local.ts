@@ -1,9 +1,9 @@
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { MaintenanceBlobBackend } from './contracts'
-import { BlobSkillRegistryMaintenanceStore } from './maintenance'
+import type { BlobBackend } from './contracts'
+import { BlobSkillRegistryStore } from './blob'
 
-export class LocalBlobBackend implements MaintenanceBlobBackend {
+export class LocalBlobBackend implements BlobBackend {
   constructor(readonly root: string) {}
 
   private resolve(key: string) {
@@ -34,10 +34,6 @@ export class LocalBlobBackend implements MaintenanceBlobBackend {
       await rm(temporary, { force: true })
       throw error
     }
-  }
-
-  async delete(key: string) {
-    await rm(this.resolve(key), { force: true })
   }
 
   async list(prefix: string) {
@@ -79,7 +75,7 @@ export class LocalBlobBackend implements MaintenanceBlobBackend {
 
 }
 
-export class LocalSkillRegistryStore extends BlobSkillRegistryMaintenanceStore {
+export class LocalSkillRegistryStore extends BlobSkillRegistryStore {
   constructor(root = process.env.REGISTRY_DATA_DIR || path.resolve(process.cwd(), '.data/registries')) {
     super(new LocalBlobBackend(root))
   }

@@ -24,7 +24,6 @@ function definition(adapterType: SkillRegistryAdapter['type']): SkillRegistryDef
   return {
     schema_version: '1', id: 'example', name: 'Example', enabled: true, priority: 10, adapter,
     source: { type: 'local', path: 'source' },
-    refresh_interval_seconds: 43_200, retention: { snapshots: 30 },
   }
 }
 
@@ -92,7 +91,7 @@ describe('Skill Registry adapters', () => {
     }])
   })
 
-  test('identifies image MIME from bytes and rejects mislabeled images', async () => {
+  test('identifies image MIME from bytes and isolates packages with mislabeled images', async () => {
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
     expect(detectSkillImageContentType(png)).toBe('image/png')
     expect(detectSkillImageContentType(new TextEncoder().encode(
@@ -112,25 +111,13 @@ describe('Skill Registry adapters', () => {
     await writeFile(path.join(root, 'packages/demo/assets/logo.webp'), png)
     await writeSkill(root, 'packages/demo/skills/demo', 'Demo')
 
-    await expect(buildSkillCandidates({
+    const result = await buildSkillCandidates({
       definition: definition('codex_marketplace_skills'), sourceRoot: root,
-    })).rejects.toThrow('content does not match its file extension')
-  })
-
-  test('requires package scope for single-skill refreshes', async () => {
-    expect(() => buildSkillCandidates({
-      definition: definition('skill_directory'), sourceRoot: '.', skillFilter: 'demo',
-    })).toThrow('--skill requires --package')
-  })
-
-  test('requires package scope when a Marketplace package was removed', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'codex-removed-package-'))
-    roots.push(root)
-    await writeFile(path.join(root, 'marketplace.json'), JSON.stringify({ plugins: [] }))
-    await expect(buildSkillCandidates({
-      definition: definition('codex_marketplace_skills'), sourceRoot: root,
-      packageFilter: 'removed', skillFilter: 'skill', allowMissingScope: true,
-    })).rejects.toThrow('refresh the whole package')
+    })
+    expect(result.skills).toEqual([])
+    expect(result.diagnostics).toHaveLength(1)
+    expect(result.diagnostics[0]).toMatchObject({ package_id: 'demo', code: 'package_invalid' })
+    expect(result.diagnostics[0]!.message).toContain('content does not match its file extension')
   })
 
   test('rejects duplicate Marketplace package identities', async () => {
@@ -143,6 +130,56 @@ describe('Skill Registry adapters', () => {
     await expect(buildSkillCandidates({
       definition: definition('codex_marketplace_skills'), sourceRoot: root,
     })).rejects.toThrow('duplicate package ID')
+  })
+
+  test('isolates per-package failures as diagnostics instead of aborting the registry build', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'codex-package-isolation-'))
+    roots.push(root)
+    await writeFile(path.join(root, 'marketplace.json'), JSON.stringify({ plugins: [
+      { name: 'usable', source: { source: 'local', path: 'packages/usable' } },
+      { name: 'missing-dir', source: { source: 'local', path: 'packages/missing-dir' } },
+      { name: 'malformed-json', source: { source: 'local', path: 'packages/malformed-json' } },
+      { name: 'name-mismatch', source: { source: 'local', path: 'packages/name-mismatch' } },
+      { name: 'dup-skill', source: { source: 'local', path: 'packages/dup-skill' } },
+    ] }))
+
+    await mkdir(path.join(root, 'packages/usable/.codex-plugin'), { recursive: true })
+    await writeFile(path.join(root, 'packages/usable/.codex-plugin/plugin.json'), JSON.stringify({
+      name: 'usable', skills: './skills',
+    }))
+    await writeSkill(root, 'packages/usable/skills/demo', 'Demo')
+
+    // packages/missing-dir intentionally does not exist on disk.
+
+    await mkdir(path.join(root, 'packages/malformed-json/.codex-plugin'), { recursive: true })
+    await writeFile(path.join(root, 'packages/malformed-json/.codex-plugin/plugin.json'), '{ this is not json')
+
+    await mkdir(path.join(root, 'packages/name-mismatch/.codex-plugin'), { recursive: true })
+    await writeFile(path.join(root, 'packages/name-mismatch/.codex-plugin/plugin.json'), JSON.stringify({
+      name: 'something-else',
+    }))
+
+    await mkdir(path.join(root, 'packages/dup-skill/.codex-plugin'), { recursive: true })
+    await writeFile(path.join(root, 'packages/dup-skill/.codex-plugin/plugin.json'), JSON.stringify({
+      name: 'dup-skill', skills: ['./variant-a/demo', './variant-b/demo'],
+    }))
+    await writeSkill(root, 'packages/dup-skill/variant-a/demo', 'DemoA')
+    await writeSkill(root, 'packages/dup-skill/variant-b/demo', 'DemoB')
+
+    const result = await buildSkillCandidates({
+      definition: definition('codex_marketplace_skills'), sourceRoot: root,
+    })
+
+    expect(result.skills).toHaveLength(1)
+    expect(result.skills[0]).toMatchObject({ package_id: 'usable', skill_id: 'demo' })
+
+    expect(result.diagnostics).toHaveLength(4)
+    expect(result.diagnostics[0]).toMatchObject({ package_id: 'missing-dir', code: 'package_invalid' })
+    expect(result.diagnostics[1]).toMatchObject({ package_id: 'malformed-json', code: 'package_invalid' })
+    expect(result.diagnostics[2]).toMatchObject({ package_id: 'name-mismatch', code: 'package_invalid' })
+    expect(result.diagnostics[2]!.message).toContain('manifest name does not match')
+    expect(result.diagnostics[3]).toMatchObject({ package_id: 'dup-skill', code: 'package_invalid' })
+    expect(result.diagnostics[3]!.message).toContain('duplicate skill ID demo')
   })
 
   test('rejects skill roots that escape through symlinks', async () => {

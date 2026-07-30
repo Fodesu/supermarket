@@ -3,10 +3,10 @@ import * as z from 'zod/mini'
 import type {
   SkillArtifactBlob,
   SkillImageAsset,
-  SkillRegistryCatalog,
+  SkillRegistrySnapshot,
 } from '../types'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../types'
-import { assertRegistryID, isSkillRuntimeOS, skillInstallID } from '../definition'
+import { assertRegistryID, isSkillRuntimeOS } from '../definition'
 
 export function assertDigest(value: string): string {
   if (!/^[a-f0-9]{64}$/.test(value)) throw new Error(`Invalid artifact digest: ${value}`)
@@ -40,26 +40,31 @@ export function validateImageAsset(descriptor: SkillImageAsset, digest: string) 
   }
 }
 
-export function validateStoredCatalog(
-  catalog: SkillRegistryCatalog,
+export function validateStoredSnapshot(
+  snapshot: SkillRegistrySnapshot,
   registryID: string,
-  revision: string,
   key: string,
 ) {
-  if (!catalog || catalog.schema_version !== '1' || catalog.registry?.id !== registryID
-    || catalog.revision !== revision || !Array.isArray(catalog.skills) || !Array.isArray(catalog.diagnostics)) {
-    throw new Error(`Invalid stored Catalog: ${key}`)
+  if (!snapshot || snapshot.schema_version !== '1' || snapshot.registry_id !== registryID
+    || !Number.isSafeInteger(snapshot.registry_priority)
+    || !snapshot.source || (snapshot.source.type !== 'local' && snapshot.source.type !== 'git')
+    || typeof snapshot.source.revision !== 'string' || !snapshot.source.revision
+    || !Array.isArray(snapshot.skills) || !Array.isArray(snapshot.diagnostics)) {
+    throw new Error(`Invalid stored Snapshot: ${key}`)
   }
-  for (const skill of catalog.skills) {
-    if (!skill || skill.schema_version !== '1' || skill.registry_id !== registryID || !skill.artifact) {
-      throw new Error(`Invalid stored Catalog Skill: ${key}`)
+  if (snapshot.source.type === 'git' && typeof snapshot.source.repository !== 'string') {
+    throw new Error(`Invalid stored Snapshot source: ${key}`)
+  }
+  for (const skill of snapshot.skills) {
+    if (!skill || !skill.artifact || typeof skill.source_path !== 'string' || !skill.source_path
+      || !Array.isArray(skill.files) || !Array.isArray(skill.tags) || !skill.author
+      || typeof skill.author.name !== 'string'
+      || (skill.author.email !== undefined && typeof skill.author.email !== 'string')) {
+      throw new Error(`Invalid stored Snapshot Skill: ${key}`)
     }
     try {
       assertRegistryID(skill.package_id, 'package ID')
       assertRegistryID(skill.skill_id, 'skill ID')
-      if (skill.install_id !== skillInstallID(registryID, skill.package_id, skill.skill_id)) {
-        throw new Error('Catalog Skill install identity does not match its coordinates')
-      }
       if (skill.runtime_requirements && (
         !Array.isArray(skill.runtime_requirements.os)
         || skill.runtime_requirements.os.length === 0
@@ -68,6 +73,10 @@ export function validateStoredCatalog(
         throw new Error('Catalog Skill contains invalid runtime requirements')
       }
       assertDigest(skill.artifact.digest)
+      if (!Number.isSafeInteger(skill.artifact.size) || skill.artifact.size < 0
+        || skill.artifact.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) {
+        throw new Error('Catalog Skill contains invalid Artifact size')
+      }
       for (const image of [skill.icon?.card, skill.icon?.detail, skill.icon?.dark]) {
         if (image) {
           assertDigest(image.digest)
@@ -75,7 +84,7 @@ export function validateStoredCatalog(
         }
       }
     } catch {
-      throw new Error(`Invalid stored Catalog Artifact reference: ${key}`)
+      throw new Error(`Invalid stored Snapshot Artifact reference: ${key}`)
     }
   }
 }

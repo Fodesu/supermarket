@@ -2,16 +2,9 @@ import type {
   SkillArtifactBlob,
   SkillArtifactDescriptor,
   SkillImageAsset,
-  SkillRegistryCatalog,
+  SkillRegistrySnapshot,
   SkillRegistryState,
 } from '../types'
-
-export class IndeterminateRemoteMutationError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options)
-    this.name = 'IndeterminateRemoteMutationError'
-  }
-}
 
 export interface BlobBackend {
   get(key: string): Promise<Uint8Array | null>
@@ -19,23 +12,23 @@ export interface BlobBackend {
   list(prefix: string): Promise<string[]>
   listPrefixes(prefix: string): Promise<string[]>
   getStream?(key: string): Promise<{ body: ReadableStream<Uint8Array>; size?: number } | null>
+  // Paired with putConditional: a backend implementing one should implement both,
+  // so a caller can learn a key's current version and later write conditioned on it.
+  getWithVersion?(key: string): Promise<{ value: Uint8Array; version: string } | null>
   putConditional?(key: string, value: Uint8Array, expectedVersion: string | null): Promise<string | null>
-}
-
-export interface MaintenanceBlobBackend extends BlobBackend {
-  delete(key: string): Promise<void>
 }
 
 export interface SkillRegistryStore {
   listRegistryIDs(): Promise<string[]>
   getState(registryID: string): Promise<SkillRegistryState | null>
-  putState(state: SkillRegistryState): Promise<void>
-  getSnapshot(registryID: string, revision: string): Promise<SkillRegistryCatalog | null>
+  getStateWithVersion(registryID: string): Promise<{ state: SkillRegistryState | null; version: string | null }>
+  putState(state: SkillRegistryState, expectedVersion?: string | null): Promise<void>
+  getSnapshot(registryID: string, revision: string): Promise<SkillRegistrySnapshot | null>
   publishSnapshot(
-    catalog: SkillRegistryCatalog,
-    state: SkillRegistryState,
-    assertWriterActive?: () => void,
-  ): Promise<void>
+    bytes: Uint8Array,
+    definition: SkillRegistryState['definition'],
+    options?: { expectedVersion?: string | null; publishedAt?: string },
+  ): Promise<string>
   putArtifact(descriptor: SkillArtifactDescriptor, bytes: Uint8Array): Promise<{ stored: boolean }>
   getArtifact(digest: string): Promise<{ descriptor: SkillArtifactBlob; bytes: Uint8Array } | null>
   getArtifactStream?(digest: string): Promise<{
@@ -48,13 +41,4 @@ export interface SkillRegistryStore {
     descriptor: SkillImageAsset
     body: ReadableStream<Uint8Array> | Uint8Array
   } | null>
-}
-
-export interface SkillRegistryMaintenanceStore extends SkillRegistryStore {
-  listSnapshots(registryID: string): Promise<SkillRegistryCatalog[]>
-  deleteSnapshot(registryID: string, revision: string): Promise<void>
-  listArtifactDigests(): Promise<string[]>
-  deleteArtifact(digest: string): Promise<void>
-  listImageDigests(): Promise<string[]>
-  deleteImage(digest: string): Promise<void>
 }

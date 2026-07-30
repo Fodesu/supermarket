@@ -2,6 +2,7 @@ import { lstat, open, readdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { MAX_SKILL_ARTIFACT_FILES, MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES } from './types'
 import type { TarFileInput } from '#lib/archive'
+import { compareCanonicalText } from '#lib/order'
 
 const ignoredDirectories = new Set(['.git', 'node_modules'])
 
@@ -65,7 +66,7 @@ export async function readDirectoryFiles(root: string, allowedRoot = root): Prom
   let fileCount = 0
   const visit = async (directory: string) => {
     const entries = await readdir(directory, { withFileTypes: true })
-    entries.sort((a, b) => a.name.localeCompare(b.name))
+    entries.sort((a, b) => compareCanonicalText(a.name, b.name))
     for (const entry of entries) {
       if (ignoredDirectories.has(entry.name)) continue
       const target = path.join(directory, entry.name)

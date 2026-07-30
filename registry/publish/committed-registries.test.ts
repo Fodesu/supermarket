@@ -5,8 +5,8 @@ import { buildSkillCandidates } from '../adapters/index'
 import { loadSkillRegistryDefinitions } from '../definitions/repository'
 import { materializeSkillRegistrySource } from '../sources/index'
 
-describe('Committed Skill Registries', () => {
-  test('publishes every committed Memoh Skill with its complete file set', async () => {
+describe('Repository-owned Skill Registries', () => {
+  test('discovers every Memoh Skill with its complete file set', async () => {
     const projectRoot = path.resolve(import.meta.dirname, '../..')
     const definition = (await loadSkillRegistryDefinitions(projectRoot)).find((item) => item.id === 'memoh')!
     const sourceRoot = path.join(projectRoot, 'registries/memoh/skills')

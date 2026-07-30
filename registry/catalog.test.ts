@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import type { CatalogSkill, SkillRegistryCatalog, SkillRegistryDefinition } from './types'
-import { normalizeSkillCategory, searchCatalogSkills, summarizeCurrentCatalog, summarizeSkillCategories } from './catalog'
+import type { CatalogSkill, SkillRegistrySnapshot } from './types'
+import { compactCatalogSkill } from './snapshot'
+import { normalizeSkillCategory, searchCatalogSkills, summarizeCurrentSnapshot, summarizeSkillCategories } from './catalog'
 
 function skill(overrides: Partial<CatalogSkill> = {}): CatalogSkill {
   return {
@@ -50,28 +51,28 @@ describe('Skill Catalog search', () => {
     expect(normalizeSkillCategory('Data & Analytics')).toEqual({
       id: 'data-analytics', name: 'Data & Analytics', sourceName: 'Data & Analytics',
     })
+    expect(normalizeSkillCategory('---')).toEqual({ id: 'other', name: 'Other', sourceName: '---' })
     expect(summarizeSkillCategories([skill(), skill({ registry_id: 'memoh', install_id: 'memoh--documents--pdf' })]))
       .toEqual([{ id: 'productivity', name: 'Productivity', count: 2, registries: [{ id: 'memoh', count: 1 }, { id: 'openai', count: 1 }] }])
   })
 
   test('builds a compact current Snapshot summary for Registry listings', () => {
-    const registry: SkillRegistryDefinition = {
-      schema_version: '1', id: 'openai', name: 'OpenAI', enabled: true, priority: 10,
-      adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' },
-      refresh_interval_seconds: 43_200, retention: { snapshots: 30 },
-    }
-    const catalog: SkillRegistryCatalog = {
-      schema_version: '1', registry,
-      revision: 'a'.repeat(64),
-      source_revision: 'source-revision',
-      synced_at: '2026-01-01T00:00:00.000Z',
-      skills: [skill(), skill({ package_id: 'other', category: 'other', category_name: 'Other' })],
+    const snapshot: SkillRegistrySnapshot = {
+      schema_version: '1',
+      registry_id: 'openai',
+      registry_priority: 10,
+      source: { type: 'git', revision: 'source-revision', repository: 'https://example.test/repo.git' },
+      skills: [skill(), skill({ package_id: 'other', category: 'other', category_name: 'Other' })].map(compactCatalogSkill),
       diagnostics: [{ package_id: 'skipped', code: 'no_skills' as const, message: 'No skills' }],
     }
-    expect(summarizeCurrentCatalog(catalog)).toEqual({
-      revision: catalog.revision,
+    expect(summarizeCurrentSnapshot(
+      snapshot,
+      'a'.repeat(64),
+      '2026-01-01T00:00:00.000Z',
+    )).toEqual({
+      revision: 'a'.repeat(64),
       source_revision: 'source-revision',
-      synced_at: '2026-01-01T00:00:00.000Z',
+      published_at: '2026-01-01T00:00:00.000Z',
       skill_count: 2,
       package_count: 2,
       category_count: 2,

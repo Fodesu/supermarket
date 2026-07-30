@@ -1,4 +1,5 @@
 import { createGzipEncoder, packTar, type TarEntry } from 'modern-tar'
+import { compareCanonicalText } from './order'
 
 export const MAX_TAR_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
 
@@ -23,7 +24,7 @@ export async function createTar(
   if (prefix) assertSafeArchivePath(prefix)
   let contentBytes = 0
   const entries: TarEntry[] = Object.entries(files)
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => compareCanonicalText(left, right))
     .map(([name, input]) => {
       assertSafeArchivePath(name)
       const archivePath = prefix ? `${prefix}/${name}` : name
