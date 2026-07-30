@@ -91,12 +91,13 @@ function fileChanges(
 }
 
 function skillMarkdownPatch(previous?: CandidateFile, candidate?: CandidateFile) {
-  if (!previous?.text || !candidate?.text || previous.digest === candidate.digest) return undefined
+  if (previous?.text === undefined && candidate?.text === undefined) return undefined
+  if (previous?.digest && previous.digest === candidate?.digest) return undefined
   const patch = createTwoFilesPatch(
     'SKILL.md (approved)',
     'SKILL.md (candidate)',
-    previous.text,
-    candidate.text,
+    previous?.text ?? '',
+    candidate?.text ?? '',
     '',
     '',
     { context: 3 },
@@ -143,6 +144,10 @@ export function diffRegistryCandidates(
           artifact_after: newSkill.artifact.digest,
           metadata: [],
           files: fileChanges(undefined, candidate.review.get(key)),
+          skill_md_patch: skillMarkdownPatch(
+            undefined,
+            candidate.review.get(key)?.files['SKILL.md'],
+          ),
         })
         continue
       }
@@ -153,6 +158,10 @@ export function diffRegistryCandidates(
           artifact_before: oldSkill.artifact.digest,
           metadata: [],
           files: fileChanges(previous.review.get(key), undefined),
+          skill_md_patch: skillMarkdownPatch(
+            previous.review.get(key)?.files['SKILL.md'],
+            undefined,
+          ),
         })
         continue
       }
