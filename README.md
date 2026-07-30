@@ -9,6 +9,7 @@ supermarket/
 ├── registries/
 │   ├── memoh/
 │   │   ├── registry.yaml            # Repository-owned Registry definition
+│   │   ├── release.lock.json        # Approved Snapshot revision
 │   │   ├── plugins/<plugin-id>/     # Plugin manifests and optional bundle files
 │   │   └── skills/<skill-id>/       # Repository-owned Skill sources
 │   └── openai/
@@ -26,7 +27,7 @@ supermarket/
 └── vite.config.ts
 ```
 
-Plugins are repository-owned bundles. Registry Skills are published from Registry definitions into immutable Snapshots and Artifacts stored under `.data/registries` locally or R2 when deployed. A Snapshot is the complete runtime catalog: shared Registry and source metadata appears once at its root, while each Skill retains its searchable metadata, complete file list, and digest-addressed archive and icon references. Git commits the source definition and `release.lock.json`, which locks the canonical Snapshot revision; R2 stores the full Snapshot. The Registry's single mutable `state.json` selects the active Snapshot and carries its compact listing summary and publication time.
+Plugins are repository-owned bundles included in the API build. Registry Skills are published from Registry definitions into immutable Snapshots and Artifacts stored under `.data/registries` locally or R2 when deployed. A Snapshot is the complete runtime catalog: shared Registry and source metadata appears once at its root, while each Skill retains its searchable metadata, complete file list, and digest-addressed archive and icon references. Git commits the source definition and `release.lock.json`, which locks the canonical Snapshot revision; R2 stores the full Snapshot. Each Registry's single mutable `state.json` selects the active Snapshot and carries its compact listing summary and publication time.
 
 ## API
 
@@ -48,6 +49,7 @@ Base URL: `https://supermarket.memoh.ai`
 | GET | `/api/tags` | List tags from Plugins and enabled Registry Skills |
 
 Registry Skills use the identity `(registry_id, package_id, skill_id)`. The reference client installs them into `<registry_id>+<package_id>+<skill_id>`.
+The installation identity is supplied by the client rather than embedded as an archive directory; the archive itself contains the Skill files at its root.
 `runtime_requirements` is published only when the source provides structured compatibility metadata. An `os` filter returns only Skills that explicitly declare support for that OS; missing compatibility metadata is treated as unknown rather than as support for every platform.
 
 ## Contributing
@@ -115,13 +117,16 @@ metadata:
 Instructions and documentation go here.
 ```
 
-2. Validate and publish it locally:
+2. Regenerate the approved Snapshot lock, then validate and publish it locally:
 
 ```bash
+bun run registry:lock -- --registry memoh
 bun run registry:validate
 bun run registry:publish -- --registry memoh
 bun run dev
 ```
+
+Commit the resulting `release.lock.json` change with the Skill source. Skill archives include regular files under the Skill root, including binary assets; `.git` and `node_modules` directories are ignored. An archive is limited to 1,000 files, 5 MiB uncompressed, and 6 MiB compressed.
 
 ### Adding a Registry
 
@@ -142,9 +147,16 @@ source:
   tracking_ref: main
 ```
 
-Supported sources are `local` and HTTPS `git`; adapters are `skill_directory` and `codex_marketplace_skills`. A local source path is relative to the directory containing its `registry.yaml`. A Git source must pin an exact commit in `revision`; optional `tracking_ref` tells the update workflow which upstream ref to check. Every enabled Registry must commit `release.lock.json`, whose `snapshot_revision` must equal the canonical Snapshot rebuilt from the approved source. Run `bun run registry:validate` before publishing.
+Generate its initial release lock and validate it:
 
-The scheduled `Check Registry updates` GitHub workflow resolves each `tracking_ref`. If every resolved commit already equals its approved `revision`, it makes no change and opens no PR. Each changed Registry gets its own candidate PR, so unrelated upstreams can be reviewed and approved independently. An open PR is updated only when its candidate definition changes; repeated checks of the same upstream revision leave its commit and existing reviews untouched. The PR groups changes by package and Skill, lists metadata and file changes, and includes a bounded `SKILL.md` diff. It commits the candidate source revision and the resulting `release.lock.json`; CI rebuilds the candidate and requires the Snapshot revision to match the lock before publication. Merging that PR is the explicit approval step. The schedule is configured in `.github/workflows/registry-updates.yml`, and a manual run can optionally select one Registry.
+```bash
+bun run registry:lock -- --registry example
+bun run registry:validate
+```
+
+Supported sources are `local` and HTTPS `git`; adapters are `skill_directory` and `codex_marketplace_skills`. A local source path is relative to the directory containing its `registry.yaml`. A Git source must pin an exact commit in `revision`; optional `tracking_ref` opts it into upstream update checks. `catalog_path` belongs only to the `codex_marketplace_skills` Adapter and is resolved from that Adapter's source root. Every enabled Registry must commit `release.lock.json`, whose `snapshot_revision` must equal the canonical Snapshot rebuilt from the approved source.
+
+The scheduled `Check Registry updates` GitHub workflow runs every 12 hours and resolves each configured `tracking_ref`. If every resolved commit already equals its approved `revision`, it makes no change and opens no PR. Each changed Registry gets its own candidate PR, so unrelated upstreams can be reviewed and approved independently. An open PR is updated only when its candidate definition changes; repeated checks of the same upstream revision leave its commit and existing reviews untouched. The PR groups changes by package and Skill, lists metadata and file changes, and includes bounded diffs for changed UTF-8 text files. Binary and larger files remain in the Artifact and are identified in the report by path, digest, size, and mode. It commits the candidate source revision and the resulting `release.lock.json`; CI rebuilds the candidate and requires the Snapshot revision to match the lock before publication. Merging that PR is the explicit approval step. The schedule is configured in `.github/workflows/registry-updates.yml`, and a manual run can optionally select one Registry.
 
 If publisher, Adapter, or archive code intentionally changes the generated Snapshot without changing the pinned upstream commit, regenerate the lock with `bun run registry:lock -- --registry <id>` and review its revision change in the same PR.
 
