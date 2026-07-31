@@ -1,9 +1,11 @@
 import { defineHandler } from 'nitro'
-import { getAllPluginTags } from '../utils/plugin-loader'
-import { getAllSkillTags } from '../utils/skill-loader'
+import { getAllPluginTags } from '#server/services/plugin'
+import { getRegistrySkillTags } from '#server/services/skill-registry'
 
-export default defineHandler(async () => {
-  const [pluginTags, skillTags] = await Promise.all([getAllPluginTags(), getAllSkillTags()])
-  const merged = new Set([...pluginTags, ...skillTags])
+export default defineHandler(async (event) => {
+  const [pluginTags, registrySkillTags] = await Promise.all([
+    getAllPluginTags(), getRegistrySkillTags(event),
+  ])
+  const merged = new Set([...pluginTags, ...registrySkillTags])
   return { tags: [...merged].sort() }
 })

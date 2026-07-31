@@ -39,6 +39,6 @@ export interface McpStdio extends McpBase {
 
 export type McpConfig = McpSSE | McpHTTP | McpStdio
 
-export interface McpEntry extends McpConfig {
+export type McpEntry = McpConfig & {
   id: string
 }

@@ -1,15 +1,6 @@
 import { defineHandler } from 'nitro'
-import { getQuery } from 'h3'
-import { getAllPlugins } from '../../utils/plugin-loader'
+import { getValidatedQuery } from 'h3'
+import { getAllPlugins } from '#server/services/plugin'
+import { parsePluginQuery } from '#server/services/plugin-query'
 
-export default defineHandler(async (event) => {
-  const query = getQuery(event)
-
-  return getAllPlugins({
-    q: query.q as string | undefined,
-    tag: query.tag as string | undefined,
-    page: query.page ? Number(query.page) : undefined,
-    limit: query.limit ? Number(query.limit) : undefined,
-  })
-})
-
+export default defineHandler(async (event) => getAllPlugins(await getValidatedQuery(event, parsePluginQuery)))
