@@ -61,6 +61,10 @@ async function exerciseStore(store: LocalSkillRegistryStore | BlobSkillRegistryS
   expect(artifact?.descriptor).toEqual({
     format: 'memoh_skill_v1', digest, size: artifactBytes.length, content_type: 'application/gzip',
   })
+  const streamed = await store.getArtifactStream(digest)
+  expect(streamed?.body).toBeInstanceOf(ReadableStream)
+  if (!(streamed?.body instanceof ReadableStream)) throw new Error('Expected an Artifact stream')
+  expect(new Uint8Array(await new Response(streamed.body).arrayBuffer())).toEqual(artifactBytes)
   await expect(store.putArtifact(descriptor, artifactBytes)).resolves.toEqual({ stored: false })
   await expect(store.putArtifact({ ...descriptor, size: artifactBytes.length + 1 }, artifactBytes)).rejects.toThrow('size')
   await expect(store.putArtifact({ ...descriptor, size: MAX_SKILL_ARTIFACT_COMPRESSED_BYTES + 1 }, artifactBytes))
@@ -272,9 +276,11 @@ describe('Registry state compare-and-swap', () => {
       publishedAt: '2026-01-01T00:00:00.000Z',
     })
 
-    const { state: readBeforeRace, version: staleVersion } = await store.getStateWithVersion('example')
-    expect(readBeforeRace?.current_snapshot).toBe(firstRevision)
-    expect(staleVersion).not.toBeNull()
+    const readBeforeRace = await store.getStateWithVersion('example')
+    expect(readBeforeRace.state?.current_snapshot).toBe(firstRevision)
+    expect(readBeforeRace.versioning).toBe('conditional')
+    if (readBeforeRace.versioning !== 'conditional') throw new Error('Expected conditional versioning')
+    const staleVersion = readBeforeRace.version
 
     // A second publish run wins the race and moves the pointer forward.
     const second = snapshot('source-two')
@@ -282,7 +288,9 @@ describe('Registry state compare-and-swap', () => {
     const secondRevision = await store.publishSnapshot(secondBytes, definition, {
       publishedAt: '2026-01-02T00:00:00.000Z',
     })
-    const { version: currentVersion } = await store.getStateWithVersion('example')
+    const currentRead = await store.getStateWithVersion('example')
+    if (currentRead.versioning !== 'conditional') throw new Error('Expected conditional versioning')
+    const currentVersion = currentRead.version
     expect(currentVersion).not.toBe(staleVersion)
 
     // A late write from the first run, still holding the stale version, must
@@ -306,7 +314,9 @@ describe('Registry state compare-and-swap', () => {
     const store = new BlobSkillRegistryStore(new R2BlobBackend(mockR2Bucket()))
     const first = serializeRegistrySnapshot(snapshot('source'))
     await store.publishSnapshot(first, definition)
-    const { version: staleVersion } = await store.getStateWithVersion('example')
+    const staleRead = await store.getStateWithVersion('example')
+    if (staleRead.versioning !== 'conditional') throw new Error('Expected conditional versioning')
+    const staleVersion = staleRead.version
 
     const concurrent = serializeRegistrySnapshot(snapshot('source-two'))
     const concurrentRevision = await store.publishSnapshot(concurrent, definition)
@@ -318,13 +328,21 @@ describe('Registry state compare-and-swap', () => {
     expect((await store.getState('example'))?.current_snapshot).toBe(concurrentRevision)
   })
 
-  test('Local backend has no version tracking, so putState always writes through', async () => {
+  test('Local backend explicitly reports single-writer semantics and rejects conditional writes', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'skill-registry-cas-'))
     roots.push(root)
     const store = new LocalSkillRegistryStore(root)
     await store.publishSnapshot(serializeRegistrySnapshot(snapshot()), definition)
-    const { version } = await store.getStateWithVersion('example')
-    expect(version).toBeNull()
+    const result = await store.getStateWithVersion('example')
+    expect(result).toMatchObject({ versioning: 'none' })
+    await expect(store.putState(result.state!, null)).rejects.toThrow('does not support conditional writes')
+  })
+
+  test('rejects backends that implement only half of the conditional-write contract', () => {
+    const { backend } = memoryBackend()
+    Object.assign(backend, { async getWithVersion() { return null } })
+    expect(() => new BlobSkillRegistryStore(backend))
+      .toThrow('must implement getWithVersion and putConditional together')
   })
 })
 

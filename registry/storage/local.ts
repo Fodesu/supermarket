@@ -1,9 +1,10 @@
-import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { BlobBackend } from './contracts'
+import type { StreamingBlobBackend } from './contracts'
 import { BlobSkillRegistryStore } from './blob'
 
-export class LocalBlobBackend implements BlobBackend {
+export class LocalBlobBackend implements StreamingBlobBackend {
   constructor(readonly root: string) {}
 
   private resolve(key: string) {
@@ -34,6 +35,32 @@ export class LocalBlobBackend implements BlobBackend {
       await rm(temporary, { force: true })
       throw error
     }
+  }
+
+  async getStream(key: string) {
+    const target = this.resolve(key)
+    let size: number
+    try {
+      const metadata = await stat(target)
+      if (!metadata.isFile()) throw new Error(`Expected regular file: ${target}`)
+      size = metadata.size
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw error
+    }
+    const input = createReadStream(target)
+    const iterator = input[Symbol.asyncIterator]()
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        const { done, value } = await iterator.next()
+        if (done) controller.close()
+        else controller.enqueue(value)
+      },
+      cancel() {
+        input.destroy()
+      },
+    })
+    return { body, size }
   }
 
   async list(prefix: string) {

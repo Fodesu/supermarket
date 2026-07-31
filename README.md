@@ -184,7 +184,7 @@ bun run registry:api:deploy:test
 bun run registry:api:deploy:production
 ```
 
-Use the `Publish approved Registries` workflow with the `test` environment to test publication without touching production. For a local build, `bun run registry:publish` writes to `.data/registries`.
+Use the `Publish approved Registries` workflow with the `test` environment to test publication without touching production. For a local build, `bun run registry:publish` writes to `.data/registries`. The local backend uses atomic file replacement and streaming reads, but intentionally assumes a single publisher and does not emulate R2 ETag compare-and-swap; use the R2-backed tests or test environment to verify concurrent publication behavior.
 
 ## License
 

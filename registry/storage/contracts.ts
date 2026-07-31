@@ -11,17 +11,42 @@ export interface BlobBackend {
   put(key: string, value: Uint8Array): Promise<void>
   list(prefix: string): Promise<string[]>
   listPrefixes(prefix: string): Promise<string[]>
-  getStream?(key: string): Promise<{ body: ReadableStream<Uint8Array>; size?: number } | null>
-  // Paired with putConditional: a backend implementing one should implement both,
-  // so a caller can learn a key's current version and later write conditioned on it.
-  getWithVersion?(key: string): Promise<{ value: Uint8Array; version: string } | null>
-  putConditional?(key: string, value: Uint8Array, expectedVersion: string | null): Promise<string | null>
 }
+
+export interface StreamingBlobBackend extends BlobBackend {
+  getStream(key: string): Promise<{ body: ReadableStream<Uint8Array>; size?: number } | null>
+}
+
+export interface ConditionalBlobBackend extends BlobBackend {
+  getWithVersion(key: string): Promise<{ value: Uint8Array; version: string } | null>
+  putConditional(key: string, value: Uint8Array, expectedVersion: string | null): Promise<string | null>
+}
+
+export function streamingBlobBackend(backend: BlobBackend) {
+  const candidate = backend as BlobBackend & Partial<StreamingBlobBackend>
+  return typeof candidate.getStream === 'function'
+    ? candidate as StreamingBlobBackend
+    : undefined
+}
+
+export function conditionalBlobBackend(backend: BlobBackend) {
+  const candidate = backend as BlobBackend & Partial<ConditionalBlobBackend>
+  const canReadVersion = typeof candidate.getWithVersion === 'function'
+  const canWriteConditionally = typeof candidate.putConditional === 'function'
+  if (canReadVersion !== canWriteConditionally) {
+    throw new Error('Blob backend must implement getWithVersion and putConditional together')
+  }
+  return canReadVersion ? candidate as ConditionalBlobBackend : undefined
+}
+
+export type SkillRegistryStateRead =
+  | { state: SkillRegistryState | null; versioning: 'none' }
+  | { state: SkillRegistryState | null; versioning: 'conditional'; version: string | null }
 
 export interface SkillRegistryStore {
   listRegistryIDs(): Promise<string[]>
   getState(registryID: string): Promise<SkillRegistryState | null>
-  getStateWithVersion(registryID: string): Promise<{ state: SkillRegistryState | null; version: string | null }>
+  getStateWithVersion(registryID: string): Promise<SkillRegistryStateRead>
   putState(state: SkillRegistryState, expectedVersion?: string | null): Promise<void>
   getSnapshot(registryID: string, revision: string): Promise<SkillRegistrySnapshot | null>
   publishSnapshot(
