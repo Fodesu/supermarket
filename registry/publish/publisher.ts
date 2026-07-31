@@ -42,7 +42,11 @@ export class SkillRegistryPublisher {
     definition: SkillRegistryDefinition,
     releaseLock?: RegistryReleaseLock,
   ): Promise<SkillRegistryPublishResult> {
-    const { state: previousState, version: stateVersion } = await this.store.getStateWithVersion(definition.id)
+    const stateRead = await this.store.getStateWithVersion(definition.id)
+    const previousState = stateRead.state
+    const stateVersion = stateRead.versioning === 'conditional'
+      ? stateRead.version
+      : undefined
     const current = previousState?.current_snapshot
       ? await this.store.getSnapshot(definition.id, previousState.current_snapshot)
       : null

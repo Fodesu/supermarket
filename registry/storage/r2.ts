@@ -1,4 +1,4 @@
-import type { BlobBackend } from './contracts'
+import type { ConditionalBlobBackend, StreamingBlobBackend } from './contracts'
 
 interface R2ObjectLike {
   arrayBuffer(): Promise<ArrayBuffer>
@@ -20,7 +20,7 @@ interface R2BucketLike {
   }>
 }
 
-export class R2BlobBackend implements BlobBackend {
+export class R2BlobBackend implements ConditionalBlobBackend, StreamingBlobBackend {
   constructor(private readonly bucket: R2BucketLike) {}
 
   async get(key: string) {

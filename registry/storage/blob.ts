@@ -13,7 +13,10 @@ import { sha256 } from '../digest'
 import { registrySnapshotRevision, sameBytes, serializeRegistrySnapshot } from '../snapshot'
 import {
   type BlobBackend,
+  conditionalBlobBackend,
+  type SkillRegistryStateRead,
   type SkillRegistryStore,
+  streamingBlobBackend,
 } from './contracts'
 import {
   assertDigest,
@@ -66,7 +69,13 @@ async function readJSON<T>(backend: BlobBackend, key: string, maxBytes: number):
 }
 
 export class BlobSkillRegistryStore implements SkillRegistryStore {
-  constructor(protected readonly backend: BlobBackend) {}
+  private readonly conditionalBackend
+  private readonly streamingBackend
+
+  constructor(protected readonly backend: BlobBackend) {
+    this.conditionalBackend = conditionalBlobBackend(backend)
+    this.streamingBackend = streamingBlobBackend(backend)
+  }
 
   async listRegistryIDs(): Promise<string[]> {
     const prefixes = await this.backend.listPrefixes('skill-registries/')
@@ -83,22 +92,22 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
   // Paired with putState's expectedVersion: callers that need to detect a
   // concurrent publish read the version here first, then pass it back to
   // putState so a stale write is rejected instead of silently clobbering.
-  async getStateWithVersion(registryID: string) {
+  async getStateWithVersion(registryID: string): Promise<SkillRegistryStateRead> {
     const id = assertRegistryID(registryID, 'registry ID')
     const key = `skill-registries/${id}/state.json`
-    if (this.backend.getWithVersion) {
-      const result = await this.backend.getWithVersion(key)
-      if (!result) return { state: null, version: null }
+    if (this.conditionalBackend) {
+      const result = await this.conditionalBackend.getWithVersion(key)
+      if (!result) return { state: null, versioning: 'conditional' as const, version: null }
       if (result.value.length > MAX_REGISTRY_STATE_BYTES) {
         throw new Error(`Stored JSON object exceeds ${MAX_REGISTRY_STATE_BYTES} bytes: ${key}`)
       }
       const state = JSON.parse(decoder.decode(result.value)) as SkillRegistryState
       validateState(state, id)
-      return { state, version: result.version }
+      return { state, versioning: 'conditional' as const, version: result.version }
     }
     const state = await readJSON<SkillRegistryState>(this.backend, key, MAX_REGISTRY_STATE_BYTES)
     if (state) validateState(state, id)
-    return { state, version: null }
+    return { state, versioning: 'none' as const }
   }
 
   async putState(state: SkillRegistryState, expectedVersion?: string | null) {
@@ -107,8 +116,11 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     const bytes = jsonBytes(state)
     if (bytes.length > MAX_REGISTRY_STATE_BYTES) throw new Error(`Registry state exceeds ${MAX_REGISTRY_STATE_BYTES} bytes: ${id}`)
     const key = `skill-registries/${id}/state.json`
-    if (expectedVersion !== undefined && this.backend.putConditional) {
-      const version = await this.backend.putConditional(key, bytes, expectedVersion)
+    if (expectedVersion !== undefined) {
+      if (!this.conditionalBackend) {
+        throw new Error(`Registry state backend does not support conditional writes: ${id}`)
+      }
+      const version = await this.conditionalBackend.putConditional(key, bytes, expectedVersion)
       if (!version) throw new Error(`Registry state changed concurrently, refusing to overwrite: ${id}`)
       return
     }
@@ -175,8 +187,8 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     for (let attempt = 1; attempt <= 3; attempt++) {
       if (attempt > 1) await new Promise((resolve) => setTimeout(resolve, attempt === 2 ? 500 : 1_500))
       try {
-        if (this.backend.putConditional) {
-          const created = await this.backend.putConditional(key, bytes, null)
+        if (this.conditionalBackend) {
+          const created = await this.conditionalBackend.putConditional(key, bytes, null)
           if (created) return true
           const stored = await this.backend.get(key)
           if (!stored) throw new Error(`${label} appeared but could not be read: ${key}`)
@@ -230,8 +242,8 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
 
   async getArtifactStream(digest: string) {
     assertDigest(digest)
-    if (this.backend.getStream) {
-      const streamed = await this.backend.getStream(`skill-artifacts/${digest}.tar.gz`)
+    if (this.streamingBackend) {
+      const streamed = await this.streamingBackend.getStream(`skill-artifacts/${digest}.tar.gz`)
       if (!streamed) return null
       if (streamed.size == null) throw new Error(`Stored Artifact size is unavailable: ${digest}`)
       const descriptor: SkillArtifactBlob = {
@@ -299,8 +311,8 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     )
     if (!descriptor) return null
     validateImageAsset(descriptor, digest)
-    if (this.backend.getStream) {
-      const streamed = await this.backend.getStream(`skill-images/${digest}`)
+    if (this.streamingBackend) {
+      const streamed = await this.streamingBackend.getStream(`skill-images/${digest}`)
       if (!streamed) return null
       if (streamed.size != null && streamed.size !== descriptor.size) throw new Error(`Stored Skill image size is corrupt: ${digest}`)
       return { descriptor, body: verifiedAssetStream(streamed.body, descriptor, 'Skill image') }

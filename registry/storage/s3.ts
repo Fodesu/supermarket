@@ -4,7 +4,7 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3'
-import type { BlobBackend } from './contracts'
+import type { ConditionalBlobBackend, StreamingBlobBackend } from './contracts'
 
 export interface S3BlobBackendOptions {
   accountID: string
@@ -13,7 +13,7 @@ export interface S3BlobBackendOptions {
   bucket: string
 }
 
-export class S3BlobBackend implements BlobBackend {
+export class S3BlobBackend implements ConditionalBlobBackend, StreamingBlobBackend {
   private readonly client: S3Client
 
   constructor(private readonly options: S3BlobBackendOptions) {
@@ -27,13 +27,12 @@ export class S3BlobBackend implements BlobBackend {
     })
   }
 
-  async get(key: string) {
+  private async getObject(key: string) {
     try {
-      const response = await this.client.send(new GetObjectCommand({
+      return await this.client.send(new GetObjectCommand({
         Bucket: this.options.bucket,
         Key: key,
       }))
-      return response.Body ? new Uint8Array(await response.Body.transformToByteArray()) : null
     } catch (error) {
       const failure = error as { name?: string; $metadata?: { httpStatusCode?: number } }
       if (failure.name === 'NoSuchKey' || failure.$metadata?.httpStatusCode === 404) return null
@@ -41,19 +40,26 @@ export class S3BlobBackend implements BlobBackend {
     }
   }
 
+  async get(key: string) {
+    const response = await this.getObject(key)
+    return response?.Body
+      ? new Uint8Array(await response.Body.transformToByteArray())
+      : null
+  }
+
   async getWithVersion(key: string) {
-    try {
-      const response = await this.client.send(new GetObjectCommand({
-        Bucket: this.options.bucket,
-        Key: key,
-      }))
-      if (!response.Body) return null
-      if (!response.ETag) throw new Error(`S3 object read without an ETag: ${key}`)
-      return { value: new Uint8Array(await response.Body.transformToByteArray()), version: response.ETag }
-    } catch (error) {
-      const failure = error as { name?: string; $metadata?: { httpStatusCode?: number } }
-      if (failure.name === 'NoSuchKey' || failure.$metadata?.httpStatusCode === 404) return null
-      throw error
+    const response = await this.getObject(key)
+    if (!response?.Body) return null
+    if (!response.ETag) throw new Error(`S3 object read without an ETag: ${key}`)
+    return { value: new Uint8Array(await response.Body.transformToByteArray()), version: response.ETag }
+  }
+
+  async getStream(key: string) {
+    const response = await this.getObject(key)
+    if (!response?.Body) return null
+    return {
+      body: response.Body.transformToWebStream() as ReadableStream<Uint8Array>,
+      size: response.ContentLength,
     }
   }
 
