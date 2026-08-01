@@ -108,17 +108,13 @@ export function renderPluginReleaseDiffs(
   diffs: PluginReleaseDiff[],
   maximum = 20_000,
   fullReportURL?: string,
-  persistentDetails = false,
 ) {
   if (!diffs.length) return ''
   const approvalNotice = 'Merging this PR approves both the Registry release and these pinned Plugin releases.'
-  const persistentNotice = persistentDetails
-    ? ' The remaining descriptors are posted as persistent Full Plugin Skill descriptor report comments on this PR.'
-    : ''
   const artifactNotice = fullReportURL
     ? ` [Download the full workflow report](${fullReportURL}) while it is retained.`
     : ''
-  const truncationNotice = `_Plugin release details truncated at a complete Skill boundary.${persistentNotice}${artifactNotice}_`
+  const truncationNotice = `_Plugin release details truncated at a complete Skill boundary.${artifactNotice}_`
   const reservedFooter = approvalNotice.length >= truncationNotice.length
     ? approvalNotice
     : truncationNotice

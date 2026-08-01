@@ -4,7 +4,6 @@ import type { RegistryReleaseDiff } from '#registry/review/release-diff'
 import {
   MAX_REGISTRY_UPDATE_REPORT_LENGTH,
   renderFullRegistryUpdateReport,
-  renderPluginReviewComments,
   renderRegistryUpdateReport,
 } from './check-updates'
 
@@ -65,22 +64,14 @@ describe('Registry update report', () => {
       undefined,
       pluginDiffs,
       fullReportURL,
-      true,
     )
     const fullReport = renderFullRegistryUpdateReport(registryDiff, undefined, pluginDiffs)
-    const comments = renderPluginReviewComments(pluginDiffs, `example:${'2'.repeat(40)}`)
     expect(report.length).toBeLessThanOrEqual(MAX_REGISTRY_UPDATE_REPORT_LENGTH)
     expect(report).toContain('Report truncated at a complete Skill boundary')
     expect(report).toContain('Plugin release details truncated at a complete Skill boundary')
     expect(report).toContain(fullReportURL)
-    expect(report).toContain('persistent Full Plugin Skill descriptor report comments')
     expect(fullReport).toContain('plugin-99')
     expect(fullReport).toContain('example/tools/skill-9')
     expect(fullReport).not.toContain('truncated at a complete Skill boundary')
-    expect(comments.length).toBeGreaterThan(1)
-    expect(comments.every((comment) => comment.length <= MAX_REGISTRY_UPDATE_REPORT_LENGTH)).toBe(true)
-    expect(comments[0]).toContain('registry-plugin-review:example:')
-    expect(comments.join('\n')).toContain('plugin-99')
-    expect(comments.join('\n')).toContain('example/tools/skill-9')
   })
 })
