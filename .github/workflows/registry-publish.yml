@@ -3,15 +3,6 @@ name: Publish approved Registries
 on:
   push:
     branches: [main]
-    paths:
-      - "registries/**"
-      - "plugin/**"
-      - "registry/**"
-      - "lib/archive.ts"
-      - "scripts/registry/publish.ts"
-      - "workers/api/wrangler.jsonc"
-      - "package.json"
-      - "bun.lock"
   workflow_dispatch:
     inputs:
       environment:

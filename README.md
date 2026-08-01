@@ -179,7 +179,7 @@ The scheduled `Check Registry updates` GitHub workflow runs every 12 hours and r
 
 If publisher, Adapter, or archive code intentionally changes the generated Snapshot without changing the pinned upstream commit, regenerate the lock with `bun run registry:lock -- --registry <id>` and review its revision change in the same PR.
 
-After an approved change reaches `main`, the `Publish approved Registries` workflow first requires the checked-out SHA to still be the current `main`, then repeats local publication, tests, type checking, and the Cloudflare build against that merge SHA. It rechecks `main` immediately before the remote write, so a workflow superseded during validation exits before publishing. Only after those checks pass does it upload digest-addressed Skill archives and icons, then immutable Snapshots and their state pointers. It next uploads Plugin Bundles and immutable release descriptors before switching each Plugin state pointer. The API Worker remains read-only. Historical immutable objects are retained; reference-aware GC is intentionally deferred until Memoh can provide authoritative Artifact references.
+After an approved change reaches `main`, the `Publish approved Registries` workflow first requires the checked-out SHA to still be the current `main`, then repeats local publication, tests, type checking, and the Cloudflare build against that merge SHA. It rechecks `main` immediately before the remote write, so a workflow superseded during validation exits before publishing. Every `main` push triggers this idempotent workflow; this ensures a non-Registry commit that supersedes a queued Registry publication also validates and publishes the latest approved state. Only after those checks pass does it upload digest-addressed Skill archives and icons, then immutable Snapshots and their state pointers. It next uploads Plugin Bundles and immutable release descriptors before switching each Plugin state pointer. The API Worker remains read-only. Historical immutable objects are retained; reference-aware GC is intentionally deferred until Memoh can provide authoritative Artifact references.
 
 Test and production bucket names have a single source of truth: the matching environments in `workers/api/wrangler.jsonc`. Before the first deployment, authenticate Wrangler, enable R2, and create those buckets:
 
@@ -191,7 +191,7 @@ bunx wrangler r2 bucket create memoh-supermarket
 
 Bucket creation is a one-time operation; use `bunx wrangler r2 bucket list` to check whether they already exist. Configure GitHub environments named `test` and `production`, each with bucket-scoped `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` secrets, plus `CLOUDFLARE_ACCOUNT_ID`. Protect the `production` environment if publication should require an additional approval.
 
-Repository governance is part of the publication boundary. Allow GitHub Actions to create pull requests and dispatch workflows, require the CI check and at least one human review on `main`, dismiss stale approvals when a candidate commit changes, require approval of the latest push, restrict updates to `automation/registry-update/**`, and restrict bypasses. Closing an immutable candidate PR records rejection; reopen that PR explicitly to reconsider the same candidate.
+Repository governance is part of the publication boundary. The workflow alone does not prove that a `main` commit came from an approved PR. Allow GitHub Actions to create pull requests and dispatch workflows, require the CI check and at least one human review on `main`, require branches to be up to date or use a merge queue, dismiss stale approvals when a candidate commit changes, require approval of the latest push, restrict updates to `automation/registry-update/**`, and prohibit bypasses. These controls are required for the Registry PR to be the human approval boundary. Closing an immutable candidate PR records rejection; reopen that PR explicitly to reconsider the same candidate.
 
 Deploy the read-only API Worker with:
 
@@ -204,6 +204,8 @@ bun run registry:api:deploy:production
 ```
 
 Use the `Publish approved Registries` workflow with the `test` environment to test publication without touching production. For a local build, `bun run registry:publish` writes to `.data/registries`. The local backend uses atomic file replacement and streaming reads, but intentionally assumes a single publisher and does not emulate R2 ETag compare-and-swap; use the R2-backed tests or test environment to verify concurrent publication behavior.
+
+The `uncompressed_size` Artifact field is intentionally enforced without a legacy object fallback. Roll it out in this order: publish every approved Registry and Plugin release to R2 with the new Publisher, deploy and verify the Supermarket Worker, then deploy the matching Memoh release. Reversing that order can make old R2 objects fail validation or make Memoh reject an old descriptor.
 
 ## License
 
