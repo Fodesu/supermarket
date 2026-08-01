@@ -6,6 +6,7 @@ import type {
   SkillRegistryDefinition,
   SkillRegistrySnapshot,
 } from '../types'
+import path from 'node:path'
 import { buildSkillCandidates, skillAdapterBootstrapPaths } from '../adapters/index'
 import { packageSkill } from '../artifacts/build'
 import { sha256 } from '../digest'
@@ -16,7 +17,11 @@ import {
   serializeRegistrySnapshot,
 } from '../snapshot'
 import { compareCanonicalText } from '#lib/order'
-import { MAX_REGISTRY_SNAPSHOT_BYTES, RegistryBuildBudget } from '../budget'
+import {
+  MAX_REGISTRY_SNAPSHOT_BYTES,
+  RegistryBuildBudget,
+  rethrowRegistryBudgetError,
+} from '../budget'
 
 const maxReviewTextBytes = 64 * 1024
 
@@ -73,6 +78,14 @@ function reviewText(bytes: Uint8Array, sourcePath: string, budget: RegistryBuild
   return text
 }
 
+function artifactDiagnosticMessage(error: unknown, sourceRoot: string) {
+  const message = error instanceof Error ? error.message : String(error)
+  const root = path.resolve(sourceRoot)
+  const stable = [root, root.replaceAll(path.sep, '/'), root.replaceAll(path.sep, '\\')]
+    .reduce((value, prefix) => value.replaceAll(prefix, '<source>'), message)
+  return `Skipped package: ${stable}`
+}
+
 export async function buildSkillRegistryCandidate(
   definition: SkillRegistryDefinition,
   projectRoot: string,
@@ -104,61 +117,88 @@ export async function buildSkillRegistryCandidate(
     const artifacts = new Map<string, CandidateArtifact>()
     const images = new Map<string, CandidateImage>()
     const review = new Map<string, CandidateSkillReview>()
+    const diagnostics = [...result.diagnostics]
+    const packages = new Map<string, typeof result.skills>()
     for (const candidate of result.skills) {
-      const packaged = await packageSkill(candidate.files)
-      const descriptor: SkillArtifactDescriptor = {
-        format: 'memoh_skill_v1',
-        digest: packaged.digest,
-        size: packaged.bytes.length,
-        content_type: 'application/gzip',
-      }
-      artifacts.set(descriptor.digest, { descriptor, bytes: packaged.bytes })
-      for (const image of candidate.icon_assets ?? []) {
-        images.set(image.descriptor.digest, image)
-      }
-      const sourcePath = [definition.source.path, candidate.source_path].filter(Boolean).join('/')
-      const skill: CatalogSkill = {
-        schema_version: '1',
-        registry_id: definition.id,
-        registry_priority: definition.priority,
-        package_id: candidate.package_id,
-        skill_id: candidate.skill_id,
-        install_id: candidate.install_id,
-        name: candidate.name,
-        description: candidate.description,
-        author: candidate.author,
-        homepage: candidate.homepage,
-        tags: candidate.tags,
-        category: candidate.category,
-        category_name: candidate.category_name,
-        source_category: candidate.source_category,
-        runtime_requirements: candidate.runtime_requirements,
-        source: {
-          type: definition.source.type,
-          revision: source.revision,
-          path: sourcePath,
-          repository: definition.source.type === 'git' ? definition.source.url : undefined,
-        },
-        files: Object.keys(candidate.files).sort(),
-        icon: candidate.icon,
-        artifact: descriptor,
-      }
-      skills.push(skill)
-      const files: Record<string, CandidateFile> = Object.create(null) as Record<string, CandidateFile>
-      for (const [name, file] of Object.entries(candidate.files)
-        .sort(([left], [right]) => compareCanonicalText(left, right))) {
-        files[name] = {
-          digest: await sha256(file.bytes),
-          size: file.bytes.length,
-          mode: file.mode,
-          text: reviewText(file.bytes, `${candidate.package_id}/${candidate.skill_id}/${name}`, budget),
+      const packageSkills = packages.get(candidate.package_id) ?? []
+      packageSkills.push(candidate)
+      packages.set(candidate.package_id, packageSkills)
+    }
+    for (const [packageID, candidates] of packages) {
+      let packagedCandidates: Array<{
+        candidate: (typeof candidates)[number]
+        packaged: Awaited<ReturnType<typeof packageSkill>>
+      }>
+      try {
+        packagedCandidates = []
+        for (const candidate of candidates) {
+          packagedCandidates.push({ candidate, packaged: await packageSkill(candidate.files) })
         }
+      } catch (error) {
+        rethrowRegistryBudgetError(error)
+        diagnostics.push({
+          package_id: packageID,
+          code: 'package_invalid',
+          message: artifactDiagnosticMessage(error, source.root),
+        })
+        continue
       }
-      review.set(`${candidate.package_id}/${candidate.skill_id}`, {
-        package_id: candidate.package_id,
-        skill_id: candidate.skill_id,
-        files,
-      })
+
+      for (const { candidate, packaged } of packagedCandidates) {
+        const descriptor: SkillArtifactDescriptor = {
+          format: 'memoh_skill_v1',
+          digest: packaged.digest,
+          size: packaged.bytes.length,
+          content_type: 'application/gzip',
+        }
+        artifacts.set(descriptor.digest, { descriptor, bytes: packaged.bytes })
+        for (const image of candidate.icon_assets ?? []) {
+          images.set(image.descriptor.digest, image)
+        }
+        const sourcePath = [definition.source.path, candidate.source_path].filter(Boolean).join('/')
+        const skill: CatalogSkill = {
+          schema_version: '1',
+          registry_id: definition.id,
+          registry_priority: definition.priority,
+          package_id: candidate.package_id,
+          skill_id: candidate.skill_id,
+          install_id: candidate.install_id,
+          name: candidate.name,
+          description: candidate.description,
+          author: candidate.author,
+          homepage: candidate.homepage,
+          tags: candidate.tags,
+          category: candidate.category,
+          category_name: candidate.category_name,
+          source_category: candidate.source_category,
+          runtime_requirements: candidate.runtime_requirements,
+          source: {
+            type: definition.source.type,
+            revision: source.revision,
+            path: sourcePath,
+            repository: definition.source.type === 'git' ? definition.source.url : undefined,
+          },
+          files: Object.keys(candidate.files).sort(),
+          icon: candidate.icon,
+          artifact: descriptor,
+        }
+        skills.push(skill)
+        const files: Record<string, CandidateFile> = Object.create(null) as Record<string, CandidateFile>
+        for (const [name, file] of Object.entries(candidate.files)
+          .sort(([left], [right]) => compareCanonicalText(left, right))) {
+          files[name] = {
+            digest: await sha256(file.bytes),
+            size: file.bytes.length,
+            mode: file.mode,
+            text: reviewText(file.bytes, `${candidate.package_id}/${candidate.skill_id}/${name}`, budget),
+          }
+        }
+        review.set(`${candidate.package_id}/${candidate.skill_id}`, {
+          package_id: candidate.package_id,
+          skill_id: candidate.skill_id,
+          files,
+        })
+      }
     }
 
     skills.sort((a, b) => compareCanonicalText(a.name, b.name)
@@ -167,7 +207,6 @@ export async function buildSkillRegistryCandidate(
     if (!skills.length) {
       throw new Error(`${definition.id}: Registry build produced zero skills`)
     }
-    const diagnostics = [...result.diagnostics]
     diagnostics.sort((a, b) => compareCanonicalText(a.package_id ?? '', b.package_id ?? '')
       || compareCanonicalText(a.code, b.code))
     const snapshot: SkillRegistrySnapshot = {
