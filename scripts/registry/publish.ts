@@ -10,7 +10,7 @@ import { BlobSkillRegistryStore } from '#registry/storage/blob'
 import type { SkillRegistryStore } from '#registry/storage/contracts'
 import { LocalSkillRegistryStore } from '#registry/storage/local'
 import { S3BlobBackend } from '#registry/storage/s3'
-import { sha256 } from '#registry/digest'
+import { assertSkillArtifactsAvailable } from '#registry/storage/availability'
 import { buildPluginReleaseCandidates } from '#plugin/release'
 import { PluginReleasePublisher } from '#plugin/publish/publisher'
 import {
@@ -184,6 +184,7 @@ export async function assertPartialRegistryDependencies(input: {
   candidates: Array<Pick<SkillRegistryCandidate, 'definition' | 'revision'>>
   store: SkillRegistryStore
 }) {
+  const artifacts: Array<{ digest: string; size: number }> = []
   for (const candidate of input.candidates) {
     if (candidate.definition.id === input.selectedRegistry) continue
     const state = await input.store.getState(candidate.definition.id)
@@ -200,46 +201,21 @@ export async function assertPartialRegistryDependencies(input: {
         + `${candidate.definition.id}/${candidate.revision}; run a full Registry publication first`,
       )
     }
-    const descriptors = new Map<string, number>()
     for (const skill of snapshot.skills) {
-      const previousSize = descriptors.get(skill.artifact.digest)
-      if (previousSize != null && previousSize !== skill.artifact.size) {
-        throw new Error(
-          `${input.selectedRegistry}: approved Registry Snapshot has conflicting Artifact sizes: `
-          + `${candidate.definition.id}/${skill.artifact.digest}`,
-        )
-      }
-      descriptors.set(skill.artifact.digest, skill.artifact.size)
+      artifacts.push(skill.artifact)
     }
-    for (const [digest, size] of descriptors) {
-      let artifact
-      try {
-        artifact = await input.store.getArtifact(digest)
-      } catch (error) {
-        throw new Error(
-          `${input.selectedRegistry}: approved Registry Artifact is corrupt: `
-          + `${candidate.definition.id}/${digest}; repair it with a full Registry publication`,
-          { cause: error },
-        )
-      }
-      if (!artifact) {
-        throw new Error(
-          `${input.selectedRegistry}: approved Registry Artifact is missing: `
-          + `${candidate.definition.id}/${digest}; run a full Registry publication first`,
-        )
-      }
-      if (artifact.descriptor.format !== 'memoh_skill_v1'
-        || artifact.descriptor.content_type !== 'application/gzip'
-        || artifact.descriptor.digest !== digest
-        || artifact.descriptor.size !== size
-        || artifact.bytes.length !== size
-        || await sha256(artifact.bytes) !== digest) {
-        throw new Error(
-          `${input.selectedRegistry}: approved Registry Artifact does not match its Snapshot: `
-          + `${candidate.definition.id}/${digest}; repair it with a full Registry publication`,
-        )
-      }
-    }
+  }
+  try {
+    await assertSkillArtifactsAvailable(
+      input.store,
+      artifacts,
+      `${input.selectedRegistry}: approved Registry Artifact`,
+    )
+  } catch (error) {
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}; repair it with a full Registry publication`,
+      { cause: error },
+    )
   }
 }
 
@@ -249,16 +225,19 @@ async function preflightPartialPublication(input: {
   definitions: SkillRegistryDefinition[]
   store: SkillRegistryStore
 }) {
-  const candidates = await Promise.all(input.definitions
-    .filter((definition) => definition.enabled)
-    .map(async (definition) => {
-      const [candidate, lock] = await Promise.all([
-        buildSkillRegistryCandidate(definition, input.projectRoot),
-        loadRegistryReleaseLock(input.projectRoot, definition),
-      ])
-      assertReleaseCandidate(definition, lock, candidate.revision)
-      return candidate
-    }))
+  const candidates: Array<Pick<SkillRegistryCandidate, 'definition' | 'revision' | 'snapshot'>> = []
+  for (const definition of input.definitions.filter((item) => item.enabled)) {
+    const [candidate, lock] = await Promise.all([
+      buildSkillRegistryCandidate(definition, input.projectRoot),
+      loadRegistryReleaseLock(input.projectRoot, definition),
+    ])
+    assertReleaseCandidate(definition, lock, candidate.revision)
+    candidates.push({
+      definition: candidate.definition,
+      revision: candidate.revision,
+      snapshot: candidate.snapshot,
+    })
+  }
   await assertPartialRegistryDependencies({
     selectedRegistry: input.selectedRegistry,
     candidates,
@@ -283,6 +262,13 @@ if (import.meta.main) {
   }
   const environment = rawEnvironment as DeploymentEnvironment | undefined
   const loaded = await loadSkillRegistryDefinitionResults(projectRoot)
+  if (registryID && loaded.failures.length) {
+    throw new AggregateError(
+      loaded.failures.map((failure) => failure.error),
+      `Partial Registry publication requires every Registry definition to be valid: `
+      + loaded.failures.map((failure) => failure.registry).join(', '),
+    )
+  }
   const definitions = registryID
     ? loaded.definitions.filter((definition) => definition.id === registryID)
     : loaded.definitions
@@ -340,7 +326,7 @@ if (import.meta.main) {
     const plugins = await publishPluginReleases({
       candidates,
       store: stores.plugins,
-      publisher: new PluginReleasePublisher(stores.plugins),
+      publisher: new PluginReleasePublisher(stores.plugins, stores.skills),
       locks: pluginLocks,
     })
     for (const result of plugins.results) console.log(result)

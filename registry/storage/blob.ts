@@ -164,7 +164,7 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     }
     const revision = assertDigest(registrySnapshotRevision(bytes))
     const key = `skill-registries/${id}/snapshots/${revision}.json`
-    await putImmutableObject(this.backend, key, bytes, 'Snapshot')
+    await putImmutableObject(this.backend, key, bytes, 'Snapshot', { repairCorrupt: true })
     const publishedAt = options.publishedAt ?? new Date().toISOString()
     if (!Number.isFinite(Date.parse(publishedAt))) throw new Error(`Invalid Snapshot publication time: ${publishedAt}`)
     await this.putState({
@@ -183,7 +183,9 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     if (descriptor.size !== bytes.length) throw new Error('Artifact size does not match its content')
     if (descriptor.digest !== await sha256(bytes)) throw new Error('Artifact digest does not match its content')
     const archiveKey = `skill-artifacts/${descriptor.digest}.tar.gz`
-    return { stored: await putImmutableObject(this.backend, archiveKey, bytes, 'Artifact') }
+    return {
+      stored: await putImmutableObject(this.backend, archiveKey, bytes, 'Artifact', { repairCorrupt: true }),
+    }
   }
 
   async getArtifact(digest: string) {

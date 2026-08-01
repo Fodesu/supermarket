@@ -1,4 +1,6 @@
 import type { PluginReleaseStore } from '../storage/contracts'
+import type { SkillRegistryStore } from '#registry/storage/contracts'
+import { assertSkillArtifactsAvailable } from '#registry/storage/availability'
 import { sha256 } from '#registry/digest'
 import {
   parsePluginRelease,
@@ -17,7 +19,10 @@ export interface PluginReleasePublishResult {
 }
 
 export class PluginReleasePublisher {
-  constructor(private readonly store: PluginReleaseStore) {}
+  constructor(
+    private readonly store: PluginReleaseStore,
+    private readonly skillStore?: SkillRegistryStore,
+  ) {}
 
   async publish(
     candidate: PluginReleaseCandidate,
@@ -42,20 +47,37 @@ export class PluginReleasePublisher {
       || descriptor.digest !== await sha256(candidate.artifact.bytes)) {
       throw new Error(`${candidate.plugin_id}: Plugin release Artifact does not match its content`)
     }
+    if (release.skills.length) {
+      if (!this.skillStore) throw new Error(`${candidate.plugin_id}: Skill Registry Store is required`)
+      await assertSkillArtifactsAvailable(
+        this.skillStore,
+        release.skills.map((skill) => skill.artifact),
+        `${candidate.plugin_id}: referenced Skill Artifact`,
+      )
+    }
 
     const stateRead = await this.store.getStateWithVersion(candidate.plugin_id)
     const previous = stateRead.state
     const expectedVersion = stateRead.versioning === 'conditional' ? stateRead.version : undefined
+    let currentAvailable = true
     if (previous?.current_release) {
-      const current = await this.store.getRelease(candidate.plugin_id, previous.current_release)
-      if (!current) throw new Error(`Current Plugin release is missing: ${candidate.plugin_id}/${previous.current_release}`)
+      try {
+        currentAvailable = Boolean(await this.store.getRelease(candidate.plugin_id, previous.current_release))
+      } catch {
+        currentAvailable = false
+      }
     }
     await this.store.putArtifact(descriptor, candidate.artifact.bytes)
-    if (previous?.enabled && previous.current_release === revision) {
+    if (previous?.enabled && previous.current_release === revision && currentAvailable) {
       return { plugin: candidate.plugin_id, revision, skipped: 'unchanged' }
     }
 
-    const existing = await this.store.getRelease(candidate.plugin_id, revision)
+    let existing = null
+    try {
+      existing = await this.store.getRelease(candidate.plugin_id, revision)
+    } catch {
+      existing = null
+    }
     const publishedRevision = await this.store.publishRelease(
       candidate.releaseBytes,
       candidate.plugin_id,
@@ -67,7 +89,7 @@ export class PluginReleasePublisher {
     return {
       plugin: candidate.plugin_id,
       revision,
-      ...(existing ? { skipped: 'recovered' as const } : {}),
+      ...(existing || previous?.current_release === revision ? { skipped: 'recovered' as const } : {}),
     }
   }
 
