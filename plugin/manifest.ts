@@ -1,8 +1,9 @@
 import { parse as parseYaml } from 'yaml'
 import * as z from 'zod/mini'
 import type { PluginManifest, PluginSkillReference } from './types'
+import { isIdentifier } from '#registry/definition'
 
-const pluginIDPattern = /^[a-z0-9][a-z0-9._-]*$/
+const isRegistryID = (value: string) => value !== 'user' && isIdentifier(value)
 
 const trimmed = z.pipe(z.string(), z.transform((value) => value.trim()))
 const nonEmpty = trimmed.check(z.minLength(1, 'is required'))
@@ -44,7 +45,7 @@ const authRequirementSchema = z.object({
 })
 
 const mcpBaseShape = {
-  key: nonEmpty,
+  key: nonEmpty.check(z.refine(isIdentifier, 'Invalid MCP key')),
   name: optionalNonEmpty,
   display_name: optionalNonEmpty,
   description: optionalNonEmpty,
@@ -60,9 +61,9 @@ const mcpSchema = z.discriminatedUnion('transport', [
 ])
 
 const skillSchema = z.object({
-  registry_id: nonEmpty.check(z.refine((value) => pluginIDPattern.test(value), 'Invalid Registry ID')),
-  package_id: nonEmpty.check(z.refine((value) => pluginIDPattern.test(value), 'Invalid package ID')),
-  skill_id: nonEmpty.check(z.refine((value) => pluginIDPattern.test(value), 'Invalid Skill ID')),
+  registry_id: nonEmpty.check(z.refine(isRegistryID, 'Invalid Registry ID')),
+  package_id: nonEmpty.check(z.refine(isIdentifier, 'Invalid package ID')),
+  skill_id: nonEmpty.check(z.refine(isIdentifier, 'Invalid Skill ID')),
 })
 
 function uniqueKeys(label: string) {
@@ -86,7 +87,7 @@ function uniqueSkillReferences(items: PluginSkillReference[], ctx: z.core.$Refin
 
 const pluginManifestSchema = z.object({
   schema_version: z.literal('1'),
-  id: nonEmpty.check(z.refine((value) => pluginIDPattern.test(value), 'Invalid Plugin ID')),
+  id: nonEmpty.check(z.refine(isIdentifier, 'Invalid Plugin ID')),
   name: nonEmpty,
   version: nonEmpty,
   description: nonEmpty,

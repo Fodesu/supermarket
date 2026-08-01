@@ -1,7 +1,21 @@
 import { describe, expect, test } from 'bun:test'
-import { parseSkillRegistryDefinition, resolveSkillRuntimeRequirements, safeRelativePath } from './definition'
+import {
+  assertIdentifier,
+  assertRegistryID,
+  parseSkillRegistryDefinition,
+  resolveSkillRuntimeRequirements,
+  safeRelativePath,
+} from './definition'
 
 describe('Skill Registry definitions', () => {
+  test('enforces identifiers that Memoh preserves without rewriting', () => {
+    expect(assertIdentifier('build-web_apps')).toBe('build-web_apps')
+    for (const value of ['Foo', 'foo.bar', '.foo', 'foo..bar', 'foo/bar']) {
+      expect(() => assertIdentifier(value)).toThrow('Invalid ID')
+    }
+    expect(() => assertRegistryID('user')).toThrow('Reserved registry ID')
+  })
+
   test('parses sources and accepts only structured Skill OS metadata', () => {
     const definition = parseSkillRegistryDefinition({
       schema_version: '1', id: 'example', name: 'Example',
