@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { parsePluginManifest, pluginSkillReferenceIdentity } from './manifest'
+import { MAX_PLUGIN_RELEASE_SKILLS } from './types'
 
 describe('Plugin manifests', () => {
   test('parses a complete remote MCP Plugin', () => {
@@ -73,5 +74,12 @@ describe('Plugin manifests', () => {
     expect(() => parsePluginManifest({
       ...base, skills: [{ ...reference, skill_id: 'notion..search' }],
     })).toThrow('Invalid Skill ID')
+    expect(() => parsePluginManifest({
+      ...base,
+      skills: Array.from({ length: MAX_PLUGIN_RELEASE_SKILLS + 1 }, (_, index) => ({
+        ...reference,
+        skill_id: `skill-${index}`,
+      })),
+    })).toThrow(`${MAX_PLUGIN_RELEASE_SKILLS} Skill limit`)
   })
 })

@@ -44,10 +44,12 @@ export interface SkillArtifactDescriptor {
   format: 'memoh_skill_v1'
   digest: string
   size: number
+  /** Aggregate bytes of regular file bodies, excluding tar framing. */
+  uncompressed_size: number
   content_type: 'application/gzip'
 }
 
-export type SkillArtifactBlob = SkillArtifactDescriptor
+export type SkillArtifactBlob = Omit<SkillArtifactDescriptor, 'uncompressed_size'>
 
 export type SkillImageContentType = 'image/svg+xml' | 'image/png' | 'image/jpeg' | 'image/webp'
 
@@ -111,7 +113,7 @@ export interface SnapshotSkill {
   source_path: string
   files: string[]
   icon?: SkillIcon
-  artifact: Pick<SkillArtifactDescriptor, 'digest' | 'size'>
+  artifact: Pick<SkillArtifactDescriptor, 'digest' | 'size' | 'uncompressed_size'>
 }
 
 export interface SnapshotSource {

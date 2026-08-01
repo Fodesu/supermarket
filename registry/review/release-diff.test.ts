@@ -39,6 +39,7 @@ function skill(digest: string, description: string): CatalogSkill {
       format: 'memoh_skill_v1',
       digest,
       size: 1,
+      uncompressed_size: 1,
       content_type: 'application/gzip',
     },
   }

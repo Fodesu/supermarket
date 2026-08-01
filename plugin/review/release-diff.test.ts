@@ -21,7 +21,7 @@ function candidate(revision: string, registryRevision: string, skillDigest: stri
       registry_revision: registryRevision, source_revision: 'source',
       install_id: 'memoh+tools+search',
       artifact: {
-        format: 'memoh_skill_v1', digest: skillDigest, size: 20,
+        format: 'memoh_skill_v1', digest: skillDigest, size: 20, uncompressed_size: 30,
         content_type: 'application/gzip',
       },
     }],

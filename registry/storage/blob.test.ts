@@ -53,7 +53,8 @@ async function exerciseStore(store: LocalSkillRegistryStore | BlobSkillRegistryS
   const artifactBytes = new TextEncoder().encode('artifact')
   const digest = await sha256(artifactBytes)
   const descriptor: SkillArtifactDescriptor = {
-    format: 'memoh_skill_v1', digest, size: artifactBytes.length, content_type: 'application/gzip',
+    format: 'memoh_skill_v1', digest, size: artifactBytes.length,
+    uncompressed_size: artifactBytes.length, content_type: 'application/gzip',
   }
   await store.putArtifact(descriptor, artifactBytes)
   const artifact = await store.getArtifact(digest)
@@ -131,6 +132,7 @@ describe('Immutable digest-addressed uploads', () => {
       artifact: {
         digest: 'b'.repeat(64),
         size: -1,
+        uncompressed_size: 1,
       },
     })
     expect(() => validateStoredSnapshot(
@@ -179,7 +181,8 @@ describe('Immutable digest-addressed uploads', () => {
     const bytes = new TextEncoder().encode('artifact-retry')
     const digest = await sha256(bytes)
     const descriptor: SkillArtifactDescriptor = {
-      format: 'memoh_skill_v1', digest, size: bytes.length, content_type: 'application/gzip',
+      format: 'memoh_skill_v1', digest, size: bytes.length,
+      uncompressed_size: bytes.length, content_type: 'application/gzip',
     }
 
     // The PUT reported an unknown outcome but actually landed: reading the key
@@ -380,7 +383,8 @@ describe('SkillRegistryStore contract', () => {
     objects.set(`skill-artifacts/${digest}.tar.gz`, new TextEncoder().encode('corrupt!'))
     const original = new TextEncoder().encode('artifact')
     await expect(store.putArtifact({
-      format: 'memoh_skill_v1', digest, size: original.length, content_type: 'application/gzip',
+      format: 'memoh_skill_v1', digest, size: original.length,
+      uncompressed_size: original.length, content_type: 'application/gzip',
     }, original)).resolves.toEqual({ stored: true })
     const repaired = await store.getArtifactStream(digest)
     if (!(repaired?.body instanceof ReadableStream)) throw new Error('Expected a repaired R2 Artifact stream')

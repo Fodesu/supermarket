@@ -104,6 +104,7 @@ export async function buildSkillRegistryCandidate(
         format: 'memoh_skill_v1',
         digest: packaged.digest,
         size: packaged.bytes.length,
+        uncompressed_size: packaged.uncompressedSize,
         content_type: 'application/gzip',
       }
       artifacts.set(descriptor.digest, { descriptor, bytes: packaged.bytes })

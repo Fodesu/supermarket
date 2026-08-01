@@ -14,5 +14,7 @@ export async function packageSkill(files: Record<string, SkillSourceFile>) {
   if (bytes.length > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) {
     throw new Error(`Compressed Skill Artifact exceeds ${MAX_SKILL_ARTIFACT_COMPRESSED_BYTES} bytes`)
   }
-  return { bytes, digest: await sha256(bytes) }
+  const uncompressedSize = Object.values(files)
+    .reduce((total, file) => total + file.bytes.length, 0)
+  return { bytes, digest: await sha256(bytes), uncompressedSize }
 }

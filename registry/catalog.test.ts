@@ -13,7 +13,7 @@ function skill(overrides: Partial<CatalogSkill> = {}): CatalogSkill {
     source: { type: 'git', revision: 'abc', path: 'plugins/documents/skills/pdf', repository: 'https://example.test/repo.git' },
     files: ['SKILL.md'],
     artifact: {
-      format: 'memoh_skill_v1', digest: 'a'.repeat(64), size: 100,
+      format: 'memoh_skill_v1', digest: 'a'.repeat(64), size: 100, uncompressed_size: 200,
       content_type: 'application/gzip',
     },
     ...overrides,
