@@ -10,7 +10,7 @@ import {
 export interface PluginReleasePublishResult {
   plugin: string
   revision?: string
-  skipped?: 'unchanged' | 'recovered' | 'disabled'
+  skipped?: 'unchanged' | 'disabled'
 }
 
 export class PluginReleasePublisher {
@@ -26,6 +26,13 @@ export class PluginReleasePublisher {
     if (!lock) throw new Error(`${candidate.plugin_id}: release.lock.json is required`)
     assertPluginReleaseCandidate(candidate.plugin_id, lock, candidate.revision)
     const { artifact: descriptor, skills } = candidate.release
+    const stateRead = await this.store.getStateWithVersion(candidate.plugin_id)
+    const previous = stateRead.state
+    const expectedVersion = stateRead.versioning === 'conditional' ? stateRead.version : undefined
+    if (previous?.enabled && previous.current_release === candidate.revision) {
+      return { plugin: candidate.plugin_id, revision: candidate.revision, skipped: 'unchanged' }
+    }
+
     if (skills.length) {
       if (!this.skillStore) throw new Error(`${candidate.plugin_id}: Skill Registry Store is required`)
       await assertSkillArtifactsAvailable(
@@ -34,29 +41,7 @@ export class PluginReleasePublisher {
         `${candidate.plugin_id}: referenced Skill Artifact`,
       )
     }
-
-    const stateRead = await this.store.getStateWithVersion(candidate.plugin_id)
-    const previous = stateRead.state
-    const expectedVersion = stateRead.versioning === 'conditional' ? stateRead.version : undefined
-    let currentAvailable = true
-    if (previous?.current_release) {
-      try {
-        currentAvailable = Boolean(await this.store.getRelease(candidate.plugin_id, previous.current_release))
-      } catch {
-        currentAvailable = false
-      }
-    }
     await this.store.putArtifact(descriptor, candidate.artifact.bytes)
-    if (previous?.enabled && previous.current_release === candidate.revision && currentAvailable) {
-      return { plugin: candidate.plugin_id, revision: candidate.revision, skipped: 'unchanged' }
-    }
-
-    let existing = null
-    try {
-      existing = await this.store.getRelease(candidate.plugin_id, candidate.revision)
-    } catch {
-      existing = null
-    }
     const releaseBytes = serializePluginRelease(candidate.release)
     const publishedRevision = await this.store.publishRelease(
       releaseBytes,
@@ -66,11 +51,7 @@ export class PluginReleasePublisher {
     if (publishedRevision !== lock.release_revision) {
       throw new Error(`${candidate.plugin_id}: Plugin Store published an unapproved release revision`)
     }
-    return {
-      plugin: candidate.plugin_id,
-      revision: candidate.revision,
-      ...(existing || previous?.current_release === candidate.revision ? { skipped: 'recovered' as const } : {}),
-    }
+    return { plugin: candidate.plugin_id, revision: candidate.revision }
   }
 
   async disable(pluginID: string): Promise<PluginReleasePublishResult> {

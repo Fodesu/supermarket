@@ -9,7 +9,6 @@ export async function putImmutableObject(
   key: string,
   bytes: Uint8Array,
   label: string,
-  options: { repairCorrupt?: boolean } = {},
 ) {
   const conditional = conditionalBlobBackend(backend)
   const expected = await sha256(bytes)
@@ -23,26 +22,14 @@ export async function putImmutableObject(
         const stored = await backend.get(key)
         if (!stored) throw new Error(`${label} appeared but could not be read: ${key}`)
         if (stored.length !== bytes.length || await sha256(stored) !== expected) {
-          if (!options.repairCorrupt) throw new Error(`${label} is immutable: ${key}`)
-          await backend.put(key, bytes)
-          const repaired = await backend.get(key)
-          if (!repaired || repaired.length !== bytes.length || await sha256(repaired) !== expected) {
-            throw new Error(`${label} repair did not complete: ${key}`)
-          }
-          return true
+          throw new Error(`${label} is immutable: ${key}`)
         }
         return false
       }
       const stored = await backend.get(key)
       if (stored) {
         if (stored.length !== bytes.length || await sha256(stored) !== expected) {
-          if (!options.repairCorrupt) throw new Error(`${label} is immutable: ${key}`)
-          await backend.put(key, bytes)
-          const repaired = await backend.get(key)
-          if (!repaired || repaired.length !== bytes.length || await sha256(repaired) !== expected) {
-            throw new Error(`${label} repair did not complete: ${key}`)
-          }
-          return true
+          throw new Error(`${label} is immutable: ${key}`)
         }
         return false
       }

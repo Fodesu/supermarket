@@ -141,7 +141,6 @@ export class BlobPluginReleaseStore implements PluginReleaseStore {
       `plugin-releases/${id}/releases/${revision}.json`,
       bytes,
       'Plugin release',
-      { repairCorrupt: true },
     )
     const publishedAt = options.publishedAt ?? new Date().toISOString()
     if (!Number.isFinite(Date.parse(publishedAt))) throw new Error(`Invalid Plugin publication time: ${publishedAt}`)
@@ -171,7 +170,6 @@ export class BlobPluginReleaseStore implements PluginReleaseStore {
         `plugin-artifacts/${descriptor.digest}.tar.gz`,
         bytes,
         'Plugin Artifact',
-        { repairCorrupt: true },
       ),
     }
   }
