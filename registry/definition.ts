@@ -8,7 +8,10 @@ import type {
 
 export const supportedSkillRuntimeOS: SkillRuntimeOS[] = ['darwin', 'linux', 'win32']
 const runtimeOS = new Set<string>(supportedSkillRuntimeOS)
+export const MAX_RESOURCE_ID_BYTES = 128
 const safeIDPattern = /^[a-z0-9][a-z0-9_-]*$/
+const registryComponentPattern = /^[a-z0-9][a-z0-9._-]*$/
+const windowsReservedNamePattern = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
 const gitRevisionPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/
 
 function unsupportedFieldError(label: string) {
@@ -23,25 +26,44 @@ function object(value: unknown, label: string): Record<string, unknown> {
 }
 
 export function assertIdentifier(value: string, label = 'ID'): string {
-  if (!safeIDPattern.test(value)) throw new Error(`Invalid ${label}: ${value}`)
+  if (value.length > MAX_RESOURCE_ID_BYTES || !safeIDPattern.test(value)
+    || windowsReservedNamePattern.test(value)) throw new Error(`Invalid ${label}: ${value}`)
   return value
 }
 
 export function assertRegistryID(value: string, label = 'registry ID'): string {
-  const id = assertIdentifier(value, label)
+  const id = assertRegistryComponentID(value, label)
   if (id === 'user') throw new Error(`Reserved ${label}: ${value}`)
   return id
 }
 
 export function isIdentifier(value: string): boolean {
-  return safeIDPattern.test(value)
+  return value.length <= MAX_RESOURCE_ID_BYTES && safeIDPattern.test(value)
+    && !windowsReservedNamePattern.test(value)
+}
+
+export function assertRegistryComponentID(value: string, label = 'Registry component ID'): string {
+  if (value.length > MAX_RESOURCE_ID_BYTES || !registryComponentPattern.test(value)
+    || value.includes('..') || value.endsWith('.') || windowsReservedNamePattern.test(value)) {
+    throw new Error(`Invalid ${label}: ${value}`)
+  }
+  return value
+}
+
+export function isRegistryComponentID(value: string): boolean {
+  try {
+    assertRegistryComponentID(value)
+    return true
+  } catch {
+    return false
+  }
 }
 
 export function skillInstallID(registryID: string, packageID: string, skillID: string): string {
   return [
     assertRegistryID(registryID, 'registry ID'),
-    assertIdentifier(packageID, 'package ID'),
-    assertIdentifier(skillID, 'skill ID'),
+    assertRegistryComponentID(packageID, 'package ID'),
+    assertRegistryComponentID(skillID, 'skill ID'),
   ].join('+')
 }
 

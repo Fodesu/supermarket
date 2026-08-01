@@ -1,7 +1,7 @@
 import { HTTPError } from 'nitro'
 import * as z from 'zod/mini'
 import type { SkillCatalogSearchOptions } from '#registry/catalog'
-import { assertIdentifier, assertRegistryID, isSkillRuntimeOS } from '#registry/definition'
+import { assertIdentifier, assertRegistryComponentID, assertRegistryID, isSkillRuntimeOS } from '#registry/definition'
 import { positiveIntegerQuery, scalarQuery } from './query'
 
 function badRequest(message: string): never {
@@ -11,6 +11,14 @@ function badRequest(message: string): never {
 export function requireSkillRegistryID(value: string, label: string) {
   try {
     return assertIdentifier(value, label)
+  } catch {
+    return badRequest(`Invalid ${label}: ${value}`)
+  }
+}
+
+export function requireRegistryComponentID(value: string, label: string) {
+  try {
+    return assertRegistryComponentID(value, label)
   } catch {
     return badRequest(`Invalid ${label}: ${value}`)
   }
@@ -37,7 +45,7 @@ export function parseSkillRegistryQuery(query: Record<string, unknown>, registry
   return {
     registry: registryValue != null ? requireRegistryID(registryValue) : undefined,
     q: scalarQuery(query, 'q'),
-    package: packageValue != null ? requireSkillRegistryID(packageValue, 'package ID') : undefined,
+    package: packageValue != null ? requireRegistryComponentID(packageValue, 'package ID') : undefined,
     category: category != null ? requireSkillRegistryID(category.toLowerCase(), 'category ID') : undefined,
     tag: scalarQuery(query, 'tag'),
     os: normalizedOS,

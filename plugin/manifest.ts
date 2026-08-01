@@ -1,9 +1,9 @@
 import { parse as parseYaml } from 'yaml'
 import * as z from 'zod/mini'
 import type { PluginManifest, PluginSkillReference } from './types'
-import { isIdentifier } from '#registry/definition'
+import { isIdentifier, isRegistryComponentID } from '#registry/definition'
 
-const isRegistryID = (value: string) => value !== 'user' && isIdentifier(value)
+const isRegistryID = (value: string) => value !== 'user' && isRegistryComponentID(value)
 
 const trimmed = z.pipe(z.string(), z.transform((value) => value.trim()))
 const nonEmpty = trimmed.check(z.minLength(1, 'is required'))
@@ -62,8 +62,8 @@ const mcpSchema = z.discriminatedUnion('transport', [
 
 const skillSchema = z.object({
   registry_id: nonEmpty.check(z.refine(isRegistryID, 'Invalid Registry ID')),
-  package_id: nonEmpty.check(z.refine(isIdentifier, 'Invalid package ID')),
-  skill_id: nonEmpty.check(z.refine(isIdentifier, 'Invalid Skill ID')),
+  package_id: nonEmpty.check(z.refine(isRegistryComponentID, 'Invalid package ID')),
+  skill_id: nonEmpty.check(z.refine(isRegistryComponentID, 'Invalid Skill ID')),
 })
 
 function uniqueKeys(label: string) {

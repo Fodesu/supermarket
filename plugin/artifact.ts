@@ -1,7 +1,11 @@
 import { stringify as stringifyYaml } from 'yaml'
 import { createTar, gzip, type TarFileInput } from '#lib/archive'
 import { sha256 } from '#registry/digest'
-import { PluginBundleBudget } from './bundle'
+import {
+  MAX_PLUGIN_ARCHIVE_BYTES,
+  MAX_PLUGIN_BUNDLE_UNCOMPRESSED_BYTES,
+  PluginBundleBudget,
+} from './bundle'
 import type { CommittedPlugin } from './repository'
 import type { PluginArtifactDescriptor } from './types'
 
@@ -20,7 +24,10 @@ export async function packagePlugin(plugin: CommittedPlugin): Promise<PackagedPl
   for (const [name, input] of Object.entries(files)) {
     budget.add(name, input instanceof Uint8Array ? input.length : input.bytes.length)
   }
-  const bytes = await gzip(await createTar(files, plugin.id))
+  const bytes = await gzip(await createTar(files, plugin.id, {
+    maxContentBytes: MAX_PLUGIN_BUNDLE_UNCOMPRESSED_BYTES,
+    maxArchiveBytes: MAX_PLUGIN_ARCHIVE_BYTES,
+  }))
   const descriptor: PluginArtifactDescriptor = {
     format: 'memoh_plugin_v1',
     digest: await sha256(bytes),

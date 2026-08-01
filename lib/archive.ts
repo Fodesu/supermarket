@@ -13,13 +13,18 @@ export interface TarFileInput {
 
 export interface ArchivePathOptions {
   reservedRootPaths?: readonly string[]
+  maxContentBytes?: number
+  maxArchiveBytes?: number
 }
+
+const windowsReservedNamePattern = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
 
 export function assertSafeArchivePath(name: string, label = 'tar') {
   const segments = name.split('/')
   if (!name || name.includes('\\') || name.startsWith('/') || /^[a-z]:/i.test(name)
     || segments.some((segment) => !segment || segment === '.' || segment === '..'
-      || segment !== segment.trim() || segment.endsWith('.') || /[<>:"|?*\u0000-\u001f\u007f]/u.test(segment))) {
+      || segment !== segment.trim() || segment.endsWith('.') || windowsReservedNamePattern.test(segment)
+      || /[<>:"|?*\u0000-\u001f\u007f]/u.test(segment))) {
     throw new Error(`Unsafe ${label} path: ${name}`)
   }
   return name
@@ -60,6 +65,12 @@ export async function createTar(
   options: ArchivePathOptions = {},
 ): Promise<Uint8Array> {
   if (prefix) assertSafeArchivePath(prefix)
+  const maxContentBytes = options.maxContentBytes ?? MAX_TAR_UNCOMPRESSED_BYTES
+  const maxArchiveBytes = options.maxArchiveBytes ?? MAX_TAR_UNCOMPRESSED_BYTES
+  if (!Number.isSafeInteger(maxContentBytes) || maxContentBytes < 0
+    || !Number.isSafeInteger(maxArchiveBytes) || maxArchiveBytes < 0) {
+    throw new Error('Invalid tar archive size limit')
+  }
   const fileEntries = Object.entries(files)
   assertSafeArchivePaths(fileEntries.map(([name]) => name), 'tar', options)
   if (prefix) assertSafeArchivePaths(fileEntries.map(([name]) => `${prefix}/${name}`))
@@ -71,8 +82,8 @@ export async function createTar(
       const body = input instanceof Uint8Array ? input : input.bytes
       const mode = input instanceof Uint8Array ? 0o644 : input.mode
       contentBytes += body.length
-      if (contentBytes > MAX_TAR_UNCOMPRESSED_BYTES) {
-        throw new Error(`Tar archive exceeds ${MAX_TAR_UNCOMPRESSED_BYTES} uncompressed bytes`)
+      if (contentBytes > maxContentBytes) {
+        throw new Error(`Tar archive exceeds ${maxContentBytes} content bytes`)
       }
       return {
         header: {
@@ -91,8 +102,8 @@ export async function createTar(
     })
 
   const archive = await packTar(entries)
-  if (archive.length > MAX_TAR_UNCOMPRESSED_BYTES) {
-    throw new Error(`Tar archive exceeds ${MAX_TAR_UNCOMPRESSED_BYTES} uncompressed bytes`)
+  if (archive.length > maxArchiveBytes) {
+    throw new Error(`Tar archive exceeds ${maxArchiveBytes} serialized bytes`)
   }
   return archive
 }

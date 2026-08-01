@@ -247,6 +247,15 @@ describe('Skill Registry adapters', () => {
     await expect(readFileBounded(target, 3)).rejects.toThrow('exceeds 3 bytes')
   })
 
+  test('preserves file names that collide with object prototype properties', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'skill-prototype-file-'))
+    roots.push(root)
+    await writeFile(path.join(root, '__proto__'), 'content')
+    const files = await readDirectoryFiles(root)
+    expect(Object.keys(files)).toEqual(['__proto__'])
+    expect(new TextDecoder().decode(files.__proto__?.bytes)).toBe('content')
+  })
+
   test('normalizes scalar author and tag metadata', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'skill-scalar-metadata-'))
     roots.push(root)

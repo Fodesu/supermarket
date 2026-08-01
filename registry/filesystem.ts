@@ -61,7 +61,7 @@ export async function readDirectoryFiles(root: string, allowedRoot = root): Prom
   const physicalAllowedRoot = await realpath(path.resolve(allowedRoot))
   const physicalRoot = await realpath(path.resolve(root))
   assertPhysicalContainment(physicalAllowedRoot, physicalRoot)
-  const files: Record<string, SkillSourceFile> = {}
+  const files: Record<string, SkillSourceFile> = Object.create(null) as Record<string, SkillSourceFile>
   let totalBytes = 0
   let fileCount = 0
   const visit = async (directory: string) => {
