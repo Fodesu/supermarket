@@ -149,7 +149,12 @@ async function setSparsePaths(repository: string, paths: string[]) {
   )
 }
 
-async function selectedGitObjects(repository: string, revision: string, paths: string[]) {
+async function selectedGitObjects(
+  repository: string,
+  revision: string,
+  paths: string[],
+  materialized = true,
+) {
   const selected = paths.map((sourcePath) => `:(literal)${assertSparsePath(sourcePath)}`)
   const args = ['-C', repository, 'ls-tree', '-r', '-z', revision]
   if (selected.length) args.push('--', ...selected)
@@ -187,9 +192,13 @@ async function selectedGitObjects(repository: string, revision: string, paths: s
         if (record) {
           const { mode, type, object, size, sourcePath } = parseGitTreeRecord(record)
           if (size !== undefined) throw new Error('Git returned malformed tree metadata')
-          assertSupportedGitTreeEntry(mode, type, object, sourcePath)
+          if (materialized) {
+            assertSupportedGitTreeEntry(mode, type, object, sourcePath)
+          } else if (!/^[a-f0-9]{40,64}$/.test(object ?? '') || !sourcePath) {
+            throw new Error('Git returned malformed tree metadata')
+          }
           addGitTreeFile(state, MAX_REGISTRY_SOURCE_FILES)
-          objects.set(object!, (objects.get(object!) ?? 0) + 1)
+          if (materialized) objects.set(object!, (objects.get(object!) ?? 0) + 1)
         }
         separator = pending.indexOf('\0')
       }
@@ -306,6 +315,7 @@ async function checkoutGit(url: string, revision: string, sparsePaths: string[] 
       {},
       MAX_REGISTRY_GIT_TREE_BYTES * 2,
     )
+    await selectedGitObjects(repository, 'FETCH_HEAD', [], false)
     await assertMaterializationBudget(repository, 'FETCH_HEAD', sparsePaths, true)
     if (sparsePaths.length) {
       await exec('git', ['-C', repository, 'sparse-checkout', 'init', '--no-cone'])
