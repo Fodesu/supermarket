@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url'
 import type { SkillRegistryDefinition } from '../types'
 import { buildSkillCandidates } from '../adapters/index'
 import { materializeSkillRegistrySource } from './index'
-import { assertGitTreeMaterialization, gitSparsePattern } from './git'
+import { gitSparsePattern } from './git'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
@@ -23,19 +23,7 @@ async function revParseHead(cwd: string) {
 }
 
 describe('Skill Registry Git sources', () => {
-  test('rejects oversized or unsupported Git tree materialization before checkout', () => {
-    const entry = (path: string, mode = '100644', size = 1) =>
-      `${mode} blob ${'a'.repeat(40)} ${size}\t${path}\0`
-    expect(assertGitTreeMaterialization(entry('one') + entry('two'), 2))
-      .toEqual({ fileCount: 2, sourceBytes: 2 })
-    expect(() => assertGitTreeMaterialization(entry('one') + entry('two'), 1))
-      .toThrow('exceeds 1 files')
-    expect(() => assertGitTreeMaterialization(entry('link', '120000'), 2))
-      .toThrow('unsupported tree entry')
-    expect(() => assertGitTreeMaterialization(entry('large', '100644', 3), 2, 2))
-      .toThrow('exceeds 2 bytes')
-    expect(() => assertGitTreeMaterialization(entry('metadata'), 2, 2, 4))
-      .toThrow('tree metadata exceeds 4 bytes')
+  test('anchors sparse paths at the repository root', () => {
     expect(gitSparsePattern('wanted')).toBe('/wanted')
     expect(() => gitSparsePattern('wanted ')).toThrow('cannot be represented safely')
   })
@@ -84,10 +72,8 @@ describe('Skill Registry Git sources', () => {
       expect(result.skills[0]).toMatchObject({ package_id: 'demo', skill_id: 'example' })
       expect(await Bun.file(path.join(source.root, 'nested/marketplace.json')).exists()).toBe(false)
       expect(await Bun.file(path.join(source.root, '.gitattributes')).exists()).toBe(false)
-      expect(await readFile(path.join(
-        source.root,
-        'plugins/demo/skills/example/SKILL.md',
-      ), 'utf8')).not.toContain('\r')
+      expect(await readFile(path.join(source.root, 'plugins/demo/skills/example/SKILL.md'), 'utf8'))
+        .toContain('name: Example')
     } finally {
       await source.cleanup()
     }

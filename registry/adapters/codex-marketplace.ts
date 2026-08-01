@@ -200,47 +200,18 @@ interface SkillRootEntry {
   label: string
 }
 
-interface SkillRootNode {
-  children: Map<string, SkillRootNode>
-  accepted?: SkillRootEntry
-  descendant?: SkillRootEntry
-}
-
-function rootSegments(root: string) {
-  const absolute = path.resolve(root)
-  const parsed = path.parse(absolute)
-  return [parsed.root, ...absolute.slice(parsed.root.length).split(path.sep).filter(Boolean)]
-}
-
-class SkillRootIndex {
-  private readonly root: SkillRootNode = { children: new Map() }
-
-  overlap(root: string) {
-    let node = this.root
-    for (const segment of rootSegments(root)) {
-      if (node.accepted) return node.accepted
-      const next = node.children.get(segment)
-      if (!next) return undefined
-      node = next
+function overlappingSkillRoots(entries: SkillRootEntry[]) {
+  const sorted = [...entries].sort((left, right) =>
+    compareCanonicalText(path.resolve(left.root), path.resolve(right.root)))
+  let accepted = sorted[0]
+  for (const current of sorted.slice(1)) {
+    const relative = path.relative(accepted!.root, current.root)
+    if (relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))) {
+      return [accepted!, current] as const
     }
-    return node.accepted ?? node.descendant
+    accepted = current
   }
-
-  add(entry: SkillRootEntry) {
-    let node = this.root
-    const ancestors = [node]
-    for (const segment of rootSegments(entry.root)) {
-      let next = node.children.get(segment)
-      if (!next) {
-        next = { children: new Map() }
-        node.children.set(segment, next)
-      }
-      node = next
-      ancestors.push(node)
-    }
-    node.accepted = entry
-    for (const ancestor of ancestors) ancestor.descendant ??= entry
-  }
+  return undefined
 }
 
 export async function readCodexMarketplace(input: SkillAdapterInput): Promise<SkillAdapterResult> {
@@ -323,33 +294,31 @@ export async function readCodexMarketplace(input: SkillAdapterInput): Promise<Sk
   ]))
 
   const skills: SkillCandidate[] = []
-  const acceptedRoots = new SkillRootIndex()
+  const acceptedRoots: SkillRootEntry[] = []
   for (const item of prepared) {
     try {
       const packageSkills: SkillCandidate[] = []
       const presentation = await packageIcon(item.packageRoot, item.manifest, budget)
       const seen = new Set<string>()
-      const packageRoots = new SkillRootIndex()
       const roots: Awaited<ReturnType<typeof discoverSkillRoots>> = []
       for (const skillPath of item.skillPaths) {
         for (const root of await discoverSkillRoots(item.packageRoot, skillPath)) {
           if (seen.has(root.id)) throw new Error(`duplicate skill ID ${root.id}`)
-          const overlap = packageRoots.overlap(root.root)
-          if (overlap) {
-            throw new Error(`overlapping skill roots ${overlap.label} and ${root.relativePath}`)
-          }
           seen.add(root.id)
           roots.push(root)
-          packageRoots.add({ root: root.root, label: root.relativePath })
         }
       }
-      for (const root of roots) {
-        const overlap = acceptedRoots.overlap(root.root)
-        if (overlap) {
-          throw new Error(
-            `overlapping skill roots ${overlap.label} and ${item.packagePath}/${root.relativePath}`,
-          )
-        }
+      const packageEntries = roots.map((root) => ({ root: root.root, label: root.relativePath }))
+      const packageOverlap = overlappingSkillRoots(packageEntries)
+      if (packageOverlap) {
+        throw new Error(`overlapping skill roots ${packageOverlap[0].label} and ${packageOverlap[1].label}`)
+      }
+      const overlap = overlappingSkillRoots([
+        ...acceptedRoots,
+        ...packageEntries.map((root) => ({ ...root, label: `${item.packagePath}/${root.label}` })),
+      ])
+      if (overlap) {
+        throw new Error(`overlapping skill roots ${overlap[0].label} and ${overlap[1].label}`)
       }
       for (const root of roots) {
         packageSkills.push(await buildSkillCandidate({
@@ -367,12 +336,10 @@ export async function readCodexMarketplace(input: SkillAdapterInput): Promise<Sk
         }))
       }
       skills.push(...packageSkills)
-      for (const root of roots) {
-        acceptedRoots.add({
-          root: root.root,
-          label: `${item.packagePath}/${root.relativePath}`,
-        })
-      }
+      acceptedRoots.push(...packageEntries.map((root) => ({
+        ...root,
+        label: `${item.packagePath}/${root.label}`,
+      })))
     } catch (error) {
       rethrowRegistryBudgetError(error)
       diagnostics.push({
