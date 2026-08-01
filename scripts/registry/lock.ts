@@ -1,7 +1,10 @@
 import path from 'node:path'
 import { loadSkillRegistryDefinitions } from '#registry/definitions/repository'
 import { writeRegistryReleaseLock } from '#registry/publish/release-lock'
-import { buildSkillRegistryCandidate } from '#registry/publish/candidate'
+import {
+  buildSkillRegistryCandidate,
+  type SkillRegistryCandidate,
+} from '#registry/publish/candidate'
 import { buildPluginReleaseCandidates } from '#plugin/release'
 import { writePluginReleaseLock } from '#plugin/release-lock'
 
@@ -19,8 +22,18 @@ if (selectedRegistry && !definitions.some((definition) => definition.id === sele
   throw new Error(`Registry not found: ${selectedRegistry}`)
 }
 
-const candidates = await Promise.all(definitions.filter((definition) => definition.enabled)
-  .map((definition) => buildSkillRegistryCandidate(definition, projectRoot)))
+const candidates: Array<Pick<SkillRegistryCandidate, 'definition' | 'revision' | 'snapshot'>> = []
+for (const definition of definitions.filter((item) => item.enabled)) {
+  const candidate = await buildSkillRegistryCandidate(definition, projectRoot)
+  candidates.push({
+    definition: candidate.definition,
+    revision: candidate.revision,
+    snapshot: candidate.snapshot,
+  })
+  candidate.artifacts.clear()
+  candidate.images.clear()
+  candidate.review.clear()
+}
 
 if (!selectedPlugin) {
   for (const candidate of candidates) {

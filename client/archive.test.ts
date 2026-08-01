@@ -5,7 +5,13 @@ import path from 'node:path'
 import { packTar } from 'modern-tar'
 import { createTar, gzip, MAX_TAR_UNCOMPRESSED_BYTES } from '#lib/archive'
 import { packageSkill } from '#registry/artifacts/build'
-import { extractSkillArchive, parseGzipTarArchive, parseTarArchive, validateSkillArchive } from './archive'
+import {
+  extractSkillArchive,
+  parseGzipTarArchive,
+  parseGzipTarArchiveWithMetrics,
+  parseTarArchive,
+  validateSkillArchive,
+} from './archive'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
@@ -22,6 +28,20 @@ describe('Skill Registry client archives', () => {
     const compressed = await gzip(second)
     expect(compressed).toEqual(await gzip(first))
     expect([...compressed.slice(0, 10)]).toEqual([0x1f, 0x8b, 0x08, 0, 0, 0, 0, 0, 0, 0xff])
+    const parsed = await parseGzipTarArchiveWithMetrics(compressed)
+    expect(parsed).toMatchObject({ archiveSize: first.length, fileCount: 2 })
+    const packaged = await packageSkill(Object.fromEntries(Object.entries(files).map(([name, value]) => [
+      name,
+      value instanceof Uint8Array ? { bytes: value, mode: 0o644 as const } : value,
+    ])))
+    expect(packaged).toMatchObject({
+      archiveSize: first.length,
+      fileCount: 2,
+      uncompressedSize: Object.values(files).reduce(
+        (total, value) => total + (value instanceof Uint8Array ? value.length : value.bytes.length),
+        0,
+      ),
+    })
   })
 
   test('round-trips long USTAR paths and installs a namespaced Skill', async () => {
@@ -77,6 +97,10 @@ describe('Skill Registry client archives', () => {
     await expect(createTar({ 'scripts/NUL.txt': new Uint8Array() }, 'skill')).rejects.toThrow('Unsafe tar path')
     await expect(createTar({ 'scripts/Foo': new Uint8Array(), 'scripts/foo': new Uint8Array() }, ''))
       .rejects.toThrow('Duplicate tar path')
+    await expect(createTar({
+      'references/caf\u00e9.md': new Uint8Array(),
+      'references/cafe\u0301.md': new Uint8Array(),
+    }, '')).rejects.toThrow('Duplicate tar path')
     await expect(createTar({ 'file': new Uint8Array(), 'file/child': new Uint8Array() }, ''))
       .rejects.toThrow('Conflicting tar path')
     await expect(packageSkill({

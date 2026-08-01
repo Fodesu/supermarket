@@ -1,7 +1,11 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { loadSkillRegistryDefinitions } from '#registry/definitions/repository'
-import { buildSkillRegistryCandidate } from '#registry/publish/candidate'
+import {
+  buildSkillRegistryCandidate,
+  type SkillRegistryCandidate,
+} from '#registry/publish/candidate'
 import {
   assertReleaseCandidate,
   loadRegistryReleaseLock,
@@ -10,6 +14,7 @@ import {
 import {
   diffRegistryCandidates,
   renderRegistryReleaseDiff,
+  type RegistryReviewCandidate,
 } from '#registry/review/release-diff'
 import type { SkillRegistryDefinition } from '#registry/types'
 import { buildPluginReleaseCandidates } from '#plugin/release'
@@ -30,6 +35,100 @@ export interface RegistryUpdate {
   approved_revision: string
   candidate_revision: string
   compare_url?: string
+}
+
+export const MAX_REGISTRY_UPDATE_REPORT_LENGTH = 60_000
+const MAX_PLUGIN_RELEASE_REPORT_LENGTH = 20_000
+
+export function renderRegistryUpdateReport(
+  diff: Parameters<typeof renderRegistryReleaseDiff>[0],
+  compareURL: string | undefined,
+  pluginDiffs: Parameters<typeof renderPluginReleaseDiffs>[0],
+  fullReportURL?: string,
+  persistentPluginDetails = false,
+) {
+  const pluginReport = renderPluginReleaseDiffs(
+    pluginDiffs,
+    MAX_PLUGIN_RELEASE_REPORT_LENGTH,
+    fullReportURL,
+    persistentPluginDetails,
+  )
+  const separatorLength = pluginReport ? 1 : 0
+  const registryReport = renderRegistryReleaseDiff(
+    diff,
+    compareURL,
+    MAX_REGISTRY_UPDATE_REPORT_LENGTH - pluginReport.length - separatorLength,
+    fullReportURL,
+  )
+  const report = [registryReport, pluginReport].filter(Boolean).join('\n')
+  if (report.length > MAX_REGISTRY_UPDATE_REPORT_LENGTH) {
+    throw new Error('Registry update report exceeds the GitHub PR body limit')
+  }
+  return report
+}
+
+const MAX_PLUGIN_REVIEW_COMMENT_CONTENT_LENGTH = 50_000
+
+function pluginReviewBlocks(report: string) {
+  const blocks: string[][] = []
+  for (const line of report.split('\n')) {
+    if ((line.startsWith('### ') || line.startsWith('- `')) && blocks.length) {
+      blocks.push([])
+    }
+    if (!blocks.length) blocks.push([])
+    blocks.at(-1)!.push(line)
+  }
+  return blocks.map((lines) => lines.join('\n'))
+}
+
+export function renderPluginReviewComments(
+  pluginDiffs: Parameters<typeof renderPluginReleaseDiffs>[0],
+  marker: string,
+) {
+  if (!pluginDiffs.length) return []
+  const chunks: string[] = []
+  let current = ''
+  for (const block of pluginReviewBlocks(
+    renderPluginReleaseDiffs(pluginDiffs, Number.POSITIVE_INFINITY),
+  )) {
+    if (block.length > MAX_PLUGIN_REVIEW_COMMENT_CONTENT_LENGTH) {
+      throw new Error('A Plugin review block exceeds the PR comment limit')
+    }
+    const projected = current ? `${current}\n${block}` : block
+    if (projected.length > MAX_PLUGIN_REVIEW_COMMENT_CONTENT_LENGTH) {
+      chunks.push(current)
+      current = block
+    } else {
+      current = projected
+    }
+  }
+  if (current) chunks.push(current)
+  return chunks.map((content, index) => {
+    const part = index + 1
+    const digest = createHash('sha256').update(content).digest('hex')
+    const comment = [
+      `<!-- registry-plugin-review:${marker}:${part}:${digest} -->`,
+      `## Full Plugin Skill descriptor report (${part}/${chunks.length})`,
+      '',
+      content,
+      '',
+    ].join('\n')
+    if (comment.length > MAX_REGISTRY_UPDATE_REPORT_LENGTH) {
+      throw new Error('Plugin review comment exceeds the GitHub comment limit')
+    }
+    return comment
+  })
+}
+
+export function renderFullRegistryUpdateReport(
+  diff: Parameters<typeof renderRegistryReleaseDiff>[0],
+  compareURL: string | undefined,
+  pluginDiffs: Parameters<typeof renderPluginReleaseDiffs>[0],
+) {
+  return [
+    renderRegistryReleaseDiff(diff, compareURL, Number.POSITIVE_INFINITY),
+    renderPluginReleaseDiffs(pluginDiffs, Number.POSITIVE_INFINITY),
+  ].filter(Boolean).join('\n')
 }
 
 function option(name: string) {
@@ -68,6 +167,16 @@ async function resolveGitRevision(definition: SkillRegistryDefinition) {
 function compareURL(url: string, approved: string, candidate: string) {
   const match = url.match(/^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?$/)
   return match ? `https://github.com/${match[1]}/compare/${approved}...${candidate}` : undefined
+}
+
+function reviewCandidate(candidate: SkillRegistryCandidate): RegistryReviewCandidate {
+  return {
+    definition: candidate.definition,
+    source_revision: candidate.source_revision,
+    revision: candidate.revision,
+    skills: candidate.skills,
+    review: candidate.review,
+  }
 }
 
 async function applyRevision(
@@ -117,6 +226,9 @@ async function prepareRegistryUpdate(input: {
   registry: string
   candidateRevision: string
   reportPath: string
+  fullReportPath?: string
+  fullReportURL?: string
+  pluginCommentDirectory?: string
 }) {
   if (!/^[a-f0-9]{40}$/.test(input.candidateRevision)) {
     throw new Error('Candidate revision must be a full Git commit hash')
@@ -135,23 +247,44 @@ async function prepareRegistryUpdate(input: {
     ...definition,
     source: { ...definition.source, revision: input.candidateRevision },
   }
-  const approvedCandidates = await Promise.all(definitions.filter((item) => item.enabled)
-    .map((item) => buildSkillRegistryCandidate(item, input.projectRoot)))
-  const approved = approvedCandidates.find((item) => item.definition.id === definition.id)!
-  const [lock, candidate] = await Promise.all([
-    loadRegistryReleaseLock(input.projectRoot, definition),
-    buildSkillRegistryCandidate(candidateDefinition, input.projectRoot),
-  ])
+  const approvedCandidates: Array<Pick<
+    SkillRegistryCandidate,
+    'definition' | 'revision' | 'snapshot'
+  >> = []
+  let approved: RegistryReviewCandidate | undefined
+  for (const item of definitions.filter((candidate) => candidate.enabled)) {
+    const built = await buildSkillRegistryCandidate(item, input.projectRoot)
+    approvedCandidates.push({
+      definition: built.definition,
+      revision: built.revision,
+      snapshot: built.snapshot,
+    })
+    if (built.definition.id === definition.id) approved = reviewCandidate(built)
+    else built.review.clear()
+    built.artifacts.clear()
+    built.images.clear()
+  }
+  if (!approved) throw new Error(`${input.registry}: Registry is disabled`)
+  const lock = await loadRegistryReleaseLock(input.projectRoot, definition)
+  const builtCandidate = await buildSkillRegistryCandidate(candidateDefinition, input.projectRoot)
+  const candidate = {
+    definition: builtCandidate.definition,
+    revision: builtCandidate.revision,
+    snapshot: builtCandidate.snapshot,
+  }
+  const candidateReview = reviewCandidate(builtCandidate)
+  builtCandidate.artifacts.clear()
+  builtCandidate.images.clear()
   assertReleaseCandidate(definition, lock, approved.revision)
-  const diff = diffRegistryCandidates(approved, candidate)
+  const diff = diffRegistryCandidates(approved, candidateReview)
   const approvedPlugins = await buildPluginReleaseCandidates(
     input.projectRoot,
     approvedCandidates.map((item) => ({ revision: item.revision, snapshot: item.snapshot })),
   )
-  await Promise.all(approvedPlugins.map(async (plugin) => {
+  for (const plugin of approvedPlugins) {
     const pluginLock = await loadPluginReleaseLock(input.projectRoot, plugin.plugin_id)
     assertPluginReleaseCandidate(plugin.plugin_id, pluginLock, plugin.revision)
-  }))
+  }
   const candidatePlugins = await buildPluginReleaseCandidates(
     input.projectRoot,
     approvedCandidates.map((item) => item.definition.id === definition.id
@@ -164,10 +297,35 @@ async function prepareRegistryUpdate(input: {
     definition.source.revision,
     input.candidateRevision,
   )
-  await writeFile(input.reportPath, [
-    renderRegistryReleaseDiff(diff, url),
-    renderPluginReleaseDiffs(pluginDiffs),
-  ].filter(Boolean).join('\n'))
+  await writeFile(
+    input.reportPath,
+    renderRegistryUpdateReport(
+      diff,
+      url,
+      pluginDiffs,
+      input.fullReportURL,
+      Boolean(input.pluginCommentDirectory),
+    ),
+  )
+  if (input.fullReportPath) {
+    await writeFile(
+      input.fullReportPath,
+      renderFullRegistryUpdateReport(diff, url, pluginDiffs),
+    )
+  }
+  if (input.pluginCommentDirectory) {
+    await mkdir(input.pluginCommentDirectory, { recursive: true })
+    const comments = renderPluginReviewComments(
+      pluginDiffs,
+      `${input.registry}:${input.candidateRevision}`,
+    )
+    for (const [index, comment] of comments.entries()) {
+      await writeFile(
+        path.join(input.pluginCommentDirectory, `${String(index + 1).padStart(3, '0')}.md`),
+        comment,
+      )
+    }
+  }
   await applyRevision(input.projectRoot, definition, input.candidateRevision)
   await writeRegistryReleaseLock(input.projectRoot, candidateDefinition, {
     snapshot_revision: candidate.revision,
@@ -186,15 +344,27 @@ if (import.meta.main) {
   const registry = option('--registry')
   const candidateRevision = option('--candidate')
   const reportPath = option('--report')
-  if (registry || candidateRevision || reportPath) {
+  const fullReportPath = option('--full-report')
+  const fullReportURL = option('--full-report-url')
+  const pluginCommentDirectory = option('--plugin-comment-dir')
+  if (registry || candidateRevision || reportPath || fullReportPath || fullReportURL
+    || pluginCommentDirectory) {
     if (!registry || !candidateRevision || !reportPath) {
       throw new Error('--registry, --candidate, and --report must be provided together')
+    }
+    if (Boolean(fullReportPath) !== Boolean(fullReportURL)) {
+      throw new Error('--full-report and --full-report-url must be provided together')
     }
     const diff = await prepareRegistryUpdate({
       projectRoot,
       registry,
       candidateRevision,
       reportPath: path.resolve(reportPath),
+      fullReportPath: fullReportPath ? path.resolve(fullReportPath) : undefined,
+      fullReportURL,
+      pluginCommentDirectory: pluginCommentDirectory
+        ? path.resolve(pluginCommentDirectory)
+        : undefined,
     })
     console.log(JSON.stringify(diff.summary, null, 2))
   } else {

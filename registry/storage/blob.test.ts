@@ -15,6 +15,7 @@ import { validateStoredSnapshot } from './validation'
 import type { BlobBackend } from './contracts'
 import { summarizeCurrentSnapshot } from '../catalog'
 import { registrySnapshotRevision, serializeRegistrySnapshot } from '../snapshot'
+import { packageSkill } from '../artifacts/build'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
@@ -22,6 +23,18 @@ afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recur
 const definition: SkillRegistryDefinition = {
   schema_version: '1', id: 'example', name: 'Example', enabled: true, priority: 10,
   adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' },
+}
+
+async function skillArtifact(content: string) {
+  const packaged = await packageSkill({
+    'SKILL.md': { bytes: new TextEncoder().encode(content), mode: 0o644 },
+  })
+  const descriptor: SkillArtifactDescriptor = {
+    format: 'memoh_skill_v1', digest: packaged.digest, size: packaged.bytes.length,
+    uncompressed_size: packaged.uncompressedSize, archive_size: packaged.archiveSize,
+    file_count: packaged.fileCount, content_type: 'application/gzip',
+  }
+  return { descriptor, bytes: packaged.bytes }
 }
 
 function snapshot(
@@ -50,12 +63,8 @@ async function exerciseStore(store: LocalSkillRegistryStore | BlobSkillRegistryS
   expect(await store.getSnapshot('example', revision)).toEqual(firstSnapshot)
   expect(await store.listRegistryIDs()).toEqual(['example'])
 
-  const artifactBytes = new TextEncoder().encode('artifact')
-  const digest = await sha256(artifactBytes)
-  const descriptor: SkillArtifactDescriptor = {
-    format: 'memoh_skill_v1', digest, size: artifactBytes.length,
-    uncompressed_size: artifactBytes.length, content_type: 'application/gzip',
-  }
+  const { descriptor, bytes: artifactBytes } = await skillArtifact('artifact')
+  const { digest } = descriptor
   await store.putArtifact(descriptor, artifactBytes)
   const artifact = await store.getArtifact(digest)
   expect(artifact?.bytes).toEqual(artifactBytes)
@@ -65,9 +74,13 @@ async function exerciseStore(store: LocalSkillRegistryStore | BlobSkillRegistryS
   const streamed = await store.getArtifactStream(digest)
   expect(streamed?.body).toBeInstanceOf(ReadableStream)
   if (!(streamed?.body instanceof ReadableStream)) throw new Error('Expected an Artifact stream')
-  expect(new Uint8Array(await new Response(streamed.body).arrayBuffer())).toEqual(artifactBytes)
+  expect([...new Uint8Array(await new Response(streamed.body).arrayBuffer())]).toEqual([...artifactBytes])
   await expect(store.putArtifact(descriptor, artifactBytes)).resolves.toEqual({ stored: false })
   await expect(store.putArtifact({ ...descriptor, size: artifactBytes.length + 1 }, artifactBytes)).rejects.toThrow('size')
+  await expect(store.putArtifact({
+    ...descriptor,
+    uncompressed_size: descriptor.uncompressed_size + 1,
+  }, artifactBytes)).rejects.toThrow('extraction metadata')
   await expect(store.putArtifact({ ...descriptor, size: MAX_SKILL_ARTIFACT_COMPRESSED_BYTES + 1 }, artifactBytes))
     .rejects.toThrow('compressed size limit')
   const imageBytes = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"/>')
@@ -76,7 +89,7 @@ async function exerciseStore(store: LocalSkillRegistryStore | BlobSkillRegistryS
   }
   await store.putImage(image, imageBytes)
   expect(await store.getImage(image.digest)).toEqual({ descriptor: image, bytes: imageBytes })
-  return digest
+  return { descriptor, bytes: artifactBytes }
 }
 
 function memoryBackend() {
@@ -133,6 +146,8 @@ describe('Immutable digest-addressed uploads', () => {
         digest: 'b'.repeat(64),
         size: -1,
         uncompressed_size: 1,
+        archive_size: 1,
+        file_count: 1,
       },
     })
     expect(() => validateStoredSnapshot(
@@ -140,6 +155,20 @@ describe('Immutable digest-addressed uploads', () => {
       'example',
       'registries/example/snapshot.json',
     )).toThrow('Snapshot Artifact reference')
+  })
+
+  test('rejects legacy Snapshot Artifact descriptors without extraction metadata', () => {
+    const stored = snapshot()
+    stored.skills.push({
+      package_id: 'package', skill_id: 'skill', name: 'Skill', description: '',
+      author: { name: '' }, tags: [], category: 'other', category_name: 'Other',
+      source_path: 'skill', files: ['SKILL.md'],
+      artifact: {
+        digest: 'b'.repeat(64), size: 1, uncompressed_size: 1,
+      } as SkillRegistrySnapshot['skills'][number]['artifact'],
+    })
+    expect(() => validateStoredSnapshot(stored, 'example', 'legacy-snapshot'))
+      .toThrow('Snapshot Artifact reference')
   })
 
   test('rejects stored Snapshot bytes that do not match their revision', async () => {
@@ -178,12 +207,8 @@ describe('Immutable digest-addressed uploads', () => {
   test('settles unknown outcomes, retries transient failures, and skips stored archives', async () => {
     const { backend, gets, behavior, objects } = memoryBackend()
     const store = new BlobSkillRegistryStore(backend)
-    const bytes = new TextEncoder().encode('artifact-retry')
-    const digest = await sha256(bytes)
-    const descriptor: SkillArtifactDescriptor = {
-      format: 'memoh_skill_v1', digest, size: bytes.length,
-      uncompressed_size: bytes.length, content_type: 'application/gzip',
-    }
+    const { descriptor, bytes } = await skillArtifact('artifact-retry')
+    const { digest } = descriptor
 
     // The PUT reported an unknown outcome but actually landed: reading the key
     // back settles it without another write.
@@ -198,10 +223,7 @@ describe('Immutable digest-addressed uploads', () => {
     expect(gets.get(`skill-artifacts/${digest}.tar.gz`) ?? 0).toBe(archiveReads + 1)
 
     // A transient failure that did not land is retried and succeeds.
-    const secondBytes = new TextEncoder().encode('artifact-retry-second')
-    const secondDescriptor: SkillArtifactDescriptor = {
-      ...descriptor, digest: await sha256(secondBytes), size: secondBytes.length,
-    }
+    const { descriptor: secondDescriptor, bytes: secondBytes } = await skillArtifact('artifact-retry-second')
     behavior.failPuts = 1
     behavior.landDespiteError = false
     await expect(store.putArtifact(secondDescriptor, secondBytes)).resolves.toEqual({ stored: true })
@@ -354,7 +376,8 @@ describe('SkillRegistryStore contract', () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'skill-registry-store-'))
     roots.push(root)
     const store = new LocalSkillRegistryStore(root)
-    const digest = await exerciseStore(store)
+    const artifact = await exerciseStore(store)
+    const digest = artifact.descriptor.digest
     const state = JSON.parse(await readFile(path.join(root, 'skill-registries/example/state.json'), 'utf8'))
     const revision = registrySnapshotRevision(serializeRegistrySnapshot(snapshot()))
     expect(state.current_snapshot).toBe(revision)
@@ -374,20 +397,17 @@ describe('SkillRegistryStore contract', () => {
     const bucket = mockR2Bucket()
     const { objects } = bucket
     const store = new BlobSkillRegistryStore(new R2BlobBackend(bucket))
-    const digest = await exerciseStore(store)
+    const artifact = await exerciseStore(store)
+    const digest = artifact.descriptor.digest
     const streamed = await store.getArtifactStream(digest)
     expect(streamed?.body).toBeInstanceOf(ReadableStream)
     if (!(streamed?.body instanceof ReadableStream)) throw new Error('Expected an R2 Artifact stream')
-    expect(new Uint8Array(await new Response(streamed.body).arrayBuffer()))
-      .toEqual(new TextEncoder().encode('artifact'))
+    expect([...new Uint8Array(await new Response(streamed.body).arrayBuffer())])
+      .toEqual([...artifact.bytes])
     objects.set(`skill-artifacts/${digest}.tar.gz`, new TextEncoder().encode('corrupt!'))
-    const original = new TextEncoder().encode('artifact')
-    await expect(store.putArtifact({
-      format: 'memoh_skill_v1', digest, size: original.length,
-      uncompressed_size: original.length, content_type: 'application/gzip',
-    }, original)).resolves.toEqual({ stored: true })
+    await expect(store.putArtifact(artifact.descriptor, artifact.bytes)).resolves.toEqual({ stored: true })
     const repaired = await store.getArtifactStream(digest)
     if (!(repaired?.body instanceof ReadableStream)) throw new Error('Expected a repaired R2 Artifact stream')
-    expect(new Uint8Array(await new Response(repaired.body).arrayBuffer())).toEqual(original)
+    expect([...new Uint8Array(await new Response(repaired.body).arrayBuffer())]).toEqual([...artifact.bytes])
   })
 })

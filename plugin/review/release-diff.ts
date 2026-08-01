@@ -1,13 +1,20 @@
 import type { PluginReleaseCandidate } from '../release'
 import { pluginSkillReferenceIdentity } from '../manifest'
 import type { PluginResolvedSkill } from '../types'
+import type { SkillArtifactDescriptor } from '#registry/types'
+import {
+  appendMarkdownLines,
+  combinedMarkdownLength,
+  markdownLines,
+  renderMarkdownLines,
+} from '#lib/markdown-lines'
 
 export interface PluginSkillLockChange {
   identity: string
   registry_revision_before: string
   registry_revision_after: string
-  artifact_before: string
-  artifact_after: string
+  artifact_before: SkillArtifactDescriptor
+  artifact_after: SkillArtifactDescriptor
   metadata: string[]
 }
 
@@ -38,14 +45,14 @@ function changedSkillLocks(
     const metadata = (['source_revision', 'install_id', 'runtime_requirements'] as const)
       .filter((field) => JSON.stringify(oldSkill[field]) !== JSON.stringify(newSkill[field]))
     if (oldSkill.registry_revision === newSkill.registry_revision
-      && oldSkill.artifact.digest === newSkill.artifact.digest
+      && JSON.stringify(oldSkill.artifact) === JSON.stringify(newSkill.artifact)
       && !metadata.length) return []
     return [{
       identity,
       registry_revision_before: oldSkill.registry_revision,
       registry_revision_after: newSkill.registry_revision,
-      artifact_before: oldSkill.artifact.digest,
-      artifact_after: newSkill.artifact.digest,
+      artifact_before: oldSkill.artifact,
+      artifact_after: newSkill.artifact,
       metadata: [...metadata],
     }]
   })
@@ -79,26 +86,82 @@ function shortDigest(value: string) {
   return `\`${value.slice(0, 12)}\``
 }
 
-export function renderPluginReleaseDiffs(diffs: PluginReleaseDiff[]) {
-  if (!diffs.length) return ''
+function artifactLabel(artifact: SkillArtifactDescriptor) {
+  return `${shortDigest(artifact.digest)} (${artifact.format}, ${artifact.content_type}, `
+    + `${artifact.size} B compressed, ${artifact.uncompressed_size} B files, `
+    + `${artifact.archive_size} B tar, ${artifact.file_count} files)`
+}
+
+function skillLines(skill: PluginSkillLockChange) {
   const lines = [
+    `- \`${skill.identity}\``,
+    `  - Registry Snapshot: ${shortDigest(skill.registry_revision_before)} → ${shortDigest(skill.registry_revision_after)}`,
+    `  - Skill Artifact: ${artifactLabel(skill.artifact_before)} → ${artifactLabel(skill.artifact_after)}`,
+  ]
+  if (skill.metadata.length) {
+    lines.push(`  - Metadata: ${skill.metadata.map((field) => `\`${field}\``).join(', ')}`)
+  }
+  return lines
+}
+
+export function renderPluginReleaseDiffs(
+  diffs: PluginReleaseDiff[],
+  maximum = 20_000,
+  fullReportURL?: string,
+  persistentDetails = false,
+) {
+  if (!diffs.length) return ''
+  const approvalNotice = 'Merging this PR approves both the Registry release and these pinned Plugin releases.'
+  const persistentNotice = persistentDetails
+    ? ' The remaining descriptors are posted as persistent Full Plugin Skill descriptor report comments on this PR.'
+    : ''
+  const artifactNotice = fullReportURL
+    ? ` [Download the full workflow report](${fullReportURL}) while it is retained.`
+    : ''
+  const truncationNotice = `_Plugin release details truncated at a complete Skill boundary.${persistentNotice}${artifactNotice}_`
+  const reservedFooter = approvalNotice.length >= truncationNotice.length
+    ? approvalNotice
+    : truncationNotice
+  const output = markdownLines([
     '## Affected Plugin releases',
     '',
     'These Plugin releases keep the same Plugin source and lock the approved Registry Skill Artifacts below.',
     '',
-  ]
-  for (const diff of diffs) {
-    lines.push(`### \`${diff.plugin}\``, '')
-    lines.push(`- Release: ${shortDigest(diff.release_before)} → ${shortDigest(diff.release_after)}`)
-    lines.push(`- Bundle: ${shortDigest(diff.bundle_before)} → ${shortDigest(diff.bundle_after)}`)
-    for (const skill of diff.skills) {
-      lines.push(`- \`${skill.identity}\``)
-      lines.push(`  - Registry Snapshot: ${shortDigest(skill.registry_revision_before)} → ${shortDigest(skill.registry_revision_after)}`)
-      lines.push(`  - Skill Artifact: ${shortDigest(skill.artifact_before)} → ${shortDigest(skill.artifact_after)}`)
-      if (skill.metadata.length) lines.push(`  - Metadata: ${skill.metadata.map((field) => `\`${field}\``).join(', ')}`)
+  ])
+  let truncated = false
+  outer: for (const diff of diffs) {
+    const pluginBlock = markdownLines([
+      `### \`${diff.plugin}\``,
+      '',
+      `- Release: ${shortDigest(diff.release_before)} → ${shortDigest(diff.release_after)}`,
+      `- Bundle: ${shortDigest(diff.bundle_before)} → ${shortDigest(diff.bundle_after)}`,
+    ])
+    if (combinedMarkdownLength(
+      output,
+      pluginBlock,
+      markdownLines(['', reservedFooter, '']),
+    ) > maximum) {
+      truncated = true
+      break
     }
-    lines.push('')
+    for (const skill of diff.skills) {
+      const skillBlock = markdownLines(skillLines(skill))
+      if (combinedMarkdownLength(
+        output,
+        pluginBlock,
+        skillBlock,
+        markdownLines(['', reservedFooter, '']),
+      ) > maximum) {
+        truncated = true
+        appendMarkdownLines(pluginBlock, markdownLines(['']))
+        appendMarkdownLines(output, pluginBlock)
+        break outer
+      }
+      appendMarkdownLines(pluginBlock, skillBlock)
+    }
+    appendMarkdownLines(pluginBlock, markdownLines(['']))
+    appendMarkdownLines(output, pluginBlock)
   }
-  lines.push('Merging this PR approves both the Registry release and these pinned Plugin releases.', '')
-  return lines.join('\n')
+  appendMarkdownLines(output, markdownLines([truncated ? truncationNotice : approvalNotice, '']))
+  return renderMarkdownLines(output)
 }

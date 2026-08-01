@@ -16,6 +16,7 @@ import {
   serializeRegistrySnapshot,
 } from '../snapshot'
 import { compareCanonicalText } from '#lib/order'
+import { MAX_REGISTRY_SNAPSHOT_BYTES, RegistryBuildBudget } from '../budget'
 
 const maxReviewTextBytes = 64 * 1024
 
@@ -60,13 +61,16 @@ export type SkillRegistryBuildProgress =
   | { type: 'source_ready'; registry: string; revision: string }
   | { type: 'scanned'; registry: string; skills: number; diagnostics: number }
 
-function reviewText(bytes: Uint8Array) {
+function reviewText(bytes: Uint8Array, sourcePath: string, budget: RegistryBuildBudget) {
   if (bytes.length > maxReviewTextBytes) return undefined
+  let text: string
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
   } catch {
     return undefined
   }
+  budget.addReviewText(sourcePath, bytes.length)
+  return text
 }
 
 export async function buildSkillRegistryCandidate(
@@ -74,6 +78,7 @@ export async function buildSkillRegistryCandidate(
   projectRoot: string,
   onProgress: (progress: SkillRegistryBuildProgress) => void = () => {},
 ): Promise<SkillRegistryCandidate> {
+  const budget = new RegistryBuildBudget()
   onProgress({ type: 'source', registry: definition.id })
   const source = await materializeSkillRegistrySource(
     definition,
@@ -86,6 +91,7 @@ export async function buildSkillRegistryCandidate(
       definition: source.definition,
       sourceRoot: source.root,
       ensurePaths: source.ensurePaths,
+      budget,
     })
     onProgress({
       type: 'scanned',
@@ -105,6 +111,8 @@ export async function buildSkillRegistryCandidate(
         digest: packaged.digest,
         size: packaged.bytes.length,
         uncompressed_size: packaged.uncompressedSize,
+        archive_size: packaged.archiveSize,
+        file_count: packaged.fileCount,
         content_type: 'application/gzip',
       }
       artifacts.set(descriptor.digest, { descriptor, bytes: packaged.bytes })
@@ -139,14 +147,16 @@ export async function buildSkillRegistryCandidate(
         artifact: descriptor,
       }
       skills.push(skill)
-      const files = Object.fromEntries(await Promise.all(Object.entries(candidate.files)
-        .sort(([left], [right]) => compareCanonicalText(left, right))
-        .map(async ([name, file]) => [name, {
+      const files: Record<string, CandidateFile> = Object.create(null) as Record<string, CandidateFile>
+      for (const [name, file] of Object.entries(candidate.files)
+        .sort(([left], [right]) => compareCanonicalText(left, right))) {
+        files[name] = {
           digest: await sha256(file.bytes),
           size: file.bytes.length,
           mode: file.mode,
-          text: reviewText(file.bytes),
-        }])))
+          text: reviewText(file.bytes, `${candidate.package_id}/${candidate.skill_id}/${name}`, budget),
+        }
+      }
       review.set(`${candidate.package_id}/${candidate.skill_id}`, {
         package_id: candidate.package_id,
         skill_id: candidate.skill_id,
@@ -176,6 +186,9 @@ export async function buildSkillRegistryCandidate(
       diagnostics,
     }
     const snapshotBytes = serializeRegistrySnapshot(snapshot)
+    if (snapshotBytes.length > MAX_REGISTRY_SNAPSHOT_BYTES) {
+      throw new Error(`${definition.id}: Registry Snapshot exceeds ${MAX_REGISTRY_SNAPSHOT_BYTES} bytes`)
+    }
     return {
       definition: source.definition,
       source_revision: source.revision,

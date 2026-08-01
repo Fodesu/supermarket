@@ -3,16 +3,24 @@ import path from 'node:path'
 import { MAX_SKILL_ARTIFACT_FILES, MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES } from './types'
 import type { TarFileInput } from '#lib/archive'
 import { compareCanonicalText } from '#lib/order'
+import type { RegistryBuildBudget } from './budget'
 
 const ignoredDirectories = new Set(['.git', 'node_modules'])
 
 export type SkillSourceFile = TarFileInput
 
-export async function readFileBounded(target: string, maximum: number): Promise<Uint8Array> {
+export async function readFileBounded(
+  target: string,
+  maximum: number,
+  budget?: RegistryBuildBudget,
+): Promise<Uint8Array> {
   if (!Number.isSafeInteger(maximum) || maximum < 0) throw new Error(`Invalid file limit: ${maximum}`)
   const handle = await open(target, 'r')
   try {
-    if (!(await handle.stat()).isFile()) throw new Error(`Expected regular file: ${target}`)
+    const stats = await handle.stat()
+    if (!stats.isFile()) throw new Error(`Expected regular file: ${target}`)
+    if (stats.size > maximum) throw new Error(`File exceeds ${maximum} bytes: ${target}`)
+    budget?.addSourceFile(target, stats.size)
     const chunks: Uint8Array[] = []
     let total = 0
     while (true) {
@@ -23,6 +31,7 @@ export async function readFileBounded(target: string, maximum: number): Promise<
       if (total > maximum) throw new Error(`File exceeds ${maximum} bytes: ${target}`)
       chunks.push(buffer.subarray(0, bytesRead))
     }
+    if (total !== stats.size) throw new Error(`File changed while reading: ${target}`)
     const bytes = new Uint8Array(total)
     let offset = 0
     for (const chunk of chunks) {
@@ -57,7 +66,11 @@ export async function resolveRealInside(root: string, relativePath = '') {
   return physicalTarget
 }
 
-export async function readDirectoryFiles(root: string, allowedRoot = root): Promise<Record<string, SkillSourceFile>> {
+export async function readDirectoryFiles(
+  root: string,
+  allowedRoot = root,
+  budget?: RegistryBuildBudget,
+): Promise<Record<string, SkillSourceFile>> {
   const physicalAllowedRoot = await realpath(path.resolve(allowedRoot))
   const physicalRoot = await realpath(path.resolve(root))
   assertPhysicalContainment(physicalAllowedRoot, physicalRoot)
@@ -75,7 +88,11 @@ export async function readDirectoryFiles(root: string, allowedRoot = root): Prom
       if (stats.isDirectory()) await visit(target)
       else if (stats.isFile()) {
         if (fileCount >= MAX_SKILL_ARTIFACT_FILES) throw new Error(`Skill package exceeds ${MAX_SKILL_ARTIFACT_FILES} files`)
-        const bytes = await readFileBounded(target, MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES - totalBytes)
+        const bytes = await readFileBounded(
+          target,
+          MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES - totalBytes,
+          budget,
+        )
         fileCount++
         totalBytes += bytes.length
         if (totalBytes > MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES) {

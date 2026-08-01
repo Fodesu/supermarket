@@ -40,6 +40,8 @@ function skill(digest: string, description: string): CatalogSkill {
       digest,
       size: 1,
       uncompressed_size: 1,
+      archive_size: 1_024,
+      file_count: 1,
       content_type: 'application/gzip',
     },
   }

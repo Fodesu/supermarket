@@ -1,7 +1,10 @@
 import type { SkillArtifactDescriptor, SkillRuntimeRequirements } from '#registry/types'
 
 export const MAX_PLUGIN_RELEASE_SKILLS = 128
+export const MAX_PLUGIN_SKILL_ARTIFACTS_COMPRESSED_BYTES = 128 * 1024 * 1024
 export const MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES = 128 * 1024 * 1024
+export const MAX_PLUGIN_SKILL_ARTIFACTS_ARCHIVE_BYTES = 128 * 1024 * 1024
+export const MAX_PLUGIN_SKILL_ARTIFACTS_FILES = 10_000
 
 export interface PluginAuthor {
   name: string

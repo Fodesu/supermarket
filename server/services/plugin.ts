@@ -30,7 +30,7 @@ function releaseCache(store: PluginReleaseStore) {
   return cache
 }
 
-function cachedRelease(store: PluginReleaseStore, pluginID: string, revision: string) {
+export function cachedRelease(store: PluginReleaseStore, pluginID: string, revision: string) {
   const cache = releaseCache(store)
   const key = `${pluginID}/${revision}`
   const current = cache.get(key)
@@ -39,8 +39,11 @@ function cachedRelease(store: PluginReleaseStore, pluginID: string, revision: st
     cache.set(key, current)
     return current
   }
-  const value = store.getRelease(pluginID, revision).catch((error) => {
-    cache.delete(key)
+  const value = store.getRelease(pluginID, revision).then((release) => {
+    if (!release && cache.get(key) === value) cache.delete(key)
+    return release
+  }, (error) => {
+    if (cache.get(key) === value) cache.delete(key)
     throw error
   })
   cache.set(key, value)

@@ -60,6 +60,9 @@ describe('SkillRegistryPublisher', () => {
     expect(firstSnapshot!.skills[0]!.artifact.uncompressed_size).toBe(
       new TextEncoder().encode('---\nname: Alpha\ndescription: Version one\n---\n\n# Alpha\n').length,
     )
+    expect(firstSnapshot!.skills[0]!.artifact.file_count).toBe(1)
+    expect(firstSnapshot!.skills[0]!.artifact.archive_size)
+      .toBeGreaterThan(firstSnapshot!.skills[0]!.artifact.uncompressed_size)
     const artifact = await store.getArtifact(firstSnapshot!.skills[0]!.artifact.digest)
     expect((await parseGzipTarArchive(artifact!.bytes)).has('SKILL.md')).toBe(true)
 

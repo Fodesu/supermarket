@@ -82,14 +82,18 @@ describe('Marketplace HTTP protocol', () => {
       adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' },
     }
     const installID = 'example+tools+demo'
-    const archive = await gzip(await createTar({
+    const sourceRevision = 'e'.repeat(64)
+    const serializedArchive = await createTar({
       'SKILL.md': new TextEncoder().encode('---\nname: Demo\ndescription: Demo\n---\n'),
       'scripts/run.sh': { bytes: new TextEncoder().encode('#!/bin/sh\n'), mode: 0o755 },
-    }, ''))
+    }, '')
+    const archive = await gzip(serializedArchive)
     const digest = await sha256(archive)
     const artifact: SkillArtifactDescriptor = {
       format: 'memoh_skill_v1', digest, size: archive.length,
       uncompressed_size: 47,
+      archive_size: serializedArchive.length,
+      file_count: 2,
       content_type: 'application/gzip',
     }
     const imageBytes = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"/>')
@@ -100,12 +104,12 @@ describe('Marketplace HTTP protocol', () => {
       name: 'Demo', description: 'Demo Skill', author: { name: 'Test', email: '' },
       tags: ['demo'], category: 'developer-tools', category_name: 'Developer Tools',
       runtime_requirements: { os: ['darwin', 'linux', 'win32'] },
-      source: { type: 'local', revision: 'source', path: 'skills/demo' },
+      source: { type: 'local', revision: sourceRevision, path: 'skills/demo' },
       files: ['SKILL.md', 'scripts/run.sh'], icon: { card: image, detail: image, brand_color: '#0B7285' }, artifact,
     }
     const snapshot: SkillRegistrySnapshot = {
       schema_version: '1', registry_id: 'example', registry_priority: 10,
-      source: { type: 'local', revision: 'source' }, skills: [compactCatalogSkill(skill)], diagnostics: [],
+      source: { type: 'local', revision: sourceRevision }, skills: [compactCatalogSkill(skill)], diagnostics: [],
     }
     await store.putArtifact(artifact, archive)
     await store.putImage(image, imageBytes)
@@ -131,7 +135,7 @@ describe('Marketplace HTTP protocol', () => {
       artifact: pluginArtifact,
       skills: [{
         registry_id: 'example', package_id: 'tools', skill_id: 'demo',
-        registry_revision: snapshotRevision, source_revision: 'source', install_id: installID,
+        registry_revision: snapshotRevision, source_revision: sourceRevision, install_id: installID,
         runtime_requirements: { os: ['darwin', 'linux', 'win32'] }, artifact,
       }],
     }

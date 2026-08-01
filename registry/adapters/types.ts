@@ -7,6 +7,7 @@ import type {
   SkillRuntimeRequirements,
 } from '../types'
 import type { SkillSourceFile } from '../filesystem'
+import type { RegistryBuildBudget } from '../budget'
 
 export interface SkillCandidate {
   package_id: string
@@ -36,4 +37,5 @@ export interface SkillAdapterInput {
   definition: SkillRegistryDefinition
   sourceRoot: string
   ensurePaths: (paths: string[]) => Promise<void>
+  budget: RegistryBuildBudget
 }
