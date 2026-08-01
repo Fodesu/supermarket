@@ -195,25 +195,6 @@ async function discoverSkillRoots(packageRoot: string, declaredPath: string) {
   return roots
 }
 
-interface SkillRootEntry {
-  root: string
-  label: string
-}
-
-function overlappingSkillRoots(entries: SkillRootEntry[]) {
-  const sorted = [...entries].sort((left, right) =>
-    compareCanonicalText(path.resolve(left.root), path.resolve(right.root)))
-  let accepted = sorted[0]
-  for (const current of sorted.slice(1)) {
-    const relative = path.relative(accepted!.root, current.root)
-    if (relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))) {
-      return [accepted!, current] as const
-    }
-    accepted = current
-  }
-  return undefined
-}
-
 export async function readCodexMarketplace(input: SkillAdapterInput): Promise<SkillAdapterResult> {
   const { definition, sourceRoot, ensurePaths, budget } = input
   if (definition.adapter.type !== 'codex_marketplace_skills') {
@@ -294,7 +275,6 @@ export async function readCodexMarketplace(input: SkillAdapterInput): Promise<Sk
   ]))
 
   const skills: SkillCandidate[] = []
-  const acceptedRoots: SkillRootEntry[] = []
   for (const item of prepared) {
     try {
       const packageSkills: SkillCandidate[] = []
@@ -307,18 +287,6 @@ export async function readCodexMarketplace(input: SkillAdapterInput): Promise<Sk
           seen.add(root.id)
           roots.push(root)
         }
-      }
-      const packageEntries = roots.map((root) => ({ root: root.root, label: root.relativePath }))
-      const packageOverlap = overlappingSkillRoots(packageEntries)
-      if (packageOverlap) {
-        throw new Error(`overlapping skill roots ${packageOverlap[0].label} and ${packageOverlap[1].label}`)
-      }
-      const overlap = overlappingSkillRoots([
-        ...acceptedRoots,
-        ...packageEntries.map((root) => ({ ...root, label: `${item.packagePath}/${root.label}` })),
-      ])
-      if (overlap) {
-        throw new Error(`overlapping skill roots ${overlap[0].label} and ${overlap[1].label}`)
       }
       for (const root of roots) {
         packageSkills.push(await buildSkillCandidate({
@@ -336,10 +304,6 @@ export async function readCodexMarketplace(input: SkillAdapterInput): Promise<Sk
         }))
       }
       skills.push(...packageSkills)
-      acceptedRoots.push(...packageEntries.map((root) => ({
-        ...root,
-        label: `${item.packagePath}/${root.label}`,
-      })))
     } catch (error) {
       rethrowRegistryBudgetError(error)
       diagnostics.push({
