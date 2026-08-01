@@ -10,6 +10,7 @@ import { BlobSkillRegistryStore } from '#registry/storage/blob'
 import type { SkillRegistryStore } from '#registry/storage/contracts'
 import { LocalSkillRegistryStore } from '#registry/storage/local'
 import { S3BlobBackend } from '#registry/storage/s3'
+import { sha256 } from '#registry/digest'
 import { buildPluginReleaseCandidates } from '#plugin/release'
 import { PluginReleasePublisher } from '#plugin/publish/publisher'
 import {
@@ -198,6 +199,46 @@ export async function assertPartialRegistryDependencies(input: {
         `${input.selectedRegistry}: approved Registry Snapshot is missing: `
         + `${candidate.definition.id}/${candidate.revision}; run a full Registry publication first`,
       )
+    }
+    const descriptors = new Map<string, number>()
+    for (const skill of snapshot.skills) {
+      const previousSize = descriptors.get(skill.artifact.digest)
+      if (previousSize != null && previousSize !== skill.artifact.size) {
+        throw new Error(
+          `${input.selectedRegistry}: approved Registry Snapshot has conflicting Artifact sizes: `
+          + `${candidate.definition.id}/${skill.artifact.digest}`,
+        )
+      }
+      descriptors.set(skill.artifact.digest, skill.artifact.size)
+    }
+    for (const [digest, size] of descriptors) {
+      let artifact
+      try {
+        artifact = await input.store.getArtifact(digest)
+      } catch (error) {
+        throw new Error(
+          `${input.selectedRegistry}: approved Registry Artifact is corrupt: `
+          + `${candidate.definition.id}/${digest}; repair it with a full Registry publication`,
+          { cause: error },
+        )
+      }
+      if (!artifact) {
+        throw new Error(
+          `${input.selectedRegistry}: approved Registry Artifact is missing: `
+          + `${candidate.definition.id}/${digest}; run a full Registry publication first`,
+        )
+      }
+      if (artifact.descriptor.format !== 'memoh_skill_v1'
+        || artifact.descriptor.content_type !== 'application/gzip'
+        || artifact.descriptor.digest !== digest
+        || artifact.descriptor.size !== size
+        || artifact.bytes.length !== size
+        || await sha256(artifact.bytes) !== digest) {
+        throw new Error(
+          `${input.selectedRegistry}: approved Registry Artifact does not match its Snapshot: `
+          + `${candidate.definition.id}/${digest}; repair it with a full Registry publication`,
+        )
+      }
     }
   }
 }
