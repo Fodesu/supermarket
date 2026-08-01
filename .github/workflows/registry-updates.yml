@@ -61,14 +61,6 @@ jobs:
         with:
           bun-version-file: .bun-version
       - run: bun install --frozen-lockfile
-      - id: branch
-        env:
-          REGISTRY: ${{ matrix.registry }}
-        run: |
-          branch="automation/registry-update/$REGISTRY"
-          git fetch origin "$branch:refs/remotes/origin/$branch" || true
-          git switch -C "$branch"
-          echo "name=$branch" >> "$GITHUB_OUTPUT"
       - name: Build approved and candidate releases
         env:
           REGISTRY: ${{ matrix.registry }}
@@ -81,38 +73,45 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           REGISTRY: ${{ matrix.registry }}
-          BRANCH: ${{ steps.branch.outputs.name }}
+          CANDIDATE_REVISION: ${{ matrix.candidate_revision }}
         run: |
-          open_pr="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
-          if [[ -n "$open_pr" ]] \
-            && git rev-parse --verify "refs/remotes/origin/$BRANCH" >/dev/null 2>&1 \
-            && git diff --quiet "refs/remotes/origin/$BRANCH" -- \
-              "registries/$REGISTRY/registry.yaml" \
-              "registries/$REGISTRY/release.lock.json" \
-              "registries/memoh/plugins"; then
-            gh pr edit "$open_pr" \
-              --title "chore(registry): review $REGISTRY revision" \
-              --body-file "$RUNNER_TEMP/registry-update.md"
-            echo "$REGISTRY candidate is already proposed; left the reviewed commit unchanged."
-            exit 0
-          fi
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add \
             "registries/$REGISTRY/registry.yaml" \
             "registries/$REGISTRY/release.lock.json" \
             registries/memoh/plugins/*/release.lock.json
-          git commit -m "chore(registry): propose $REGISTRY revision"
-          git push --force-with-lease origin "$BRANCH"
-          if [[ -n "$open_pr" ]]; then
-            gh pr edit "$open_pr" \
-              --title "chore(registry): review $REGISTRY revision" \
-              --body-file "$RUNNER_TEMP/registry-update.md"
-          else
-            gh pr create \
-              --base main \
-              --head "$BRANCH" \
-              --title "chore(registry): review $REGISTRY revision" \
-              --body-file "$RUNNER_TEMP/registry-update.md"
+          candidate_hash="$(git diff --cached --binary | git hash-object --stdin)"
+          branch="automation/registry-update/$REGISTRY/$CANDIDATE_REVISION-${candidate_hash:0:12}"
+          title="chore(registry): review $REGISTRY ${CANDIDATE_REVISION:0:12}"
+
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            git fetch origin "$branch:refs/remotes/origin/$branch"
+            git diff --quiet "refs/remotes/origin/$branch" -- \
+              "registries/$REGISTRY/registry.yaml" \
+              "registries/$REGISTRY/release.lock.json" \
+              "registries/memoh/plugins" || {
+                echo "Immutable candidate branch content does not match its identity: $branch" >&2
+                exit 1
+              }
+            existing_state="$(gh pr list --head "$branch" --state all --json state --jq '.[0].state // empty')"
+            if [[ -z "$existing_state" ]]; then
+              gh pr create \
+                --base main \
+                --head "$branch" \
+                --title "$title" \
+                --body-file "$RUNNER_TEMP/registry-update.md"
+            else
+              echo "$REGISTRY candidate already has a $existing_state PR; left its branch and review unchanged."
+            fi
+            exit 0
           fi
+
+          git switch -c "$branch"
+          git commit -m "chore(registry): propose $REGISTRY revision"
+          git push origin "$branch"
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "$title" \
+            --body-file "$RUNNER_TEMP/registry-update.md"
