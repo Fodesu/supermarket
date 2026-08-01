@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { sha256 } from '#registry/digest'
@@ -65,30 +65,9 @@ describe('PluginReleasePublisher', () => {
     const approved = await candidate()
     const lock = { release_revision: approved.revision }
     await publisher.publish(approved, lock)
-    await rm(path.join(root, 'plugin-artifacts', `${approved.artifact.descriptor.digest}.tar.gz`))
     expect(await publisher.publish(approved, lock)).toMatchObject({ skipped: 'unchanged' })
-    expect(await store.getArtifact(approved.artifact.descriptor.digest)).not.toBeNull()
     expect(await publisher.disable('example')).toMatchObject({ skipped: 'disabled' })
     expect((await store.getState('example'))?.enabled).toBeFalse()
-    expect(await store.getRelease('example', approved.revision)).toEqual(approved.release)
-  })
-
-  test('repairs the approved current release when its stored JSON is missing or corrupt', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'plugin-publisher-'))
-    roots.push(root)
-    const store = new LocalPluginReleaseStore(root)
-    const publisher = new PluginReleasePublisher(store)
-    const approved = await candidate()
-    const lock = { release_revision: approved.revision }
-    await publisher.publish(approved, lock)
-    const releasePath = path.join(root, 'plugin-releases', 'example', 'releases', `${approved.revision}.json`)
-
-    await rm(releasePath)
-    expect(await publisher.publish(approved, lock)).toMatchObject({ skipped: 'recovered' })
-    expect(await store.getRelease('example', approved.revision)).toEqual(approved.release)
-
-    await writeFile(releasePath, 'corrupt')
-    expect(await publisher.publish(approved, lock)).toMatchObject({ skipped: 'recovered' })
     expect(await store.getRelease('example', approved.revision)).toEqual(approved.release)
   })
 

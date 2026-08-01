@@ -12,7 +12,7 @@ export interface SkillRegistryPublishResult {
   revision?: string
   skills?: number
   diagnostics?: number
-  skipped?: 'disabled' | 'unchanged' | 'recovered'
+  skipped?: 'disabled' | 'unchanged'
 }
 
 export type SkillRegistryPublishProgress =
@@ -79,15 +79,6 @@ export class SkillRegistryPublisher {
     const stateVersion = stateRead.versioning === 'conditional'
       ? stateRead.version
       : undefined
-    let current = null
-    if (previousState?.current_snapshot) {
-      try {
-        current = await this.store.getSnapshot(definition.id, previousState.current_snapshot)
-      } catch {
-        current = null
-      }
-    }
-
     if (!definition.enabled) {
       await this.store.putState({
         schema_version: '1',
@@ -101,19 +92,8 @@ export class SkillRegistryPublisher {
     const lock = requireReleaseLock(definition, releaseLock)
     const candidate = await buildSkillRegistryCandidate(definition, this.projectRoot, this.onProgress)
     assertReleaseCandidate(definition, lock, candidate.revision)
-    await this.publishCandidateAssets(candidate)
     if (previousState?.current_snapshot === candidate.revision) {
-      if (!current) {
-        await this.store.publishSnapshot(candidate.snapshotBytes, definition, { expectedVersion: stateVersion })
-        return {
-          registry: definition.id,
-          revision: candidate.revision,
-          skills: candidate.skills.length,
-          diagnostics: candidate.diagnostics.length,
-          skipped: 'recovered',
-        }
-      }
-      if (!previousState || !sameDefinition(previousState.definition, definition)) {
+      if (!sameDefinition(previousState.definition, definition)) {
         await this.store.putState({
           ...previousState,
           schema_version: '1',
@@ -129,18 +109,7 @@ export class SkillRegistryPublisher {
       }
     }
 
-    const previouslyPublished = await this.store.getSnapshot(definition.id, candidate.revision)
-    if (previouslyPublished) {
-      await this.store.publishSnapshot(candidate.snapshotBytes, definition, { expectedVersion: stateVersion })
-      return {
-        registry: definition.id,
-        revision: candidate.revision,
-        skills: previouslyPublished.skills.length,
-        diagnostics: previouslyPublished.diagnostics.length,
-        skipped: 'recovered',
-      }
-    }
-
+    await this.publishCandidateAssets(candidate)
     this.onProgress({ type: 'publishing', registry: definition.id, revision: candidate.revision })
     await this.store.publishSnapshot(candidate.snapshotBytes, definition, { expectedVersion: stateVersion })
     return {
