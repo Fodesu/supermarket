@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "registries/**"
+      - "plugin/**"
       - "registry/**"
       - "lib/archive.ts"
       - "scripts/registry/publish.ts"

@@ -101,3 +101,18 @@ export interface PluginReleaseState {
   current_release?: string
   current_summary?: PluginReleaseCurrentSummary
 }
+
+export type PublicPluginArtifactDescriptor = PluginArtifactDescriptor & { download_url: string }
+
+export type PublicPluginResolvedSkill = Omit<PluginResolvedSkill, 'artifact'> & {
+  artifact: SkillArtifactDescriptor & { download_url: string }
+}
+
+export interface PublicPluginRelease {
+  revision: string
+  published_at: string
+  artifact: PublicPluginArtifactDescriptor
+  skills: PublicPluginResolvedSkill[]
+}
+
+export type PublishedPluginEntry = PluginManifest & { release: PublicPluginRelease }

@@ -6,6 +6,10 @@ import { H3 } from 'h3'
 import { extractSkillArchive, parseGzipTarArchive } from '../client/archive'
 import artifactDownload from '../server/api/artifacts/skill/[digest].get'
 import skillIcon from '../server/api/artifacts/icon/[digest].get'
+import pluginArtifactDownload from '../server/api/artifacts/plugin/[digest].get'
+import pluginDownload from '../server/api/plugins/[id]/download.get'
+import pluginDetail from '../server/api/plugins/[id].get'
+import plugins from '../server/api/plugins/index.get'
 import registrySkill from '../server/api/registries/[id]/packages/[packageId]/skills/[skillId].get'
 import registries from '../server/api/registries/index.get'
 import skills from '../server/api/skills/index.get'
@@ -16,6 +20,9 @@ import { R2BlobBackend } from '#registry/storage/r2'
 import { sha256 } from '#registry/digest'
 import { BlobSkillRegistryStore } from '#registry/storage/blob'
 import { serializeRegistrySnapshot } from '#registry/snapshot'
+import { BlobPluginReleaseStore } from '#plugin/storage/blob'
+import { serializePluginRelease } from '#plugin/release'
+import type { PluginArtifactDescriptor, PluginRelease } from '#plugin/types'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
@@ -65,8 +72,8 @@ function inMemoryBucket() {
   }
 }
 
-describe('Skill Registry HTTP protocol', () => {
-  test('discovers, searches, downloads and installs a namespaced Skill', async () => {
+describe('Marketplace HTTP protocol', () => {
+  test('discovers, searches, downloads and installs immutable Skill and Plugin releases', async () => {
     const bucket = inMemoryBucket()
     const store = new BlobSkillRegistryStore(new R2BlobBackend(bucket))
     const definition: SkillRegistryDefinition = {
@@ -100,9 +107,38 @@ describe('Skill Registry HTTP protocol', () => {
     }
     await store.putArtifact(artifact, archive)
     await store.putImage(image, imageBytes)
-    await store.publishSnapshot(serializeRegistrySnapshot(snapshot), definition, {
+    const snapshotRevision = await store.publishSnapshot(serializeRegistrySnapshot(snapshot), definition, {
       publishedAt: '2026-01-01T00:00:00.000Z',
     })
+    const pluginStore = new BlobPluginReleaseStore(new R2BlobBackend(bucket))
+    const pluginArchive = await gzip(await createTar({
+      'plugin.yaml': new TextEncoder().encode('schema_version: "1"\nid: demo-plugin\n'),
+    }, 'demo-plugin'))
+    const pluginArtifact: PluginArtifactDescriptor = {
+      format: 'memoh_plugin_v1', digest: await sha256(pluginArchive), size: pluginArchive.length,
+      content_type: 'application/gzip',
+    }
+    const pluginRelease: PluginRelease = {
+      schema_version: '1',
+      plugin: {
+        schema_version: '1', id: 'demo-plugin', name: 'Demo Plugin', version: '1.0.0',
+        description: 'Uses the Demo Skill', author: { name: 'Test', email: '' },
+        tags: ['demo'],
+        skills: [{ registry_id: 'example', package_id: 'tools', skill_id: 'demo' }],
+      },
+      artifact: pluginArtifact,
+      skills: [{
+        registry_id: 'example', package_id: 'tools', skill_id: 'demo',
+        registry_revision: snapshotRevision, source_revision: 'source', install_id: installID,
+        runtime_requirements: { os: ['darwin', 'linux', 'win32'] }, artifact,
+      }],
+    }
+    await pluginStore.putArtifact(pluginArtifact, pluginArchive)
+    const pluginRevision = await pluginStore.publishRelease(
+      serializePluginRelease(pluginRelease),
+      'demo-plugin',
+      { publishedAt: '2026-01-02T00:00:00.000Z' },
+    )
 
     const app = new H3()
     app.use((event) => { (event.req as any).runtime = { cloudflare: { env: { SKILL_REGISTRY_BUCKET: bucket } } } })
@@ -111,6 +147,10 @@ describe('Skill Registry HTTP protocol', () => {
     app.get('/api/registries/:id/packages/:packageId/skills/:skillId', registrySkill)
     app.get('/api/artifacts/skill/:digest', artifactDownload)
     app.get('/api/artifacts/icon/:digest', skillIcon)
+    app.get('/api/plugins', plugins)
+    app.get('/api/plugins/:id/download', pluginDownload)
+    app.get('/api/plugins/:id', pluginDetail)
+    app.get('/api/artifacts/plugin/:digest', pluginArtifactDownload)
 
     const registryResponse = await app.fetch(new Request('http://local/api/registries'))
     expect(registryResponse.status).toBe(200)
@@ -146,5 +186,42 @@ describe('Skill Registry HTTP protocol', () => {
     const installed = await extractSkillArchive(await parseGzipTarArchive(downloaded), destination, installID)
     expect(await readFile(path.join(installed, 'SKILL.md'), 'utf8')).toContain('name: Demo')
     expect((await stat(path.join(installed, 'scripts/run.sh'))).mode & 0o777).toBe(0o755)
+
+    const pluginsResponse = await app.fetch(new Request('http://local/api/plugins?q=demo'))
+    expect(pluginsResponse.status).toBe(200)
+    expect(await pluginsResponse.json()).toMatchObject({
+      total: 1,
+      data: [{
+        id: 'demo-plugin',
+        release: {
+          revision: pluginRevision,
+          artifact: {
+            digest: pluginArtifact.digest,
+            download_url: `/api/artifacts/plugin/${pluginArtifact.digest}`,
+          },
+          skills: [{
+            registry_revision: snapshotRevision,
+            artifact: { digest, download_url: `/api/artifacts/skill/${digest}` },
+          }],
+        },
+      }],
+    })
+    const pluginResponse = await app.fetch(new Request('http://local/api/plugins/demo-plugin'))
+    expect(pluginResponse.status).toBe(200)
+    expect((await pluginResponse.json() as any).release.revision).toBe(pluginRevision)
+
+    const immutablePluginDownload = await app.fetch(new Request(
+      `http://local/api/artifacts/plugin/${pluginArtifact.digest}`,
+    ))
+    expect(immutablePluginDownload.headers.get('cache-control')).toContain('immutable')
+    expect(immutablePluginDownload.headers.get('x-content-sha256')).toBe(pluginArtifact.digest)
+    expect(await sha256(new Uint8Array(await immutablePluginDownload.arrayBuffer())))
+      .toBe(pluginArtifact.digest)
+
+    const legacyPluginDownload = await app.fetch(new Request('http://local/api/plugins/demo-plugin/download'))
+    expect(legacyPluginDownload.headers.get('cache-control')).toBe('no-cache')
+    expect(legacyPluginDownload.headers.get('x-plugin-release')).toBe(pluginRevision)
+    const pluginFiles = await parseGzipTarArchive(new Uint8Array(await legacyPluginDownload.arrayBuffer()))
+    expect([...pluginFiles.keys()]).toEqual(['demo-plugin/plugin.yaml'])
   })
 })
