@@ -35,7 +35,6 @@ export interface PluginReleaseCandidate {
   plugin_id: string
   revision: string
   release: PluginRelease
-  releaseBytes: Uint8Array
   artifact: PackagedPlugin
 }
 
@@ -187,7 +186,6 @@ export async function buildPluginReleaseCandidates(
         plugin_id: plugin.id,
         revision: await pluginReleaseRevision(releaseBytes),
         release,
-        releaseBytes,
         artifact,
       })
     } catch (error) {

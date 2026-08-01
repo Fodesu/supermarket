@@ -33,7 +33,7 @@ async function candidate(version = '1.0.0'): Promise<PluginReleaseCandidate> {
   const releaseBytes = serializePluginRelease(release)
   return {
     plugin_id: 'example', revision: await pluginReleaseRevision(releaseBytes),
-    release, releaseBytes, artifact: { descriptor, bytes },
+    release, artifact: { descriptor, bytes },
   }
 }
 
@@ -106,7 +106,7 @@ describe('PluginReleasePublisher', () => {
     }
     await expect(publisher.publish({
       ...approved,
-      releaseBytes: serializePluginRelease(changedRelease),
+      release: changedRelease,
     }, lock)).rejects.toThrow('does not match approved revision')
 
     await expect(publisher.publish({

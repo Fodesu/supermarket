@@ -99,8 +99,9 @@ describe('Plugin release candidates', () => {
       install_id: 'example+tools+search', artifact: { digest: 'a'.repeat(64) },
       runtime_requirements: { os: ['linux'] },
     })
-    expect(parsePluginRelease(candidate!.releaseBytes, 'example')).toEqual(candidate!.release)
-    await expect(assertPluginReleaseRevision(candidate!.releaseBytes, candidate!.revision)).resolves.toBeUndefined()
+    const releaseBytes = serializePluginRelease(candidate!.release)
+    expect(parsePluginRelease(releaseBytes, 'example')).toEqual(candidate!.release)
+    await expect(assertPluginReleaseRevision(releaseBytes, candidate!.revision)).resolves.toBeUndefined()
 
     const files = await parseGzipTarArchive(candidate!.artifact.bytes)
     expect([...files.keys()].sort()).toEqual(['example/plugin.yaml', 'example/scripts/run.sh'])
