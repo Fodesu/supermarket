@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { packTar } from 'modern-tar'
 import { createTar, gzip } from '#lib/archive'
+import { packageSkill } from '#registry/artifacts/build'
 import { extractSkillArchive, parseGzipTarArchive, parseTarArchive, validateSkillArchive } from './archive'
 
 const roots: string[] = []
@@ -29,7 +30,7 @@ describe('Skill Registry client archives', () => {
     const compressed = await gzip(await createTar({
       'SKILL.md': new TextEncoder().encode('---\nname: pdf\n---\n'),
       [longPath]: new TextEncoder().encode('guide'),
-      'references/note ': new TextEncoder().encode('spacing'),
+      'references/note.txt': new TextEncoder().encode('spacing'),
       'scripts/run.sh': { bytes: new TextEncoder().encode('#!/bin/sh\n'), mode: 0o755 },
     }, ''))
     const files = await parseGzipTarArchive(compressed)
@@ -40,7 +41,7 @@ describe('Skill Registry client archives', () => {
     roots.push(root)
     const installed = await extractSkillArchive(files, root, installID)
     expect(await readFile(path.join(installed, longPath), 'utf8')).toBe('guide')
-    expect(await readFile(path.join(installed, 'references/note '), 'utf8')).toBe('spacing')
+    expect(await readFile(path.join(installed, 'references/note.txt'), 'utf8')).toBe('spacing')
     expect((await stat(path.join(installed, 'scripts/run.sh'))).mode & 0o777).toBe(0o755)
   })
 
@@ -72,6 +73,15 @@ describe('Skill Registry client archives', () => {
   test('rejects traversal, unsupported entry types, conflicts and decompression bombs', async () => {
     await expect(createTar({ '../private': new Uint8Array() }, 'skill')).rejects.toThrow('Unsafe tar path')
     await expect(createTar({ 'references\\private': new Uint8Array() }, 'skill')).rejects.toThrow('Unsafe tar path')
+    await expect(createTar({ 'references/note ': new Uint8Array() }, 'skill')).rejects.toThrow('Unsafe tar path')
+    await expect(createTar({ 'scripts/Foo': new Uint8Array(), 'scripts/foo': new Uint8Array() }, ''))
+      .rejects.toThrow('Duplicate tar path')
+    await expect(createTar({ 'file': new Uint8Array(), 'file/child': new Uint8Array() }, ''))
+      .rejects.toThrow('Conflicting tar path')
+    await expect(packageSkill({
+      'SKILL.md': { bytes: new Uint8Array(), mode: 0o644 },
+      '.MEMOH-DIRECT-OWNER.JSON/child': { bytes: new Uint8Array(), mode: 0o644 },
+    })).rejects.toThrow('Reserved tar path')
     const traversal = await packTar([{
       header: { name: '../private', size: 1, type: 'file' },
       body: new Uint8Array([1]),
@@ -84,8 +94,22 @@ describe('Skill Registry client archives', () => {
     const tar = await createTar({ 'SKILL.md': new Uint8Array() }, '')
     tar[156] = 0x32
     await expect(parseTarArchive(tar)).rejects.toThrow(/checksum|entry type/i)
-    const conflict = await createTar({ 'file': new Uint8Array(), 'file/child': new Uint8Array() }, '')
-    await expect(parseTarArchive(conflict)).rejects.toThrow('conflicting path')
+    const conflict = await packTar([{
+      header: { name: 'file', size: 1, type: 'file' },
+      body: new Uint8Array([1]),
+    }, {
+      header: { name: 'file/child', size: 1, type: 'file' },
+      body: new Uint8Array([2]),
+    }])
+    await expect(parseTarArchive(conflict)).rejects.toThrow(/conflicting archive path/i)
+    const caseConflict = await packTar([{
+      header: { name: 'scripts/Run.sh', size: 1, type: 'file' },
+      body: new Uint8Array([1]),
+    }, {
+      header: { name: 'scripts/run.sh', size: 1, type: 'file' },
+      body: new Uint8Array([2]),
+    }])
+    await expect(parseTarArchive(caseConflict)).rejects.toThrow('Duplicate archive path')
     const compressed = await gzip(new Uint8Array(1024))
     await expect(parseGzipTarArchive(compressed, 100)).rejects.toThrow('decompression limit')
   })

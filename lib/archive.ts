@@ -2,6 +2,7 @@ import { createGzipEncoder, packTar, type TarEntry } from 'modern-tar'
 import { compareCanonicalText } from './order'
 
 export const MAX_TAR_UNCOMPRESSED_BYTES = 5 * 1024 * 1024
+export const MEMOH_DIRECT_OWNER_PATH = '.memoh-direct-owner.json'
 const gzipHeaderLength = 10
 const gzipMinimumLength = gzipHeaderLength + 8
 
@@ -10,27 +11,63 @@ export interface TarFileInput {
   mode: 0o644 | 0o755
 }
 
+export interface ArchivePathOptions {
+  reservedRootPaths?: readonly string[]
+}
+
 export function assertSafeArchivePath(name: string, label = 'tar') {
   const segments = name.split('/')
   if (!name || name.includes('\\') || name.startsWith('/') || /^[a-z]:/i.test(name)
-    || segments.some((segment) => !segment || segment === '.' || segment === '..')) {
+    || segments.some((segment) => !segment || segment === '.' || segment === '..'
+      || segment !== segment.trim() || segment.endsWith('.') || /[<>:"|?*\u0000-\u001f\u007f]/u.test(segment))) {
     throw new Error(`Unsafe ${label} path: ${name}`)
   }
   return name
 }
 
+export function assertSafeArchivePaths(
+  names: Iterable<string>,
+  label = 'tar',
+  options: ArchivePathOptions = {},
+) {
+  const reserved = (options.reservedRootPaths ?? []).map((name) => {
+    assertSafeArchivePath(name, 'reserved archive')
+    return name.toLowerCase()
+  })
+  const seen = new Map<string, string>()
+  for (const name of names) {
+    assertSafeArchivePath(name, label)
+    const canonical = name.toLowerCase()
+    if (reserved.some((root) => canonical === root || canonical.startsWith(`${root}/`))) {
+      throw new Error(`Reserved ${label} path: ${name}`)
+    }
+    const previous = seen.get(canonical)
+    if (previous) throw new Error(`Duplicate ${label} path: ${name} conflicts with ${previous}`)
+    seen.set(canonical, name)
+  }
+  for (const [canonical, name] of seen) {
+    const segments = canonical.split('/')
+    for (let index = 1; index < segments.length; index++) {
+      const parent = seen.get(segments.slice(0, index).join('/'))
+      if (parent) throw new Error(`Conflicting ${label} path: ${name} is nested below ${parent}`)
+    }
+  }
+}
+
 export async function createTar(
   files: Record<string, Uint8Array | TarFileInput>,
   prefix: string,
+  options: ArchivePathOptions = {},
 ): Promise<Uint8Array> {
   if (prefix) assertSafeArchivePath(prefix)
+  const fileEntries = Object.entries(files)
+  assertSafeArchivePaths(fileEntries.map(([name]) => name), 'tar', options)
+  if (prefix) assertSafeArchivePaths(fileEntries.map(([name]) => `${prefix}/${name}`))
   let contentBytes = 0
-  const entries: TarEntry[] = Object.entries(files)
+  const entries: TarEntry[] = fileEntries
     .sort(([left], [right]) => compareCanonicalText(left, right))
     .map(([name, input]) => {
-      assertSafeArchivePath(name)
       const archivePath = prefix ? `${prefix}/${name}` : name
-      assertSafeArchivePath(archivePath)
       const body = input instanceof Uint8Array ? input : input.bytes
       const mode = input instanceof Uint8Array ? 0o644 : input.mode
       contentBytes += body.length
