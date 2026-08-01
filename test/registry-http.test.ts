@@ -89,6 +89,7 @@ describe('Marketplace HTTP protocol', () => {
     const digest = await sha256(archive)
     const artifact: SkillArtifactDescriptor = {
       format: 'memoh_skill_v1', digest, size: archive.length,
+      uncompressed_size: 47,
       content_type: 'application/gzip',
     }
     const imageBytes = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"/>')

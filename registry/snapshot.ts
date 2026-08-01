@@ -40,6 +40,7 @@ export function compactCatalogSkill(skill: CatalogSkill): SnapshotSkill {
     artifact: {
       digest: skill.artifact.digest,
       size: skill.artifact.size,
+      uncompressed_size: skill.artifact.uncompressed_size,
     },
   }
 }
@@ -73,6 +74,7 @@ export function catalogSkillsFromSnapshot(snapshot: SkillRegistrySnapshot): Cata
       format: 'memoh_skill_v1',
       digest: skill.artifact.digest,
       size: skill.artifact.size,
+      uncompressed_size: skill.artifact.uncompressed_size,
       content_type: 'application/gzip',
     },
   }))

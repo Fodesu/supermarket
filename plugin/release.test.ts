@@ -9,7 +9,12 @@ import {
   assertPluginReleaseRevision,
   buildPluginReleaseCandidates,
   parsePluginRelease,
+  serializePluginRelease,
 } from './release'
+import {
+  MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES,
+  type PluginRelease,
+} from './types'
 
 const roots: string[] = []
 
@@ -33,6 +38,7 @@ async function fixture() {
     format: 'memoh_skill_v1' as const,
     digest: 'a'.repeat(64),
     size: 123,
+    uncompressed_size: 456,
     content_type: 'application/gzip' as const,
   }
   const skill: CatalogSkill = {
@@ -88,5 +94,36 @@ describe('Plugin release candidates', () => {
     snapshot.skills = []
     await expect(buildPluginReleaseCandidates(root, [{ revision: 'b'.repeat(64), snapshot }]))
       .rejects.toThrow('references missing Registry Skill')
+  })
+
+  test('rejects releases whose Skill Artifacts exceed the Memoh install budget', () => {
+    const skillCount = 26
+    const references = Array.from({ length: skillCount }, (_, index) => ({
+      registry_id: 'example', package_id: 'tools', skill_id: `skill-${index}`,
+    }))
+    const release: PluginRelease = {
+      schema_version: '1',
+      plugin: {
+        schema_version: '1', id: 'example', name: 'Example', version: '1.0.0',
+        description: 'Example Plugin', author: { name: 'Memoh', email: '' }, skills: references,
+      },
+      artifact: {
+        format: 'memoh_plugin_v1', digest: 'a'.repeat(64), size: 1,
+        content_type: 'application/gzip',
+      },
+      skills: references.map((reference) => ({
+        ...reference,
+        registry_revision: 'b'.repeat(64),
+        source_revision: 'source',
+        install_id: `${reference.registry_id}+${reference.package_id}+${reference.skill_id}`,
+        artifact: {
+          format: 'memoh_skill_v1', digest: 'c'.repeat(64), size: 1,
+          uncompressed_size: 5 * 1024 * 1024, content_type: 'application/gzip',
+        },
+      })),
+    }
+
+    expect(() => parsePluginRelease(serializePluginRelease(release), 'example'))
+      .toThrow(`${MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES} byte uncompressed limit`)
   })
 })

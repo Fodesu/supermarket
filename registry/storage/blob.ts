@@ -6,7 +6,10 @@ import type {
   SkillRegistryState,
 } from '../types'
 import * as z from 'zod/mini'
-import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../types'
+import {
+  MAX_SKILL_ARTIFACT_COMPRESSED_BYTES,
+  MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
+} from '../types'
 import { assertRegistryID } from '../definition'
 import { summarizeCurrentSnapshot } from '../catalog'
 import { sha256 } from '../digest'
@@ -180,6 +183,10 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     assertDigest(descriptor.digest)
     if (descriptor.format !== 'memoh_skill_v1') throw new Error(`Unsupported artifact format: ${descriptor.format}`)
     if (descriptor.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) throw new Error('Artifact exceeds compressed size limit')
+    if (!Number.isSafeInteger(descriptor.uncompressed_size) || descriptor.uncompressed_size < 1
+      || descriptor.uncompressed_size > MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES) {
+      throw new Error('Artifact has invalid uncompressed size')
+    }
     if (descriptor.size !== bytes.length) throw new Error('Artifact size does not match its content')
     if (descriptor.digest !== await sha256(bytes)) throw new Error('Artifact digest does not match its content')
     const archiveKey = `skill-artifacts/${descriptor.digest}.tar.gz`

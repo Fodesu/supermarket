@@ -6,6 +6,7 @@ import type {
   SkillRegistrySnapshot,
 } from '../types'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../types'
+import { MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES } from '../types'
 import { assertRegistryComponentID, isSkillRuntimeOS } from '../definition'
 
 export function assertDigest(value: string): string {
@@ -76,6 +77,11 @@ export function validateStoredSnapshot(
       if (!Number.isSafeInteger(skill.artifact.size) || skill.artifact.size < 0
         || skill.artifact.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) {
         throw new Error('Catalog Skill contains invalid Artifact size')
+      }
+      if (!Number.isSafeInteger(skill.artifact.uncompressed_size)
+        || skill.artifact.uncompressed_size < 1
+        || skill.artifact.uncompressed_size > MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES) {
+        throw new Error('Catalog Skill contains invalid uncompressed Artifact size')
       }
       for (const image of [skill.icon?.card, skill.icon?.detail, skill.icon?.dark]) {
         if (image) {

@@ -145,7 +145,7 @@ bun run registry:publish -- --registry memoh
 bun run dev
 ```
 
-Commit the Registry `release.lock.json` and any changed `plugins/*/release.lock.json` files with the Skill source. `registry:lock -- --registry <id>` rebuilds Plugin locks because a changed Skill may produce a new Plugin release. Skill archives include regular files under the Skill root, including binary assets; `.git` and `node_modules` directories are ignored. An archive is limited to 1,000 files, 5 MiB uncompressed, and 6 MiB compressed.
+Commit the Registry `release.lock.json` and any changed `plugins/*/release.lock.json` files with the Skill source. `registry:lock -- --registry <id>` rebuilds Plugin locks because a changed Skill may produce a new Plugin release. Skill archives include regular files under the Skill root, including binary assets; `.git` and `node_modules` directories are ignored. An archive is limited to 1,000 files, 5 MiB of regular-file content, and 6 MiB compressed. Artifact descriptors record that exact uncompressed content size. A Plugin release may reference at most 128 Skills with at most 128 MiB of uncompressed content in total.
 
 ### Adding a Registry
 

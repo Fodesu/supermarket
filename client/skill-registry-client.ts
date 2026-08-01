@@ -2,7 +2,10 @@ import path from 'node:path'
 import * as z from 'zod/mini'
 import { sha256 } from '#registry/digest'
 import { skillInstallID } from '#registry/definition'
-import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '#registry/types'
+import {
+  MAX_SKILL_ARTIFACT_COMPRESSED_BYTES,
+  MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
+} from '#registry/types'
 import { extractSkillArchive, parseGzipTarArchive, validateSkillArchive } from './archive'
 import {
   MAX_REGISTRY_JSON_BYTES,
@@ -35,6 +38,7 @@ interface InstallableSkillResponse {
     format: 'memoh_skill_v1'
     digest: string
     size: number
+    uncompressed_size: number
     download_url: string
   }
 }
@@ -48,6 +52,7 @@ const installableSkillSchema = z.object({
     format: z.literal('memoh_skill_v1'),
     digest: z.string().check(z.regex(/^[a-f0-9]{64}$/)),
     size: z.number().check(z.int(), z.minimum(0), z.maximum(MAX_SKILL_ARTIFACT_COMPRESSED_BYTES)),
+    uncompressed_size: z.number().check(z.int(), z.minimum(1), z.maximum(MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES)),
     download_url: z.string(),
   }),
 })
@@ -62,6 +67,7 @@ function installableSkillResponse(value: unknown): InstallableSkillResponse {
       format: artifact.format,
       digest: artifact.digest,
       size: artifact.size,
+      uncompressed_size: artifact.uncompressed_size,
       download_url: artifact.download_url,
     },
   }
@@ -118,6 +124,10 @@ switch (command) {
     if (actualDigest !== artifact.digest) throw new Error(`SHA-256 mismatch: expected ${artifact.digest}, got ${actualDigest}`)
     const files = await parseGzipTarArchive(bytes)
     validateSkillArchive(files)
+    const uncompressedSize = [...files.values()].reduce((total, file) => total + file.bytes.length, 0)
+    if (uncompressedSize !== artifact.uncompressed_size) {
+      throw new Error(`Artifact uncompressed size mismatch: expected ${artifact.uncompressed_size}, got ${uncompressedSize}`)
+    }
     const destination = path.resolve(option('--destination') ?? '.data/registry-client-installs')
     console.log(JSON.stringify({ installed_at: await extractSkillArchive(files, destination, installID), digest: actualDigest }, null, 2))
     break

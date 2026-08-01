@@ -1,4 +1,5 @@
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES, type SkillRegistrySnapshot } from '#registry/types'
+import { MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES } from '#registry/types'
 import { catalogSkillsFromSnapshot } from '#registry/snapshot'
 import { sha256 } from '#registry/digest'
 import { assertDigest } from '#registry/storage/validation'
@@ -11,6 +12,10 @@ import type {
   PluginArtifactDescriptor,
   PluginRelease,
   PluginResolvedSkill,
+} from './types'
+import {
+  MAX_PLUGIN_RELEASE_SKILLS,
+  MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES,
 } from './types'
 
 const encoder = new TextEncoder()
@@ -52,7 +57,10 @@ function validateResolvedSkill(skill: PluginResolvedSkill, label: string) {
   assertDigest(skill.artifact.digest)
   if (skill.artifact.format !== 'memoh_skill_v1' || skill.artifact.content_type !== 'application/gzip'
     || !Number.isSafeInteger(skill.artifact.size) || skill.artifact.size < 1
-    || skill.artifact.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) {
+    || skill.artifact.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES
+    || !Number.isSafeInteger(skill.artifact.uncompressed_size)
+    || skill.artifact.uncompressed_size < 1
+    || skill.artifact.uncompressed_size > MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES) {
     throw new Error(`${label} contains an invalid Skill Artifact: ${identity}`)
   }
   if (skill.runtime_requirements && (
@@ -60,6 +68,7 @@ function validateResolvedSkill(skill: PluginResolvedSkill, label: string) {
     || !skill.runtime_requirements.os.length
     || skill.runtime_requirements.os.some((os) => !isSkillRuntimeOS(os))
   )) throw new Error(`${label} contains invalid Skill runtime requirements: ${identity}`)
+  return skill.artifact.uncompressed_size
 }
 
 export function parsePluginRelease(
@@ -82,13 +91,21 @@ export function parsePluginRelease(
   validatePluginArtifact(release.artifact, label)
   const references = release.plugin.skills ?? []
   if (references.length !== release.skills.length) throw new Error(`${label} does not lock every Skill reference`)
+  if (release.skills.length > MAX_PLUGIN_RELEASE_SKILLS) {
+    throw new Error(`${label} exceeds the ${MAX_PLUGIN_RELEASE_SKILLS} Skill limit`)
+  }
+  let totalUncompressedSize = 0
   for (let index = 0; index < references.length; index++) {
     const reference = references[index]!
     const resolved = release.skills[index]!
     if (pluginSkillReferenceIdentity(reference) !== pluginSkillReferenceIdentity(resolved)) {
       throw new Error(`${label} Skill lock order does not match plugin.yaml`)
     }
-    validateResolvedSkill(resolved, label)
+    const uncompressedSize = validateResolvedSkill(resolved, label)
+    if (uncompressedSize > MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES - totalUncompressedSize) {
+      throw new Error(`${label} Skill Artifacts exceed the ${MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES} byte uncompressed limit`)
+    }
+    totalUncompressedSize += uncompressedSize
   }
   const canonical = serializePluginRelease(release)
   if (!sameBytes(bytes, canonical)) throw new Error(`${label} must use canonical JSON formatting`)
@@ -140,6 +157,7 @@ export async function buildPluginReleaseCandidates(
         skills: resolved,
       }
       const releaseBytes = serializePluginRelease(release)
+      parsePluginRelease(releaseBytes, plugin.id)
       candidates.push({
         plugin_id: plugin.id,
         revision: await pluginReleaseRevision(releaseBytes),

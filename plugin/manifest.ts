@@ -1,6 +1,10 @@
 import { parse as parseYaml } from 'yaml'
 import * as z from 'zod/mini'
-import type { PluginManifest, PluginSkillReference } from './types'
+import {
+  MAX_PLUGIN_RELEASE_SKILLS,
+  type PluginManifest,
+  type PluginSkillReference,
+} from './types'
 import { isIdentifier, isRegistryComponentID } from '#registry/definition'
 
 const isRegistryID = (value: string) => value !== 'user' && isRegistryComponentID(value)
@@ -77,6 +81,9 @@ function uniqueKeys(label: string) {
 }
 
 function uniqueSkillReferences(items: PluginSkillReference[], ctx: z.core.$RefinementCtx<PluginSkillReference[]>) {
+  if (items.length > MAX_PLUGIN_RELEASE_SKILLS) {
+    ctx.addIssue({ code: 'custom', message: `skills exceeds the ${MAX_PLUGIN_RELEASE_SKILLS} Skill limit` })
+  }
   const seen = new Set<string>()
   for (const item of items) {
     const identity = pluginSkillReferenceIdentity(item)

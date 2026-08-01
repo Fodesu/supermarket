@@ -34,14 +34,17 @@ async function publishedDependency(input: { publishArtifact?: boolean; snapshotS
       package_id: 'tools', skill_id: 'search', name: 'Search', description: 'Search',
       author: { name: 'Test' }, tags: [], category: 'tools', category_name: 'Tools',
       source_path: 'tools/search', files: ['SKILL.md'],
-      artifact: { digest, size: bytes.length + (input.snapshotSizeOffset ?? 0) },
+      artifact: {
+        digest, size: bytes.length + (input.snapshotSizeOffset ?? 0), uncompressed_size: bytes.length,
+      },
     }],
     diagnostics: [],
   }
   const revision = await store.publishSnapshot(serializeRegistrySnapshot(snapshot), definition('other'))
   if (input.publishArtifact) {
     await store.putArtifact({
-      format: 'memoh_skill_v1', digest, size: bytes.length, content_type: 'application/gzip',
+      format: 'memoh_skill_v1', digest, size: bytes.length,
+      uncompressed_size: bytes.length, content_type: 'application/gzip',
     }, bytes)
   }
   return { store, candidate: { definition: definition('other'), revision }, dataRoot, digest }
