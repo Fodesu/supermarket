@@ -79,7 +79,8 @@ export class S3BlobBackend implements ConditionalBlobBackend, StreamingBlobBacke
         Body: value,
         ...(expectedVersion === null ? { IfNoneMatch: '*' } : { IfMatch: expectedVersion }),
       }))
-      return response.ETag ?? 'stored'
+      if (!response.ETag) throw new Error(`S3 conditional write completed without an ETag: ${key}`)
+      return response.ETag
     } catch (error) {
       const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode
       if (status === 412) return null
