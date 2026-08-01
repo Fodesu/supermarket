@@ -67,8 +67,11 @@ describe('Plugin manifests', () => {
     expect(() => parsePluginManifest({
       ...base, skills: [{ ...reference, registry_id: 'user' }],
     })).toThrow('Invalid Registry ID')
-    expect(() => parsePluginManifest({
+    expect(parsePluginManifest({
       ...base, skills: [{ ...reference, skill_id: 'notion.search' }],
+    }).skills).toEqual([{ ...reference, skill_id: 'notion.search' }])
+    expect(() => parsePluginManifest({
+      ...base, skills: [{ ...reference, skill_id: 'notion..search' }],
     })).toThrow('Invalid Skill ID')
   })
 })

@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 import {
   assertIdentifier,
+  assertRegistryComponentID,
   assertRegistryID,
   parseSkillRegistryDefinition,
   resolveSkillRuntimeRequirements,
   safeRelativePath,
+  skillInstallID,
 } from './definition'
 
 describe('Skill Registry definitions', () => {
@@ -12,6 +14,14 @@ describe('Skill Registry definitions', () => {
     expect(assertIdentifier('build-web_apps')).toBe('build-web_apps')
     for (const value of ['Foo', 'foo.bar', '.foo', 'foo..bar', 'foo/bar']) {
       expect(() => assertIdentifier(value)).toThrow('Invalid ID')
+    }
+    expect(assertRegistryID('openai.api')).toBe('openai.api')
+    expect(assertRegistryComponentID('build.web_apps')).toBe('build.web_apps')
+    expect(skillInstallID('openai.api', 'documents.v2', 'pdf.reader')).toBe(
+      'openai.api+documents.v2+pdf.reader',
+    )
+    for (const value of ['Foo', '.foo', 'foo..bar', 'foo.', 'foo+bar', 'foo/bar', 'CON', 'nul.txt', 'x'.repeat(129)]) {
+      expect(() => assertRegistryComponentID(value)).toThrow('Invalid Registry component ID')
     }
     expect(() => assertRegistryID('user')).toThrow('Reserved registry ID')
   })
