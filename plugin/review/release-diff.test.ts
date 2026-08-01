@@ -21,8 +21,7 @@ function candidate(revision: string, registryRevision: string, skillDigest: stri
       registry_revision: registryRevision, source_revision: 'source',
       install_id: 'memoh+tools+search',
       artifact: {
-        format: 'memoh_skill_v1', digest: skillDigest, size: 20, uncompressed_size: 30,
-        archive_size: 1_024, file_count: 1,
+        format: 'memoh_skill_v1', digest: skillDigest, size: 20,
         content_type: 'application/gzip',
       },
     }],
@@ -58,19 +57,6 @@ describe('Plugin release review', () => {
     const current = candidate('a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64))
     expect(diffPluginReleaseCandidates([current], [current])).toEqual([])
     expect(renderPluginReleaseDiffs([])).toBe('')
-  })
-
-  test('shows extraction metadata changes even when the Artifact digest is unchanged', () => {
-    const previous = candidate('a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64))
-    const next = candidate('d'.repeat(64), 'b'.repeat(64), 'c'.repeat(64))
-    next.release.skills[0]!.artifact.archive_size = 2_048
-
-    const diffs = diffPluginReleaseCandidates([previous], [next])
-    expect(diffs[0]?.skills[0]).toMatchObject({
-      artifact_before: { digest: 'c'.repeat(64), archive_size: 1_024 },
-      artifact_after: { digest: 'c'.repeat(64), archive_size: 2_048 },
-    })
-    expect(renderPluginReleaseDiffs(diffs)).toContain('2048 B tar')
   })
 
   test('truncates a large report at a complete Skill boundary', () => {

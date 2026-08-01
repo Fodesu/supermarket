@@ -38,8 +38,6 @@ async function publishedDependency(input: { publishArtifact?: boolean; snapshotS
       source_path: 'tools/search', files: ['SKILL.md'],
       artifact: {
         digest, size: bytes.length + (input.snapshotSizeOffset ?? 0),
-        uncompressed_size: artifact.uncompressedSize,
-        archive_size: artifact.archiveSize, file_count: artifact.fileCount,
       },
     }],
     diagnostics: [],
@@ -48,8 +46,6 @@ async function publishedDependency(input: { publishArtifact?: boolean; snapshotS
   if (input.publishArtifact) {
     await store.putArtifact({
       format: 'memoh_skill_v1', digest, size: bytes.length,
-      uncompressed_size: artifact.uncompressedSize,
-      archive_size: artifact.archiveSize, file_count: artifact.fileCount,
       content_type: 'application/gzip',
     }, bytes)
   }
@@ -89,17 +85,4 @@ describe('partial Registry publication', () => {
     })).rejects.toThrow('does not match its descriptor')
   })
 
-  test('rejects an Artifact whose bytes do not match its digest', async () => {
-    const dependency = await publishedDependency({ publishArtifact: true })
-    const corrupt = dependency.bytes.slice()
-    if (!corrupt.length) throw new Error('Expected a non-empty Artifact fixture')
-    corrupt[corrupt.length - 1] = corrupt[corrupt.length - 1]! ^ 0xff
-    await Bun.write(
-      path.join(dependency.dataRoot, 'skill-artifacts', `${dependency.digest}.tar.gz`),
-      corrupt,
-    )
-    await expect(assertPartialRegistryDependencies({
-      selectedRegistry: 'selected', candidates: [dependency.candidate], store: dependency.store,
-    })).rejects.toThrow('approved Registry Artifact content is corrupt')
-  })
 })

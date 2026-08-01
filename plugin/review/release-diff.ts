@@ -87,9 +87,7 @@ function shortDigest(value: string) {
 }
 
 function artifactLabel(artifact: SkillArtifactDescriptor) {
-  return `${shortDigest(artifact.digest)} (${artifact.format}, ${artifact.content_type}, `
-    + `${artifact.size} B compressed, ${artifact.uncompressed_size} B files, `
-    + `${artifact.archive_size} B tar, ${artifact.file_count} files)`
+  return `${shortDigest(artifact.digest)} (${artifact.format}, ${artifact.size} B)`
 }
 
 function skillLines(skill: PluginSkillLockChange) {

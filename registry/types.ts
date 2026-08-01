@@ -7,7 +7,6 @@ export interface SkillAuthor {
 
 export const MAX_SKILL_ARTIFACT_COMPRESSED_BYTES = 6 * 1024 * 1024
 export const MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES = MAX_TAR_UNCOMPRESSED_BYTES
-export const MAX_SKILL_ARTIFACT_ARCHIVE_BYTES = MAX_TAR_UNCOMPRESSED_BYTES
 export const MAX_SKILL_ARTIFACT_FILES = 1_000
 export const MAX_SKILL_IMAGE_BYTES = 512 * 1024
 
@@ -45,19 +44,10 @@ export interface SkillArtifactDescriptor {
   format: 'memoh_skill_v1'
   digest: string
   size: number
-  /** Aggregate bytes of regular file bodies, excluding tar framing. */
-  uncompressed_size: number
-  /** Complete serialized tar bytes after gzip decompression. */
-  archive_size: number
-  /** Number of regular files in the tar archive. */
-  file_count: number
   content_type: 'application/gzip'
 }
 
-export type SkillArtifactBlob = Pick<
-  SkillArtifactDescriptor,
-  'format' | 'digest' | 'size' | 'content_type'
->
+export type SkillArtifactBlob = SkillArtifactDescriptor
 
 export type SkillImageContentType = 'image/svg+xml' | 'image/png' | 'image/jpeg' | 'image/webp'
 
@@ -121,10 +111,7 @@ export interface SnapshotSkill {
   source_path: string
   files: string[]
   icon?: SkillIcon
-  artifact: Pick<
-    SkillArtifactDescriptor,
-    'digest' | 'size' | 'uncompressed_size' | 'archive_size' | 'file_count'
-  >
+  artifact: Pick<SkillArtifactDescriptor, 'digest' | 'size'>
 }
 
 export interface SnapshotSource {

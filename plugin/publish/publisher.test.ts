@@ -92,7 +92,7 @@ describe('PluginReleasePublisher', () => {
     expect(await store.getRelease('example', approved.revision)).toEqual(approved.release)
   })
 
-  test('derives approval from canonical release bytes and verifies the packaged Artifact', async () => {
+  test('enforces approved release bytes and verifies the packaged Artifact', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'plugin-publisher-'))
     roots.push(root)
     const store = new LocalPluginReleaseStore(root)
@@ -107,7 +107,7 @@ describe('PluginReleasePublisher', () => {
     await expect(publisher.publish({
       ...approved,
       releaseBytes: serializePluginRelease(changedRelease),
-    }, lock)).rejects.toThrow('but the rebuilt release is')
+    }, lock)).rejects.toThrow('does not match approved revision')
 
     await expect(publisher.publish({
       ...approved,
@@ -115,7 +115,7 @@ describe('PluginReleasePublisher', () => {
         ...approved.artifact,
         bytes: new TextEncoder().encode('different artifact'),
       },
-    }, lock)).rejects.toThrow('Artifact does not match its content')
+    }, lock)).rejects.toThrow('Artifact metadata does not match its content')
     expect(await store.getState('example')).toBeNull()
   })
 })

@@ -6,15 +6,10 @@ import type {
   SkillRegistrySnapshot,
 } from '../types'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../types'
-import {
-  MAX_SKILL_ARTIFACT_ARCHIVE_BYTES,
-  MAX_SKILL_ARTIFACT_FILES,
-  MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
-} from '../types'
+import { MAX_SKILL_ARTIFACT_FILES } from '../types'
 import { assertRegistryComponentID, isSkillRuntimeOS } from '../definition'
 import {
   MAX_REGISTRY_SKILLS,
-  MAX_REGISTRY_SOURCE_BYTES,
   MAX_REGISTRY_SOURCE_FILES,
 } from '../budget'
 import { assertSafeArchivePaths, MEMOH_DIRECT_OWNER_PATH } from '#lib/archive'
@@ -69,7 +64,6 @@ export function validateStoredSnapshot(
   if (snapshot.skills.length > MAX_REGISTRY_SKILLS) {
     throw new Error(`Stored Snapshot exceeds ${MAX_REGISTRY_SKILLS} Skills: ${key}`)
   }
-  let totalSourceBytes = 0
   let totalFiles = 0
   for (const skill of snapshot.skills) {
     if (!skill || !skill.artifact || typeof skill.source_path !== 'string' || !skill.source_path
@@ -96,30 +90,13 @@ export function validateStoredSnapshot(
         || skill.artifact.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) {
         throw new Error('Catalog Skill contains invalid Artifact size')
       }
-      if (!Number.isSafeInteger(skill.artifact.uncompressed_size)
-        || skill.artifact.uncompressed_size < 1
-        || skill.artifact.uncompressed_size > MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES) {
-        throw new Error('Catalog Skill contains invalid uncompressed Artifact size')
+      if (!skill.files.length || skill.files.length > MAX_SKILL_ARTIFACT_FILES) {
+        throw new Error('Catalog Skill contains an invalid file list')
       }
-      if (!Number.isSafeInteger(skill.artifact.archive_size)
-        || skill.artifact.archive_size < 1
-        || skill.artifact.archive_size > MAX_SKILL_ARTIFACT_ARCHIVE_BYTES) {
-        throw new Error('Catalog Skill contains invalid archive Artifact size')
-      }
-      if (!Number.isSafeInteger(skill.artifact.file_count)
-        || skill.artifact.file_count < 1
-        || skill.artifact.file_count > MAX_SKILL_ARTIFACT_FILES
-        || skill.artifact.file_count !== skill.files.length) {
-        throw new Error('Catalog Skill contains invalid Artifact file count')
-      }
-      if (skill.artifact.uncompressed_size > MAX_REGISTRY_SOURCE_BYTES - totalSourceBytes) {
-        throw new Error('Catalog Skills exceed the Registry source byte limit')
-      }
-      if (skill.artifact.file_count > MAX_REGISTRY_SOURCE_FILES - totalFiles) {
+      if (skill.files.length > MAX_REGISTRY_SOURCE_FILES - totalFiles) {
         throw new Error('Catalog Skills exceed the Registry source file limit')
       }
-      totalSourceBytes += skill.artifact.uncompressed_size
-      totalFiles += skill.artifact.file_count
+      totalFiles += skill.files.length
       for (const image of [skill.icon?.card, skill.icon?.detail, skill.icon?.dark]) {
         if (image) {
           assertDigest(image.digest)
