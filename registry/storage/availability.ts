@@ -1,23 +1,8 @@
-import { sha256 } from '../digest'
 import type { SkillRegistryStore } from './contracts'
 
 export interface SkillArtifactReference {
   digest: string
   size: number
-}
-
-async function consume(body: ReadableStream<Uint8Array>) {
-  const reader = body.getReader()
-  let size = 0
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) return size
-      size += value.length
-    }
-  } finally {
-    reader.releaseLock()
-  }
 }
 
 export async function assertSkillArtifactsAvailable(
@@ -46,13 +31,8 @@ export async function assertSkillArtifactsAvailable(
           if (streamed.body instanceof ReadableStream) await streamed.body.cancel()
           throw new Error(`${label} does not match its descriptor: ${digest}`)
         }
-        const actualSize = streamed.body instanceof Uint8Array
-          ? streamed.body.length
-          : await consume(streamed.body)
-        if (actualSize !== size
-          || (streamed.body instanceof Uint8Array && await sha256(streamed.body) !== digest)) {
-          throw new Error(`${label} content is corrupt: ${digest}`)
-        }
+        if (streamed.body instanceof ReadableStream) await streamed.body.cancel()
+        else if (streamed.body.length !== size) throw new Error(`${label} size is incorrect: ${digest}`)
         continue
       }
 
@@ -62,13 +42,12 @@ export async function assertSkillArtifactsAvailable(
         || artifact.descriptor.content_type !== 'application/gzip'
         || artifact.descriptor.digest !== digest
         || artifact.descriptor.size !== size
-        || artifact.bytes.length !== size
-        || await sha256(artifact.bytes) !== digest) {
-        throw new Error(`${label} content is corrupt: ${digest}`)
+        || artifact.bytes.length !== size) {
+        throw new Error(`${label} does not match its descriptor: ${digest}`)
       }
     } catch (error) {
       if (error instanceof Error && error.message.startsWith(label)) throw error
-      throw new Error(`${label} content is corrupt: ${digest}`, { cause: error })
+      throw new Error(`${label} is unavailable: ${digest}`, { cause: error })
     }
   }
 }

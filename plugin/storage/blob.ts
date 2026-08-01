@@ -127,12 +127,15 @@ export class BlobPluginReleaseStore implements PluginReleaseStore {
   async publishRelease(
     bytes: Uint8Array,
     pluginID: string,
-    options: { expectedVersion?: string | null; publishedAt?: string } = {},
+    options: { expectedVersion?: string | null; expectedRevision?: string; publishedAt?: string } = {},
   ) {
     const id = assertIdentifier(pluginID, 'plugin ID')
     if (bytes.length > MAX_PLUGIN_RELEASE_BYTES) throw new Error(`Plugin release exceeds ${MAX_PLUGIN_RELEASE_BYTES} bytes: ${id}`)
     const release = parsePluginRelease(bytes, id)
     const revision = await sha256(bytes)
+    if (options.expectedRevision && revision !== assertDigest(options.expectedRevision)) {
+      throw new Error(`${id}: Plugin release does not match approved revision ${options.expectedRevision}`)
+    }
     await putImmutableObject(
       this.backend,
       `plugin-releases/${id}/releases/${revision}.json`,

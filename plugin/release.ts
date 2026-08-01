@@ -1,8 +1,5 @@
 import {
-  MAX_SKILL_ARTIFACT_ARCHIVE_BYTES,
   MAX_SKILL_ARTIFACT_COMPRESSED_BYTES,
-  MAX_SKILL_ARTIFACT_FILES,
-  MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
   type SkillArtifactDescriptor,
   type SkillRegistrySnapshot,
 } from '#registry/types'
@@ -22,10 +19,7 @@ import type {
 } from './types'
 import {
   MAX_PLUGIN_RELEASE_SKILLS,
-  MAX_PLUGIN_SKILL_ARTIFACTS_ARCHIVE_BYTES,
   MAX_PLUGIN_SKILL_ARTIFACTS_COMPRESSED_BYTES,
-  MAX_PLUGIN_SKILL_ARTIFACTS_FILES,
-  MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES,
 } from './types'
 
 const encoder = new TextEncoder()
@@ -76,16 +70,7 @@ function validateResolvedSkill(skill: PluginResolvedSkill, label: string) {
   assertDigest(skill.artifact.digest)
   if (skill.artifact.format !== 'memoh_skill_v1' || skill.artifact.content_type !== 'application/gzip'
     || !Number.isSafeInteger(skill.artifact.size) || skill.artifact.size < 1
-    || skill.artifact.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES
-    || !Number.isSafeInteger(skill.artifact.uncompressed_size)
-    || skill.artifact.uncompressed_size < 1
-    || skill.artifact.uncompressed_size > MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES
-    || !Number.isSafeInteger(skill.artifact.archive_size)
-    || skill.artifact.archive_size < 1
-    || skill.artifact.archive_size > MAX_SKILL_ARTIFACT_ARCHIVE_BYTES
-    || !Number.isSafeInteger(skill.artifact.file_count)
-    || skill.artifact.file_count < 1
-    || skill.artifact.file_count > MAX_SKILL_ARTIFACT_FILES) {
+    || skill.artifact.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) {
     throw new Error(`${label} contains an invalid Skill Artifact: ${identity}`)
   }
   if (skill.runtime_requirements && (
@@ -103,9 +88,6 @@ function sameSkillArtifactDescriptor(
   return left.format === right.format
     && left.digest === right.digest
     && left.size === right.size
-    && left.uncompressed_size === right.uncompressed_size
-    && left.archive_size === right.archive_size
-    && left.file_count === right.file_count
     && left.content_type === right.content_type
 }
 
@@ -132,10 +114,7 @@ export function parsePluginRelease(
   if (release.skills.length > MAX_PLUGIN_RELEASE_SKILLS) {
     throw new Error(`${label} exceeds the ${MAX_PLUGIN_RELEASE_SKILLS} Skill limit`)
   }
-  let totalUncompressedSize = 0
   let totalCompressedSize = 0
-  let totalArchiveSize = 0
-  let totalFileCount = 0
   const artifactsByDigest = new Map<string, SkillArtifactDescriptor>()
   for (let index = 0; index < references.length; index++) {
     const reference = references[index]!
@@ -152,19 +131,7 @@ export function parsePluginRelease(
     if (artifact.size > MAX_PLUGIN_SKILL_ARTIFACTS_COMPRESSED_BYTES - totalCompressedSize) {
       throw new Error(`${label} Skill Artifacts exceed the ${MAX_PLUGIN_SKILL_ARTIFACTS_COMPRESSED_BYTES} byte compressed limit`)
     }
-    if (artifact.uncompressed_size > MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES - totalUncompressedSize) {
-      throw new Error(`${label} Skill Artifacts exceed the ${MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES} byte uncompressed limit`)
-    }
-    if (artifact.archive_size > MAX_PLUGIN_SKILL_ARTIFACTS_ARCHIVE_BYTES - totalArchiveSize) {
-      throw new Error(`${label} Skill Artifacts exceed the ${MAX_PLUGIN_SKILL_ARTIFACTS_ARCHIVE_BYTES} byte archive limit`)
-    }
-    if (artifact.file_count > MAX_PLUGIN_SKILL_ARTIFACTS_FILES - totalFileCount) {
-      throw new Error(`${label} Skill Artifacts exceed the ${MAX_PLUGIN_SKILL_ARTIFACTS_FILES} file limit`)
-    }
     totalCompressedSize += artifact.size
-    totalUncompressedSize += artifact.uncompressed_size
-    totalArchiveSize += artifact.archive_size
-    totalFileCount += artifact.file_count
   }
   const canonical = serializePluginRelease(release)
   if (!sameBytes(bytes, canonical)) throw new Error(`${label} must use canonical JSON formatting`)
@@ -216,7 +183,6 @@ export async function buildPluginReleaseCandidates(
         skills: resolved,
       }
       const releaseBytes = serializePluginRelease(release)
-      parsePluginRelease(releaseBytes, plugin.id)
       candidates.push({
         plugin_id: plugin.id,
         revision: await pluginReleaseRevision(releaseBytes),

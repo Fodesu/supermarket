@@ -37,9 +37,6 @@ describe('Registry update report', () => {
       format: 'memoh_skill_v1' as const,
       digest: 'c'.repeat(64),
       size: 1,
-      uncompressed_size: 1,
-      archive_size: 1,
-      file_count: 1,
       content_type: 'application/gzip' as const,
     }
     const pluginDiffs: PluginReleaseDiff[] = Array.from({ length: 100 }, (_, index) => ({

@@ -18,7 +18,7 @@ export interface PluginReleaseStore {
   publishRelease(
     bytes: Uint8Array,
     pluginID: string,
-    options?: { expectedVersion?: string | null; publishedAt?: string },
+    options?: { expectedVersion?: string | null; expectedRevision?: string; publishedAt?: string },
   ): Promise<string>
   putArtifact(descriptor: PluginArtifactDescriptor, bytes: Uint8Array): Promise<{ stored: boolean }>
   getArtifact(digest: string): Promise<{ descriptor: PluginArtifactDescriptor; bytes: Uint8Array } | null>
