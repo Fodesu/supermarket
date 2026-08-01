@@ -1,5 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { createHash } from 'node:crypto'
+import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { loadSkillRegistryDefinitions } from '#registry/definitions/repository'
 import {
@@ -45,13 +44,11 @@ export function renderRegistryUpdateReport(
   compareURL: string | undefined,
   pluginDiffs: Parameters<typeof renderPluginReleaseDiffs>[0],
   fullReportURL?: string,
-  persistentPluginDetails = false,
 ) {
   const pluginReport = renderPluginReleaseDiffs(
     pluginDiffs,
     MAX_PLUGIN_RELEASE_REPORT_LENGTH,
     fullReportURL,
-    persistentPluginDetails,
   )
   const separatorLength = pluginReport ? 1 : 0
   const registryReport = renderRegistryReleaseDiff(
@@ -65,59 +62,6 @@ export function renderRegistryUpdateReport(
     throw new Error('Registry update report exceeds the GitHub PR body limit')
   }
   return report
-}
-
-const MAX_PLUGIN_REVIEW_COMMENT_CONTENT_LENGTH = 50_000
-
-function pluginReviewBlocks(report: string) {
-  const blocks: string[][] = []
-  for (const line of report.split('\n')) {
-    if ((line.startsWith('### ') || line.startsWith('- `')) && blocks.length) {
-      blocks.push([])
-    }
-    if (!blocks.length) blocks.push([])
-    blocks.at(-1)!.push(line)
-  }
-  return blocks.map((lines) => lines.join('\n'))
-}
-
-export function renderPluginReviewComments(
-  pluginDiffs: Parameters<typeof renderPluginReleaseDiffs>[0],
-  marker: string,
-) {
-  if (!pluginDiffs.length) return []
-  const chunks: string[] = []
-  let current = ''
-  for (const block of pluginReviewBlocks(
-    renderPluginReleaseDiffs(pluginDiffs, Number.POSITIVE_INFINITY),
-  )) {
-    if (block.length > MAX_PLUGIN_REVIEW_COMMENT_CONTENT_LENGTH) {
-      throw new Error('A Plugin review block exceeds the PR comment limit')
-    }
-    const projected = current ? `${current}\n${block}` : block
-    if (projected.length > MAX_PLUGIN_REVIEW_COMMENT_CONTENT_LENGTH) {
-      chunks.push(current)
-      current = block
-    } else {
-      current = projected
-    }
-  }
-  if (current) chunks.push(current)
-  return chunks.map((content, index) => {
-    const part = index + 1
-    const digest = createHash('sha256').update(content).digest('hex')
-    const comment = [
-      `<!-- registry-plugin-review:${marker}:${part}:${digest} -->`,
-      `## Full Plugin Skill descriptor report (${part}/${chunks.length})`,
-      '',
-      content,
-      '',
-    ].join('\n')
-    if (comment.length > MAX_REGISTRY_UPDATE_REPORT_LENGTH) {
-      throw new Error('Plugin review comment exceeds the GitHub comment limit')
-    }
-    return comment
-  })
 }
 
 export function renderFullRegistryUpdateReport(
@@ -228,7 +172,6 @@ async function prepareRegistryUpdate(input: {
   reportPath: string
   fullReportPath?: string
   fullReportURL?: string
-  pluginCommentDirectory?: string
 }) {
   if (!/^[a-f0-9]{40}$/.test(input.candidateRevision)) {
     throw new Error('Candidate revision must be a full Git commit hash')
@@ -304,7 +247,6 @@ async function prepareRegistryUpdate(input: {
       url,
       pluginDiffs,
       input.fullReportURL,
-      Boolean(input.pluginCommentDirectory),
     ),
   )
   if (input.fullReportPath) {
@@ -312,19 +254,6 @@ async function prepareRegistryUpdate(input: {
       input.fullReportPath,
       renderFullRegistryUpdateReport(diff, url, pluginDiffs),
     )
-  }
-  if (input.pluginCommentDirectory) {
-    await mkdir(input.pluginCommentDirectory, { recursive: true })
-    const comments = renderPluginReviewComments(
-      pluginDiffs,
-      `${input.registry}:${input.candidateRevision}`,
-    )
-    for (const [index, comment] of comments.entries()) {
-      await writeFile(
-        path.join(input.pluginCommentDirectory, `${String(index + 1).padStart(3, '0')}.md`),
-        comment,
-      )
-    }
   }
   await applyRevision(input.projectRoot, definition, input.candidateRevision)
   await writeRegistryReleaseLock(input.projectRoot, candidateDefinition, {
@@ -346,9 +275,7 @@ if (import.meta.main) {
   const reportPath = option('--report')
   const fullReportPath = option('--full-report')
   const fullReportURL = option('--full-report-url')
-  const pluginCommentDirectory = option('--plugin-comment-dir')
-  if (registry || candidateRevision || reportPath || fullReportPath || fullReportURL
-    || pluginCommentDirectory) {
+  if (registry || candidateRevision || reportPath || fullReportPath || fullReportURL) {
     if (!registry || !candidateRevision || !reportPath) {
       throw new Error('--registry, --candidate, and --report must be provided together')
     }
@@ -362,9 +289,6 @@ if (import.meta.main) {
       reportPath: path.resolve(reportPath),
       fullReportPath: fullReportPath ? path.resolve(fullReportPath) : undefined,
       fullReportURL,
-      pluginCommentDirectory: pluginCommentDirectory
-        ? path.resolve(pluginCommentDirectory)
-        : undefined,
     })
     console.log(JSON.stringify(diff.summary, null, 2))
   } else {
