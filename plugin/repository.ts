@@ -1,6 +1,6 @@
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
-import { parsePluginManifest, pluginSkillReferenceIdentity } from './manifest'
+import { parsePluginManifest } from './manifest'
 import { PluginBundleBudget } from './bundle'
 import type { TarFileInput } from '#lib/archive'
 import type { PluginManifest } from './types'
@@ -99,21 +99,4 @@ export async function loadCommittedPlugins(projectRoot: string): Promise<Committ
   }
   if (failures.length) throw new AggregateError(failures, failures.map((error) => error.message).join('\n'))
   return plugins
-}
-
-export async function validateCommittedPlugins(projectRoot: string, availableSkills?: ReadonlySet<string>) {
-  const plugins = await loadCommittedPlugins(projectRoot)
-  const failures: Error[] = []
-  if (availableSkills) {
-    for (const plugin of plugins) {
-      for (const reference of plugin.manifest.skills ?? []) {
-        const identity = pluginSkillReferenceIdentity(reference)
-        if (!availableSkills.has(identity)) {
-          failures.push(new Error(`${plugin.id}: references missing Registry Skill: ${identity}`))
-        }
-      }
-    }
-  }
-  if (failures.length) throw new AggregateError(failures, failures.map((error) => error.message).join('\n'))
-  return plugins.map((plugin) => plugin.id)
 }
