@@ -1,3 +1,5 @@
+import type { SkillArtifactDescriptor, SkillRuntimeRequirements } from '#registry/types'
+
 export interface PluginAuthor {
   name: string
   email: string
@@ -41,6 +43,14 @@ export interface PluginSkillReference {
   skill_id: string
 }
 
+export interface PluginResolvedSkill extends PluginSkillReference {
+  registry_revision: string
+  source_revision: string
+  install_id: string
+  runtime_requirements?: SkillRuntimeRequirements
+  artifact: SkillArtifactDescriptor
+}
+
 export interface PluginManifest {
   schema_version: '1'
   id: string
@@ -60,3 +70,34 @@ export interface PluginManifest {
 }
 
 export type PluginEntry = PluginManifest
+
+export interface PluginArtifactDescriptor {
+  format: 'memoh_plugin_v1'
+  digest: string
+  size: number
+  content_type: 'application/gzip'
+}
+
+/** Immutable release payload. Its canonical JSON digest is the release revision. */
+export interface PluginRelease {
+  schema_version: '1'
+  plugin: PluginManifest
+  artifact: PluginArtifactDescriptor
+  skills: PluginResolvedSkill[]
+}
+
+export interface PluginReleaseCurrentSummary {
+  revision: string
+  published_at: string
+  name: string
+  version: string
+}
+
+/** The only mutable object for one Plugin. */
+export interface PluginReleaseState {
+  schema_version: '1'
+  plugin_id: string
+  enabled: boolean
+  current_release?: string
+  current_summary?: PluginReleaseCurrentSummary
+}

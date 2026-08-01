@@ -1,6 +1,7 @@
 export const MAX_PLUGIN_BUNDLE_FILES = 1_000
 export const MAX_PLUGIN_BUNDLE_FILE_BYTES = 2 * 1024 * 1024
 export const MAX_PLUGIN_BUNDLE_UNCOMPRESSED_BYTES = 10 * 1024 * 1024
+export const MAX_PLUGIN_ARTIFACT_COMPRESSED_BYTES = 6 * 1024 * 1024
 
 export class PluginBundleBudget {
   private fileCount = 0

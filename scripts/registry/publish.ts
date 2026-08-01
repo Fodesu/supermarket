@@ -9,6 +9,12 @@ import { BlobSkillRegistryStore } from '#registry/storage/blob'
 import type { SkillRegistryStore } from '#registry/storage/contracts'
 import { LocalSkillRegistryStore } from '#registry/storage/local'
 import { S3BlobBackend } from '#registry/storage/s3'
+import { buildPluginReleaseCandidates } from '#plugin/release'
+import { PluginReleasePublisher } from '#plugin/publish/publisher'
+import { loadPluginReleaseLock, type PluginReleaseLock } from '#plugin/release-lock'
+import { BlobPluginReleaseStore } from '#plugin/storage/blob'
+import type { PluginReleaseStore } from '#plugin/storage/contracts'
+import { LocalPluginReleaseStore } from '#plugin/storage/local'
 
 type DeploymentEnvironment = 'test' | 'production'
 
@@ -80,14 +86,25 @@ function requiredEnvironment(name: string) {
   return value
 }
 
-async function createStore(projectRoot: string, environment?: DeploymentEnvironment): Promise<SkillRegistryStore> {
-  if (!environment) return new LocalSkillRegistryStore(path.join(projectRoot, '.data/registries'))
-  return new BlobSkillRegistryStore(new S3BlobBackend({
+async function createStores(projectRoot: string, environment?: DeploymentEnvironment): Promise<{
+  skills: SkillRegistryStore
+  plugins: PluginReleaseStore
+}> {
+  const dataRoot = path.join(projectRoot, '.data/registries')
+  if (!environment) return {
+    skills: new LocalSkillRegistryStore(dataRoot),
+    plugins: new LocalPluginReleaseStore(dataRoot),
+  }
+  const options = {
     accountID: requiredEnvironment('CLOUDFLARE_ACCOUNT_ID'),
     accessKeyID: requiredEnvironment('R2_ACCESS_KEY_ID'),
     secretAccessKey: requiredEnvironment('R2_SECRET_ACCESS_KEY'),
     bucket: await bucketForEnvironment(projectRoot, environment),
-  }))
+  }
+  return {
+    skills: new BlobSkillRegistryStore(new S3BlobBackend(options)),
+    plugins: new BlobPluginReleaseStore(new S3BlobBackend(options)),
+  }
 }
 
 export async function publishSkillRegistries(input: {
@@ -129,6 +146,33 @@ export async function publishSkillRegistries(input: {
   return { results, failures }
 }
 
+export async function publishPluginReleases(input: {
+  candidates: Awaited<ReturnType<typeof buildPluginReleaseCandidates>>
+  store: PluginReleaseStore
+  publisher: PluginReleasePublisher
+  locks: ReadonlyMap<string, PluginReleaseLock>
+}) {
+  const results = []
+  const failures: Array<{ plugin: string; error: unknown }> = []
+  const current = new Set(input.candidates.map((candidate) => candidate.plugin_id))
+  for (const candidate of input.candidates) {
+    try {
+      results.push(await input.publisher.publish(candidate, input.locks.get(candidate.plugin_id)))
+    } catch (error) {
+      failures.push({ plugin: candidate.plugin_id, error })
+    }
+  }
+  for (const pluginID of await input.store.listPluginIDs()) {
+    if (current.has(pluginID)) continue
+    try {
+      results.push(await input.publisher.disable(pluginID))
+    } catch (error) {
+      failures.push({ plugin: pluginID, error })
+    }
+  }
+  return { results, failures }
+}
+
 if (import.meta.main) {
   const projectRoot = path.resolve(import.meta.dirname, '../..')
   const registryID = option('--registry')
@@ -148,7 +192,7 @@ if (import.meta.main) {
     throw new Error(`Registry not found: ${registryID}`)
   }
 
-  const store = await createStore(projectRoot, environment)
+  const stores = await createStores(projectRoot, environment)
   const locks = new Map<string, RegistryReleaseLock>()
   for (const definition of definitions) {
     if (!definition.enabled) continue
@@ -156,8 +200,8 @@ if (import.meta.main) {
   }
   const outcome = await publishSkillRegistries({
     definitions,
-    store,
-    publisher: new SkillRegistryPublisher(store, projectRoot, createSkillRegistryProgressRenderer()),
+    store: stores.skills,
+    publisher: new SkillRegistryPublisher(stores.skills, projectRoot, createSkillRegistryProgressRenderer()),
     locks,
     knownRegistryIDs: [
       ...loaded.definitions.map((definition) => definition.id),
@@ -165,13 +209,38 @@ if (import.meta.main) {
     ],
   })
   for (const result of outcome.results) console.log(result)
-  const failures = [
+  const failures: Array<{ registry?: string; plugin?: string; error: unknown }> = [
     ...definitionFailures.map((failure) => ({ registry: failure.registry, error: failure.error })),
     ...outcome.failures,
   ]
+  if (!failures.length) {
+    const snapshots = await Promise.all(loaded.definitions
+      .filter((definition) => definition.enabled)
+      .map(async (definition) => {
+        const state = await stores.skills.getState(definition.id)
+        if (!state?.current_snapshot) throw new Error(`Published Registry has no current Snapshot: ${definition.id}`)
+        const snapshot = await stores.skills.getSnapshot(definition.id, state.current_snapshot)
+        if (!snapshot) throw new Error(`Published Registry Snapshot is missing: ${definition.id}/${state.current_snapshot}`)
+        return { revision: state.current_snapshot!, snapshot }
+      }))
+    const candidates = await buildPluginReleaseCandidates(projectRoot, snapshots)
+    const pluginLocks = new Map<string, PluginReleaseLock>()
+    for (const candidate of candidates) {
+      pluginLocks.set(candidate.plugin_id, await loadPluginReleaseLock(projectRoot, candidate.plugin_id))
+    }
+    const plugins = await publishPluginReleases({
+      candidates,
+      store: stores.plugins,
+      publisher: new PluginReleasePublisher(stores.plugins),
+      locks: pluginLocks,
+    })
+    for (const result of plugins.results) console.log(result)
+    failures.push(...plugins.failures)
+  }
   for (const failure of failures) {
     console.error({
       registry: failure.registry,
+      plugin: failure.plugin,
       error: failure.error instanceof Error ? failure.error.message : String(failure.error),
     })
   }
