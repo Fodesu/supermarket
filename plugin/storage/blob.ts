@@ -1,5 +1,5 @@
 import { sha256 } from '#registry/digest'
-import { assertRegistryID } from '#registry/definition'
+import { assertIdentifier } from '#registry/definition'
 import {
   conditionalBlobBackend,
   streamingBlobBackend,
@@ -74,7 +74,7 @@ export class BlobPluginReleaseStore implements PluginReleaseStore {
   }
 
   async getStateWithVersion(pluginID: string): Promise<PluginReleaseStateRead> {
-    const id = assertRegistryID(pluginID, 'plugin ID')
+    const id = assertIdentifier(pluginID, 'plugin ID')
     const key = `plugin-releases/${id}/state.json`
     if (this.conditionalBackend) {
       const result = await this.conditionalBackend.getWithVersion(key)
@@ -93,7 +93,7 @@ export class BlobPluginReleaseStore implements PluginReleaseStore {
   }
 
   async putState(state: PluginReleaseState, expectedVersion?: string | null) {
-    const id = assertRegistryID(state.plugin_id, 'plugin ID')
+    const id = assertIdentifier(state.plugin_id, 'plugin ID')
     validateState(state, id)
     const bytes = jsonBytes(state)
     if (bytes.length > MAX_PLUGIN_STATE_BYTES) throw new Error(`Plugin state exceeds ${MAX_PLUGIN_STATE_BYTES} bytes: ${id}`)
@@ -108,7 +108,7 @@ export class BlobPluginReleaseStore implements PluginReleaseStore {
   }
 
   async getReleaseBytes(pluginID: string, revision: string) {
-    const id = assertRegistryID(pluginID, 'plugin ID')
+    const id = assertIdentifier(pluginID, 'plugin ID')
     const digest = assertDigest(revision)
     const key = `plugin-releases/${id}/releases/${digest}.json`
     const bytes = await this.backend.get(key)
@@ -129,7 +129,7 @@ export class BlobPluginReleaseStore implements PluginReleaseStore {
     pluginID: string,
     options: { expectedVersion?: string | null; publishedAt?: string } = {},
   ) {
-    const id = assertRegistryID(pluginID, 'plugin ID')
+    const id = assertIdentifier(pluginID, 'plugin ID')
     if (bytes.length > MAX_PLUGIN_RELEASE_BYTES) throw new Error(`Plugin release exceeds ${MAX_PLUGIN_RELEASE_BYTES} bytes: ${id}`)
     const release = parsePluginRelease(bytes, id)
     const revision = await sha256(bytes)

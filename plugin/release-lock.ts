@@ -1,6 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { assertRegistryID } from '#registry/definition'
+import { assertIdentifier } from '#registry/definition'
 import { assertDigest } from '#registry/storage/validation'
 
 export interface PluginReleaseLock {
@@ -13,7 +13,7 @@ export function pluginReleaseLockPath(projectRoot: string, pluginID: string) {
     'registries',
     'memoh',
     'plugins',
-    assertRegistryID(pluginID, 'plugin ID'),
+    assertIdentifier(pluginID, 'plugin ID'),
     'release.lock.json',
   )
 }

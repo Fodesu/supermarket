@@ -46,6 +46,11 @@ describe('Plugin manifests', () => {
       ...base,
       mcps: [{ key: 'example', transport: 'http', url: 'http://example.com/mcp' }],
     })).toThrow('must use HTTPS')
+    expect(() => parsePluginManifest({ ...base, id: 'example.plugin' })).toThrow('Invalid Plugin ID')
+    expect(() => parsePluginManifest({
+      ...base,
+      mcps: [{ key: 'example.mcp', transport: 'http', url: 'https://example.com/mcp' }],
+    })).toThrow('Invalid MCP key')
   })
 
   test('requires unique namespaced Registry Skill references', () => {
@@ -59,5 +64,11 @@ describe('Plugin manifests', () => {
     expect(() => parsePluginManifest({
       ...base, skills: [{ ...reference, registry_id: '../memoh' }],
     })).toThrow('Invalid Registry ID')
+    expect(() => parsePluginManifest({
+      ...base, skills: [{ ...reference, registry_id: 'user' }],
+    })).toThrow('Invalid Registry ID')
+    expect(() => parsePluginManifest({
+      ...base, skills: [{ ...reference, skill_id: 'notion.search' }],
+    })).toThrow('Invalid Skill ID')
   })
 })

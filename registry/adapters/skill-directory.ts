@@ -1,6 +1,6 @@
 import { readFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
-import { assertRegistryID } from '../definition'
+import { assertIdentifier } from '../definition'
 import { resolveRealInside } from '../filesystem'
 import { buildSkillCandidate } from './common'
 import { compareCanonicalText } from '#lib/order'
@@ -19,7 +19,7 @@ export async function readSkillDirectory(input: SkillAdapterInput): Promise<Skil
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
       throw error
     }
-    const id = assertRegistryID(entry.name, 'skill ID')
+    const id = assertIdentifier(entry.name, 'skill ID')
     skills.push(await buildSkillCandidate({
       definition, packageID: id, skillID: id, sourcePath: id,
       root: await resolveRealInside(sourceRoot, id), allowedRoot: sourceRoot,

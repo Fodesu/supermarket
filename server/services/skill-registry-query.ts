@@ -1,7 +1,7 @@
 import { HTTPError } from 'nitro'
 import * as z from 'zod/mini'
 import type { SkillCatalogSearchOptions } from '#registry/catalog'
-import { assertRegistryID, isSkillRuntimeOS } from '#registry/definition'
+import { assertIdentifier, assertRegistryID, isSkillRuntimeOS } from '#registry/definition'
 import { positiveIntegerQuery, scalarQuery } from './query'
 
 function badRequest(message: string): never {
@@ -10,9 +10,17 @@ function badRequest(message: string): never {
 
 export function requireSkillRegistryID(value: string, label: string) {
   try {
-    return assertRegistryID(value, label)
+    return assertIdentifier(value, label)
   } catch {
     return badRequest(`Invalid ${label}: ${value}`)
+  }
+}
+
+export function requireRegistryID(value: string) {
+  try {
+    return assertRegistryID(value)
+  } catch {
+    return badRequest(`Invalid registry ID: ${value}`)
   }
 }
 
@@ -27,7 +35,7 @@ export function parseSkillRegistryQuery(query: Record<string, unknown>, registry
   if (!sort.safeParse(sortValue).success) badRequest(`Unsupported sort: ${sortValue}`)
   if (normalizedOS != null && !isSkillRuntimeOS(normalizedOS)) badRequest(`Unsupported os: ${os}`)
   return {
-    registry: registryValue != null ? requireSkillRegistryID(registryValue, 'registry ID') : undefined,
+    registry: registryValue != null ? requireRegistryID(registryValue) : undefined,
     q: scalarQuery(query, 'q'),
     package: packageValue != null ? requireSkillRegistryID(packageValue, 'package ID') : undefined,
     category: category != null ? requireSkillRegistryID(category.toLowerCase(), 'category ID') : undefined,

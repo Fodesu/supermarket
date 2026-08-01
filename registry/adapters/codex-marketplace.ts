@@ -7,7 +7,7 @@ import type {
   SkillImageContentType,
 } from '../types'
 import { MAX_SKILL_IMAGE_BYTES } from '../types'
-import { assertRegistryID, safeRelativePath } from '../definition'
+import { assertIdentifier, safeRelativePath } from '../definition'
 import { resolveRealInside } from '../filesystem'
 import { compareCanonicalText } from '#lib/order'
 import { sha256 } from '../digest'
@@ -40,7 +40,7 @@ function parseMarketplace(raw: unknown): MarketplaceEntry[] {
   return plugins.map((value, index) => {
     if (!value || typeof value !== 'object') throw new Error(`Marketplace package ${index} must be an object`)
     const item = value as Record<string, unknown>
-    const name = assertRegistryID(String(item.name ?? '').trim(), `package ${index} ID`)
+    const name = assertIdentifier(String(item.name ?? '').trim(), `package ${index} ID`)
     if (names.has(name)) throw new Error(`Marketplace contains duplicate package ID: ${name}`)
     names.add(name)
     return { name, category: item.category ? String(item.category) : undefined, source: item.source }
@@ -154,7 +154,7 @@ async function discoverSkillRoots(packageRoot: string, declaredPath: string) {
   const declaredRoot = await resolveRealInside(packageRoot, declaredPath)
   try {
     await readFile(path.join(declaredRoot, 'SKILL.md'))
-    return [{ id: assertRegistryID(path.posix.basename(declaredPath), 'skill ID'), root: declaredRoot, relativePath: declaredPath }]
+    return [{ id: assertIdentifier(path.posix.basename(declaredPath), 'skill ID'), root: declaredRoot, relativePath: declaredPath }]
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
@@ -165,7 +165,7 @@ async function discoverSkillRoots(packageRoot: string, declaredPath: string) {
     const root = await resolveRealInside(declaredRoot, entry.name)
     try {
       await readFile(path.join(root, 'SKILL.md'))
-      roots.push({ id: assertRegistryID(entry.name, 'skill ID'), root, relativePath: `${declaredPath}/${entry.name}` })
+      roots.push({ id: assertIdentifier(entry.name, 'skill ID'), root, relativePath: `${declaredPath}/${entry.name}` })
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     }

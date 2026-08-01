@@ -6,7 +6,7 @@ import type {
   SkillRegistrySnapshot,
 } from '../types'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../types'
-import { assertRegistryID, isSkillRuntimeOS } from '../definition'
+import { assertIdentifier, isSkillRuntimeOS } from '../definition'
 
 export function assertDigest(value: string): string {
   if (!/^[a-f0-9]{64}$/.test(value)) throw new Error(`Invalid artifact digest: ${value}`)
@@ -63,8 +63,8 @@ export function validateStoredSnapshot(
       throw new Error(`Invalid stored Snapshot Skill: ${key}`)
     }
     try {
-      assertRegistryID(skill.package_id, 'package ID')
-      assertRegistryID(skill.skill_id, 'skill ID')
+      assertIdentifier(skill.package_id, 'package ID')
+      assertIdentifier(skill.skill_id, 'skill ID')
       if (skill.runtime_requirements && (
         !Array.isArray(skill.runtime_requirements.os)
         || skill.runtime_requirements.os.length === 0

@@ -8,7 +8,7 @@ import type {
 
 export const supportedSkillRuntimeOS: SkillRuntimeOS[] = ['darwin', 'linux', 'win32']
 const runtimeOS = new Set<string>(supportedSkillRuntimeOS)
-const safeIDPattern = /^[a-z0-9][a-z0-9._-]*$/
+const safeIDPattern = /^[a-z0-9][a-z0-9_-]*$/
 const gitRevisionPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/
 
 function unsupportedFieldError(label: string) {
@@ -22,16 +22,26 @@ function object(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-export function assertRegistryID(value: string, label = 'ID'): string {
+export function assertIdentifier(value: string, label = 'ID'): string {
   if (!safeIDPattern.test(value)) throw new Error(`Invalid ${label}: ${value}`)
   return value
+}
+
+export function assertRegistryID(value: string, label = 'registry ID'): string {
+  const id = assertIdentifier(value, label)
+  if (id === 'user') throw new Error(`Reserved ${label}: ${value}`)
+  return id
+}
+
+export function isIdentifier(value: string): boolean {
+  return safeIDPattern.test(value)
 }
 
 export function skillInstallID(registryID: string, packageID: string, skillID: string): string {
   return [
     assertRegistryID(registryID, 'registry ID'),
-    assertRegistryID(packageID, 'package ID'),
-    assertRegistryID(skillID, 'skill ID'),
+    assertIdentifier(packageID, 'package ID'),
+    assertIdentifier(skillID, 'skill ID'),
   ].join('+')
 }
 
