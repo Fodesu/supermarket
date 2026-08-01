@@ -77,17 +77,17 @@ describe('partial Registry publication', () => {
     const dependency = await publishedDependency({ publishArtifact: true, snapshotSizeOffset: 1 })
     await expect(assertPartialRegistryDependencies({
       selectedRegistry: 'selected', candidates: [dependency.candidate], store: dependency.store,
-    })).rejects.toThrow('does not match its Snapshot')
+    })).rejects.toThrow('does not match its descriptor')
   })
 
   test('rejects an Artifact whose bytes do not match its digest', async () => {
     const dependency = await publishedDependency({ publishArtifact: true })
     await Bun.write(
       path.join(dependency.dataRoot, 'skill-artifacts', `${dependency.digest}.tar.gz`),
-      'corrupt',
+      'corrupt!',
     )
     await expect(assertPartialRegistryDependencies({
       selectedRegistry: 'selected', candidates: [dependency.candidate], store: dependency.store,
-    })).rejects.toThrow('approved Registry Artifact is corrupt')
+    })).rejects.toThrow('approved Registry Artifact content is corrupt')
   })
 })

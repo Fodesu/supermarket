@@ -79,11 +79,13 @@ export class SkillRegistryPublisher {
     const stateVersion = stateRead.versioning === 'conditional'
       ? stateRead.version
       : undefined
-    const current = previousState?.current_snapshot
-      ? await this.store.getSnapshot(definition.id, previousState.current_snapshot)
-      : null
-    if (previousState?.current_snapshot && !current) {
-      throw new Error(`Current Registry snapshot is missing: ${definition.id}/${previousState.current_snapshot}`)
+    let current = null
+    if (previousState?.current_snapshot) {
+      try {
+        current = await this.store.getSnapshot(definition.id, previousState.current_snapshot)
+      } catch {
+        current = null
+      }
     }
 
     if (!definition.enabled) {
@@ -101,6 +103,16 @@ export class SkillRegistryPublisher {
     assertReleaseCandidate(definition, lock, candidate.revision)
     await this.publishCandidateAssets(candidate)
     if (previousState?.current_snapshot === candidate.revision) {
+      if (!current) {
+        await this.store.publishSnapshot(candidate.snapshotBytes, definition, { expectedVersion: stateVersion })
+        return {
+          registry: definition.id,
+          revision: candidate.revision,
+          skills: candidate.skills.length,
+          diagnostics: candidate.diagnostics.length,
+          skipped: 'recovered',
+        }
+      }
       if (!previousState || !sameDefinition(previousState.definition, definition)) {
         await this.store.putState({
           ...previousState,

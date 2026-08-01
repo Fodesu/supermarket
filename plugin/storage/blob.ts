@@ -133,7 +133,13 @@ export class BlobPluginReleaseStore implements PluginReleaseStore {
     if (bytes.length > MAX_PLUGIN_RELEASE_BYTES) throw new Error(`Plugin release exceeds ${MAX_PLUGIN_RELEASE_BYTES} bytes: ${id}`)
     const release = parsePluginRelease(bytes, id)
     const revision = await sha256(bytes)
-    await putImmutableObject(this.backend, `plugin-releases/${id}/releases/${revision}.json`, bytes, 'Plugin release')
+    await putImmutableObject(
+      this.backend,
+      `plugin-releases/${id}/releases/${revision}.json`,
+      bytes,
+      'Plugin release',
+      { repairCorrupt: true },
+    )
     const publishedAt = options.publishedAt ?? new Date().toISOString()
     if (!Number.isFinite(Date.parse(publishedAt))) throw new Error(`Invalid Plugin publication time: ${publishedAt}`)
     await this.putState({
@@ -162,6 +168,7 @@ export class BlobPluginReleaseStore implements PluginReleaseStore {
         `plugin-artifacts/${descriptor.digest}.tar.gz`,
         bytes,
         'Plugin Artifact',
+        { repairCorrupt: true },
       ),
     }
   }
