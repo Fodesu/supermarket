@@ -65,6 +65,11 @@ describe('SkillRegistryPublisher', () => {
       skipped: 'unchanged',
     })
 
+    const artifactPath = path.join(dataRoot, 'skill-artifacts', `${firstSnapshot!.skills[0]!.artifact.digest}.tar.gz`)
+    await rm(artifactPath)
+    expect(await publisher.publish(definition, lock)).toMatchObject({ skipped: 'unchanged' })
+    expect(await store.getArtifact(firstSnapshot!.skills[0]!.artifact.digest)).not.toBeNull()
+
     await writeFile(path.join(projectRoot, 'registries/memoh/skills/alpha/SKILL.md'), '# invalid')
     await expect(publisher.publish(definition, lock)).rejects.toThrow('frontmatter')
     expect((await store.getState('memoh'))?.current_snapshot).toBe(firstState?.current_snapshot)

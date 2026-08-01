@@ -65,9 +65,38 @@ describe('PluginReleasePublisher', () => {
     const approved = await candidate()
     const lock = { release_revision: approved.revision }
     await publisher.publish(approved, lock)
+    await rm(path.join(root, 'plugin-artifacts', `${approved.artifact.descriptor.digest}.tar.gz`))
     expect(await publisher.publish(approved, lock)).toMatchObject({ skipped: 'unchanged' })
+    expect(await store.getArtifact(approved.artifact.descriptor.digest)).not.toBeNull()
     expect(await publisher.disable('example')).toMatchObject({ skipped: 'disabled' })
     expect((await store.getState('example'))?.enabled).toBeFalse()
     expect(await store.getRelease('example', approved.revision)).toEqual(approved.release)
+  })
+
+  test('derives approval from canonical release bytes and verifies the packaged Artifact', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'plugin-publisher-'))
+    roots.push(root)
+    const store = new LocalPluginReleaseStore(root)
+    const publisher = new PluginReleasePublisher(store)
+    const approved = await candidate()
+    const lock = { release_revision: approved.revision }
+
+    const changedRelease: PluginRelease = {
+      ...approved.release,
+      plugin: { ...approved.release.plugin, version: '9.0.0' },
+    }
+    await expect(publisher.publish({
+      ...approved,
+      releaseBytes: serializePluginRelease(changedRelease),
+    }, lock)).rejects.toThrow('but the rebuilt release is')
+
+    await expect(publisher.publish({
+      ...approved,
+      artifact: {
+        ...approved.artifact,
+        bytes: new TextEncoder().encode('different artifact'),
+      },
+    }, lock)).rejects.toThrow('Artifact does not match its content')
+    expect(await store.getState('example')).toBeNull()
   })
 })

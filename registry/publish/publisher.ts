@@ -3,6 +3,7 @@ import type { SkillRegistryStore } from '../storage/contracts'
 import { assertReleaseCandidate, type RegistryReleaseLock } from './release-lock'
 import {
   buildSkillRegistryCandidate,
+  type SkillRegistryCandidate,
   type SkillRegistryBuildProgress,
 } from './candidate'
 
@@ -38,6 +39,37 @@ export class SkillRegistryPublisher {
     private readonly onProgress: (progress: SkillRegistryPublishProgress) => void = () => {},
   ) {}
 
+  private async publishCandidateAssets(candidate: SkillRegistryCandidate) {
+    const uploadedArtifacts = new Map<string, boolean>()
+    const uploadedImages = new Map<string, boolean>()
+    for (const [index, skill] of candidate.skills.entries()) {
+      let uploaded = uploadedArtifacts.get(skill.artifact.digest)
+      if (uploaded == null) {
+        const artifact = candidate.artifacts.get(skill.artifact.digest)
+        if (!artifact) throw new Error(`Candidate Artifact is missing: ${skill.artifact.digest}`)
+        uploaded = (await this.store.putArtifact(artifact.descriptor, artifact.bytes)).stored
+        uploadedArtifacts.set(skill.artifact.digest, uploaded)
+      }
+      for (const descriptor of [skill.icon?.card, skill.icon?.detail, skill.icon?.dark]) {
+        if (!descriptor || uploadedImages.has(descriptor.digest)) continue
+        const image = candidate.images.get(descriptor.digest)
+        if (!image) throw new Error(`Candidate Skill icon is missing: ${descriptor.digest}`)
+        const stored = (await this.store.putImage(image.descriptor, image.bytes)).stored
+        uploadedImages.set(descriptor.digest, stored)
+        uploaded ||= stored
+      }
+      this.onProgress({
+        type: 'skill',
+        registry: candidate.definition.id,
+        index: index + 1,
+        total: candidate.skills.length,
+        package_id: skill.package_id,
+        skill_id: skill.skill_id,
+        uploaded,
+      })
+    }
+  }
+
   async publish(
     definition: SkillRegistryDefinition,
     releaseLock?: RegistryReleaseLock,
@@ -67,6 +99,7 @@ export class SkillRegistryPublisher {
     const lock = requireReleaseLock(definition, releaseLock)
     const candidate = await buildSkillRegistryCandidate(definition, this.projectRoot, this.onProgress)
     assertReleaseCandidate(definition, lock, candidate.revision)
+    await this.publishCandidateAssets(candidate)
     if (previousState?.current_snapshot === candidate.revision) {
       if (!previousState || !sameDefinition(previousState.definition, definition)) {
         await this.store.putState({
@@ -94,35 +127,6 @@ export class SkillRegistryPublisher {
         diagnostics: previouslyPublished.diagnostics.length,
         skipped: 'recovered',
       }
-    }
-
-    const uploadedArtifacts = new Map<string, boolean>()
-    const uploadedImages = new Map<string, boolean>()
-    for (const [index, skill] of candidate.skills.entries()) {
-      let uploaded = uploadedArtifacts.get(skill.artifact.digest)
-      if (uploaded == null) {
-        const artifact = candidate.artifacts.get(skill.artifact.digest)
-        if (!artifact) throw new Error(`Candidate Artifact is missing: ${skill.artifact.digest}`)
-        uploaded = (await this.store.putArtifact(artifact.descriptor, artifact.bytes)).stored
-        uploadedArtifacts.set(skill.artifact.digest, uploaded)
-      }
-      for (const descriptor of [skill.icon?.card, skill.icon?.detail, skill.icon?.dark]) {
-        if (!descriptor || uploadedImages.has(descriptor.digest)) continue
-        const image = candidate.images.get(descriptor.digest)
-        if (!image) throw new Error(`Candidate Skill icon is missing: ${descriptor.digest}`)
-        const stored = (await this.store.putImage(image.descriptor, image.bytes)).stored
-        uploadedImages.set(descriptor.digest, stored)
-        uploaded ||= stored
-      }
-      this.onProgress({
-        type: 'skill',
-        registry: definition.id,
-        index: index + 1,
-        total: candidate.skills.length,
-        package_id: skill.package_id,
-        skill_id: skill.skill_id,
-        uploaded,
-      })
     }
 
     this.onProgress({ type: 'publishing', registry: definition.id, revision: candidate.revision })

@@ -44,4 +44,12 @@ describe('S3BlobBackend', () => {
     expect(new Uint8Array(await new Response(result!.body).arrayBuffer())).toEqual(bytes)
     expect(collected).toBe(false)
   })
+
+  test('does not invent a version when a conditional write has no ETag', async () => {
+    const { backend, client } = backendWithMockClient()
+    client.send = async () => ({})
+
+    await expect(backend.putConditional('state.json', new Uint8Array([1]), null))
+      .rejects.toThrow('S3 conditional write completed without an ETag: state.json')
+  })
 })

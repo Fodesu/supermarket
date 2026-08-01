@@ -2,7 +2,8 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { SkillRegistryDefinition } from '#registry/types'
 import { SkillRegistryPublisher, type SkillRegistryPublishProgress } from '#registry/publish/publisher'
-import { loadRegistryReleaseLock } from '#registry/publish/release-lock'
+import { buildSkillRegistryCandidate, type SkillRegistryCandidate } from '#registry/publish/candidate'
+import { assertReleaseCandidate, loadRegistryReleaseLock } from '#registry/publish/release-lock'
 import type { RegistryReleaseLock } from '#registry/publish/release-lock'
 import { loadSkillRegistryDefinitionResults } from '#registry/definitions/repository'
 import { BlobSkillRegistryStore } from '#registry/storage/blob'
@@ -11,7 +12,11 @@ import { LocalSkillRegistryStore } from '#registry/storage/local'
 import { S3BlobBackend } from '#registry/storage/s3'
 import { buildPluginReleaseCandidates } from '#plugin/release'
 import { PluginReleasePublisher } from '#plugin/publish/publisher'
-import { loadPluginReleaseLock, type PluginReleaseLock } from '#plugin/release-lock'
+import {
+  assertPluginReleaseCandidate,
+  loadPluginReleaseLock,
+  type PluginReleaseLock,
+} from '#plugin/release-lock'
 import { BlobPluginReleaseStore } from '#plugin/storage/blob'
 import type { PluginReleaseStore } from '#plugin/storage/contracts'
 import { LocalPluginReleaseStore } from '#plugin/storage/local'
@@ -173,6 +178,61 @@ export async function publishPluginReleases(input: {
   return { results, failures }
 }
 
+export async function assertPartialRegistryDependencies(input: {
+  selectedRegistry: string
+  candidates: Array<Pick<SkillRegistryCandidate, 'definition' | 'revision'>>
+  store: SkillRegistryStore
+}) {
+  for (const candidate of input.candidates) {
+    if (candidate.definition.id === input.selectedRegistry) continue
+    const state = await input.store.getState(candidate.definition.id)
+    if (!state?.definition.enabled || state.current_snapshot !== candidate.revision) {
+      throw new Error(
+        `${input.selectedRegistry}: Registry ${candidate.definition.id} is not published at approved revision `
+        + `${candidate.revision}; run a full Registry publication first`,
+      )
+    }
+    const snapshot = await input.store.getSnapshot(candidate.definition.id, candidate.revision)
+    if (!snapshot) {
+      throw new Error(
+        `${input.selectedRegistry}: approved Registry Snapshot is missing: `
+        + `${candidate.definition.id}/${candidate.revision}; run a full Registry publication first`,
+      )
+    }
+  }
+}
+
+async function preflightPartialPublication(input: {
+  projectRoot: string
+  selectedRegistry: string
+  definitions: SkillRegistryDefinition[]
+  store: SkillRegistryStore
+}) {
+  const candidates = await Promise.all(input.definitions
+    .filter((definition) => definition.enabled)
+    .map(async (definition) => {
+      const [candidate, lock] = await Promise.all([
+        buildSkillRegistryCandidate(definition, input.projectRoot),
+        loadRegistryReleaseLock(input.projectRoot, definition),
+      ])
+      assertReleaseCandidate(definition, lock, candidate.revision)
+      return candidate
+    }))
+  await assertPartialRegistryDependencies({
+    selectedRegistry: input.selectedRegistry,
+    candidates,
+    store: input.store,
+  })
+  const plugins = await buildPluginReleaseCandidates(input.projectRoot, candidates.map((candidate) => ({
+    revision: candidate.revision,
+    snapshot: candidate.snapshot,
+  })))
+  await Promise.all(plugins.map(async (plugin) => {
+    const lock = await loadPluginReleaseLock(input.projectRoot, plugin.plugin_id)
+    assertPluginReleaseCandidate(plugin.plugin_id, lock, plugin.revision)
+  }))
+}
+
 if (import.meta.main) {
   const projectRoot = path.resolve(import.meta.dirname, '../..')
   const registryID = option('--registry')
@@ -197,6 +257,14 @@ if (import.meta.main) {
   for (const definition of definitions) {
     if (!definition.enabled) continue
     locks.set(definition.id, await loadRegistryReleaseLock(projectRoot, definition))
+  }
+  if (registryID && definitions.length) {
+    await preflightPartialPublication({
+      projectRoot,
+      selectedRegistry: registryID,
+      definitions: loaded.definitions,
+      store: stores.skills,
+    })
   }
   const outcome = await publishSkillRegistries({
     definitions,
