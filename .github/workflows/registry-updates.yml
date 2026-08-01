@@ -46,6 +46,7 @@ jobs:
     needs: discover
     if: needs.discover.outputs.changed == 'true'
     permissions:
+      actions: write
       contents: write
       pull-requests: write
     strategy:
@@ -70,7 +71,8 @@ jobs:
             --registry "$REGISTRY" \
             --candidate "$CANDIDATE_REVISION" \
             --report "$RUNNER_TEMP/registry-update.md"
-      - env:
+      - id: candidate
+        env:
           GH_TOKEN: ${{ github.token }}
           REGISTRY: ${{ matrix.registry }}
           CANDIDATE_REVISION: ${{ matrix.candidate_revision }}
@@ -81,37 +83,77 @@ jobs:
             "registries/$REGISTRY/registry.yaml" \
             "registries/$REGISTRY/release.lock.json" \
             registries/memoh/plugins/*/release.lock.json
-          candidate_hash="$(git diff --cached --binary | git hash-object --stdin)"
-          branch="automation/registry-update/$REGISTRY/$CANDIDATE_REVISION-${candidate_hash:0:12}"
+          if ! git diff --quiet; then
+            echo "Registry update generated unexpected unstaged changes" >&2
+            git status --short
+            exit 1
+          fi
+          if git diff --cached --quiet; then
+            echo "Registry update produced no candidate changes" >&2
+            exit 1
+          fi
+          base_sha="$(git rev-parse HEAD)"
+          candidate_tree="$(git write-tree)"
+          branch="automation/registry-update/$REGISTRY/$CANDIDATE_REVISION-${base_sha:0:12}-${candidate_tree:0:12}"
           title="chore(registry): review $REGISTRY ${CANDIDATE_REVISION:0:12}"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
 
           if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
             git fetch origin "$branch:refs/remotes/origin/$branch"
-            git diff --quiet "refs/remotes/origin/$branch" -- \
-              "registries/$REGISTRY/registry.yaml" \
-              "registries/$REGISTRY/release.lock.json" \
-              "registries/memoh/plugins" || {
-                echo "Immutable candidate branch content does not match its identity: $branch" >&2
-                exit 1
-              }
-            existing_state="$(gh pr list --head "$branch" --state all --json state --jq '.[0].state // empty')"
-            if [[ -z "$existing_state" ]]; then
-              gh pr create \
-                --base main \
-                --head "$branch" \
-                --title "$title" \
-                --body-file "$RUNNER_TEMP/registry-update.md"
-            else
-              echo "$REGISTRY candidate already has a $existing_state PR; left its branch and review unchanged."
+            remote_commit="$(git rev-parse "refs/remotes/origin/$branch")"
+            remote_tree="$(git show -s --format=%T "$remote_commit")"
+            remote_parents="$(git show -s --format=%P "$remote_commit")"
+            if [[ "$remote_tree" != "$candidate_tree" || "$remote_parents" != "$base_sha" ]]; then
+              echo "Immutable candidate branch does not match its base and complete tree: $branch" >&2
+              exit 1
             fi
+            echo "head_sha=$remote_commit" >> "$GITHUB_OUTPUT"
+            existing_number="$(gh pr list --head "$branch" --state all --json number --jq '.[0].number // empty')"
+            existing_state="$(gh pr list --head "$branch" --state all --json state --jq '.[0].state // empty')"
+            case "$existing_state" in
+              "")
+                gh pr create \
+                  --base main \
+                  --head "$branch" \
+                  --title "$title" \
+                  --body-file "$RUNNER_TEMP/registry-update.md"
+                echo "verify=true" >> "$GITHUB_OUTPUT"
+                ;;
+              OPEN)
+                successful_checks="$(gh api "repos/$GITHUB_REPOSITORY/commits/$remote_commit/check-runs" \
+                  --jq '[.check_runs[] | select(.name == "verify" and .conclusion == "success")] | length')"
+                if [[ "$successful_checks" == "0" ]]; then
+                  echo "verify=true" >> "$GITHUB_OUTPUT"
+                else
+                  echo "verify=false" >> "$GITHUB_OUTPUT"
+                fi
+                echo "$REGISTRY candidate is already open as PR #$existing_number; left its commit and review unchanged."
+                ;;
+              CLOSED)
+                echo "verify=false" >> "$GITHUB_OUTPUT"
+                echo "$REGISTRY candidate was rejected in PR #$existing_number; reopen it explicitly to reconsider."
+                ;;
+              MERGED)
+                echo "verify=false" >> "$GITHUB_OUTPUT"
+                echo "$REGISTRY candidate was already merged in PR #$existing_number."
+                ;;
+            esac
             exit 0
           fi
 
           git switch -c "$branch"
           git commit -m "chore(registry): propose $REGISTRY revision"
           git push origin "$branch"
+          echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "verify=true" >> "$GITHUB_OUTPUT"
           gh pr create \
             --base main \
             --head "$branch" \
             --title "$title" \
             --body-file "$RUNNER_TEMP/registry-update.md"
+      - name: Verify immutable candidate
+        if: steps.candidate.outputs.verify == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.candidate.outputs.branch }}
+        run: gh workflow run ci.yml --ref "$BRANCH"
