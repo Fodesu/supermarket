@@ -10,7 +10,7 @@ supermarket/
 │   ├── memoh/
 │   │   ├── registry.yaml            # Repository-owned Registry definition
 │   │   ├── release.lock.json        # Approved Snapshot revision
-│   │   ├── plugins/<plugin-id>/     # Plugin manifests and optional bundle files
+│   │   ├── plugins/<plugin-id>/     # Plugin source plus approved release.lock.json
 │   │   └── skills/<skill-id>/       # Repository-owned Skill sources
 │   └── openai/
 │       ├── registry.yaml            # External Registry definition
@@ -27,7 +27,7 @@ supermarket/
 └── vite.config.ts
 ```
 
-Plugins are repository-owned bundles included in the API build. Registry Skills are published from Registry definitions into immutable Snapshots and Artifacts stored under `.data/registries` locally or R2 when deployed. A Snapshot is the complete runtime catalog: shared Registry and source metadata appears once at its root, while each Skill retains its searchable metadata, complete file list, and digest-addressed archive and icon references. Git commits the source definition and `release.lock.json`, which locks the canonical Snapshot revision; R2 stores the full Snapshot. Each Registry's single mutable `state.json` selects the active Snapshot and carries its compact listing summary and publication time.
+Registry Skills and Plugins are published into `.data/registries` locally or R2 when deployed; neither Catalog data nor installable content is bundled into the API Worker. A Registry Snapshot is the complete runtime Skill catalog. Each Plugin has an immutable release descriptor that binds its Bundle digest and the exact Registry Snapshot and Skill Artifact digest for every referenced Skill. Git commits `release.lock.json` files as approval records. Runtime `state.json` objects are the only mutable pointers and select the current approved Snapshot or Plugin release after every referenced immutable object has been stored.
 
 ## API
 
@@ -38,6 +38,7 @@ Base URL: `https://supermarket.memoh.ai`
 | GET | `/api/plugins` | List Plugins. Query: `q`, `tag`, `page`, `limit` |
 | GET | `/api/plugins/:id` | Get Plugin details |
 | GET | `/api/plugins/:id/download` | Download Plugin package (`plugin.yaml` plus allowed bundle assets) |
+| GET | `/api/artifacts/plugin/:digest` | Download an immutable Plugin package |
 | GET | `/api/skills` | Search enabled Registry Skills. Query: `q`, `registry`, `package`, `category`, `tag`, `os`, `page`, `limit`, `sort` |
 | GET | `/api/registries` | List Registries and current counts |
 | GET | `/api/registries/:registryId` | Get the approved Registry definition, source revision, and diagnostics |
@@ -49,6 +50,7 @@ Base URL: `https://supermarket.memoh.ai`
 | GET | `/api/tags` | List tags from Plugins and enabled Registry Skills |
 
 Registry Skills use the identity `(registry_id, package_id, skill_id)`. The reference client installs them into `<registry_id>+<package_id>+<skill_id>`.
+Plugin source manifests use those identities as references. A published Plugin release resolves each reference to a fixed Registry Snapshot revision and Skill Artifact digest, so installing the same Plugin release always installs the same Skill content.
 The installation identity is supplied by the client rather than embedded as an archive directory; the archive itself contains the Skill files at its root.
 `runtime_requirements` is published only when the source provides structured compatibility metadata. An `os` filter returns only Skills that explicitly declare support for that OS; missing compatibility metadata is treated as unknown rather than as support for every platform.
 
@@ -104,6 +106,14 @@ skills:
 ```
 
 3. Optionally add `hooks.json` and `scripts/**`. Plugin download archives include those allowed files and `plugin.yaml`. Skill content must be published by a Registry; `registry:validate` rejects bundled `plugins/<id>/skills/**` content and missing references.
+4. Generate and review the Plugin release lock:
+
+```bash
+bun run registry:lock -- --plugin notion
+bun run registry:validate
+```
+
+Commit `release.lock.json` with the Plugin source. It locks the canonical release descriptor, including the Plugin Bundle digest and every resolved Skill digest. Changing Plugin files or approved Skill dependencies without updating this lock makes CI fail.
 
 ### Adding a Skill
 
@@ -135,7 +145,7 @@ bun run registry:publish -- --registry memoh
 bun run dev
 ```
 
-Commit the resulting `release.lock.json` change with the Skill source. Skill archives include regular files under the Skill root, including binary assets; `.git` and `node_modules` directories are ignored. An archive is limited to 1,000 files, 5 MiB uncompressed, and 6 MiB compressed.
+Commit the Registry `release.lock.json` and any changed `plugins/*/release.lock.json` files with the Skill source. `registry:lock -- --registry <id>` rebuilds Plugin locks because a changed Skill may produce a new Plugin release. Skill archives include regular files under the Skill root, including binary assets; `.git` and `node_modules` directories are ignored. An archive is limited to 1,000 files, 5 MiB uncompressed, and 6 MiB compressed.
 
 ### Adding a Registry
 
@@ -165,11 +175,11 @@ bun run registry:validate
 
 Supported sources are `local` and HTTPS `git`; adapters are `skill_directory`, `skill_package_directory`, and `codex_marketplace_skills`. `skill_package_directory` reads `<package-id>/skills/<skill-id>` from its source root. A local source path is relative to the directory containing its `registry.yaml`. A Git source must pin an exact commit in `revision`; optional `tracking_ref` opts it into upstream update checks. `catalog_path` belongs only to the `codex_marketplace_skills` Adapter and is resolved from that Adapter's source root. Every enabled Registry must commit `release.lock.json`, whose `snapshot_revision` must equal the canonical Snapshot rebuilt from the approved source.
 
-The scheduled `Check Registry updates` GitHub workflow runs every 12 hours and resolves each configured `tracking_ref`. If every resolved commit already equals its approved `revision`, it makes no change and opens no PR. Each changed Registry gets its own candidate PR, so unrelated upstreams can be reviewed and approved independently. An open PR is updated only when its candidate definition changes; repeated checks of the same upstream revision leave its commit and existing reviews untouched. The PR groups changes by package and Skill, lists metadata and file changes, and includes bounded diffs for changed UTF-8 text files. Binary and larger files remain in the Artifact and are identified in the report by path, digest, size, and mode. It commits the candidate source revision and the resulting `release.lock.json`; CI rebuilds the candidate and requires the Snapshot revision to match the lock before publication. Merging that PR is the explicit approval step. The schedule is configured in `.github/workflows/registry-updates.yml`, and a manual run can optionally select one Registry.
+The scheduled `Check Registry updates` GitHub workflow runs every 12 hours and resolves each configured `tracking_ref`. If every resolved commit already equals its approved `revision`, it makes no change and opens no PR. Each changed Registry gets its own candidate PR, so unrelated upstreams can be reviewed and approved independently. An open PR is updated only when its candidate definition changes; repeated checks of the same upstream revision leave its commit and existing reviews untouched. The PR groups changes by package and Skill, lists metadata and file changes, and includes bounded diffs for changed UTF-8 text files. Binary and larger files remain in the Artifact and are identified in the report by path, digest, size, and mode. It also lists affected Plugin releases and their old/new Registry Snapshot and Skill Artifact digests, then commits those Plugin locks in the same PR. CI rebuilds all candidates and requires every revision to match its lock before publication. Merging that PR is the single explicit approval step for the Registry and affected Plugins. The schedule is configured in `.github/workflows/registry-updates.yml`, and a manual run can optionally select one Registry.
 
 If publisher, Adapter, or archive code intentionally changes the generated Snapshot without changing the pinned upstream commit, regenerate the lock with `bun run registry:lock -- --registry <id>` and review its revision change in the same PR.
 
-After an approved change reaches `main`, the `Publish approved Registries` workflow uploads digest-addressed archives and icons, then an immutable Snapshot, and switches `state.json` last. The API Worker remains read-only. Historical immutable objects are retained; reference-aware GC is intentionally deferred until Memoh can provide authoritative Artifact references.
+After an approved change reaches `main`, the `Publish approved Registries` workflow uploads digest-addressed Skill archives and icons, then immutable Snapshots and their state pointers. It next uploads Plugin Bundles and immutable release descriptors before switching each Plugin state pointer. The API Worker remains read-only. Historical immutable objects are retained; reference-aware GC is intentionally deferred until Memoh can provide authoritative Artifact references.
 
 Test and production bucket names have a single source of truth: the matching environments in `workers/api/wrangler.jsonc`. Before the first deployment, authenticate Wrangler, enable R2, and create those buckets:
 

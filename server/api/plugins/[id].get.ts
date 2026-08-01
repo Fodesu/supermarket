@@ -6,7 +6,7 @@ import { getPluginById } from '#server/services/plugin'
 export default defineHandler(async (event) => {
   const id = requireSkillRegistryID(getRouterParam(event, 'id')!, 'plugin ID')
 
-  const plugin = await getPluginById(id)
+  const plugin = await getPluginById(event, id)
   if (!plugin) {
     throw new HTTPError(`Plugin "${id}" not found`, { statusCode: 404 })
   }

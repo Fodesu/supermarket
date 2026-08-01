@@ -8,7 +8,4 @@ export default defineNitroConfig({
     deployConfig: false,
     nodeCompat: true,
   },
-  serverAssets: [
-    { baseName: "plugins", dir: "./registries/memoh/plugins" },
-  ],
 });
