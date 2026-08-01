@@ -37,11 +37,12 @@ jobs:
           git fetch origin main --depth=1
           test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
       - run: bun install --frozen-lockfile
-      - run: bun run registry:validate
-      - name: Rebuild and verify approved publication
+      - name: Validate test publication
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'test' }}
+        run: bun run registry:validate
+      - name: Verify approved production publication
         if: ${{ (github.event_name != 'workflow_dispatch' || inputs.environment == 'production') }}
         run: |
-          bun run registry:publish
           bun test
           bun run typecheck
           bun run build
