@@ -2,6 +2,14 @@ import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { parsePluginManifest, pluginSkillReferenceIdentity } from './manifest'
 import { PluginBundleBudget } from './bundle'
+import type { TarFileInput } from '#lib/archive'
+import type { PluginManifest } from './types'
+
+export interface CommittedPlugin {
+  id: string
+  manifest: PluginManifest
+  files: Record<string, TarFileInput>
+}
 
 function isWithin(root: string, candidate: string) {
   const relative = path.relative(root, candidate)
@@ -9,7 +17,7 @@ function isWithin(root: string, candidate: string) {
 }
 
 async function validatePluginTree(root: string, canonicalRepositoryRoot: string) {
-  const files: string[] = []
+  const files: Array<{ path: string; size: number; mode: 0o644 | 0o755 }> = []
   const budget = new PluginBundleBudget()
 
   const visit = async (directory: string) => {
@@ -24,17 +32,21 @@ async function validatePluginTree(root: string, canonicalRepositoryRoot: string)
       if (stat.isDirectory()) await visit(absolutePath)
       else if (stat.isFile()) {
         budget.add(relativePath, stat.size)
-        files.push(relativePath)
+        files.push({
+          path: relativePath,
+          size: stat.size,
+          mode: stat.mode & 0o111 ? 0o755 : 0o644,
+        })
       }
       else throw new Error(`Plugin content contains unsupported file type: ${relativePath}`)
     }
   }
 
   await visit(root)
-  return files.sort()
+  return files.sort((left, right) => left.path.localeCompare(right.path))
 }
 
-export async function validateCommittedPlugins(projectRoot: string, availableSkills?: ReadonlySet<string>) {
+async function committedPluginRepository(projectRoot: string) {
   const canonicalProjectRoot = await realpath(projectRoot)
   let root = projectRoot
   for (const segment of ['registries', 'memoh', 'plugins']) {
@@ -52,25 +64,56 @@ export async function validateCommittedPlugins(projectRoot: string, availableSki
   if (unsupportedEntry) {
     throw new Error(`Plugin repository entries must be directories: ${unsupportedEntry.name}`)
   }
-  const pluginIDs = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort()
+  return {
+    root,
+    canonicalRoot: canonicalRepositoryRoot,
+    pluginIDs: entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort(),
+  }
+}
+
+export async function loadCommittedPlugins(projectRoot: string): Promise<CommittedPlugin[]> {
+  const repository = await committedPluginRepository(projectRoot)
   const failures: Error[] = []
-  for (const pluginID of pluginIDs) {
-    const pluginRoot = path.join(root, pluginID)
+  const plugins: CommittedPlugin[] = []
+  for (const pluginID of repository.pluginIDs) {
+    const pluginRoot = path.join(repository.root, pluginID)
     try {
-      const files = await validatePluginTree(pluginRoot, canonicalRepositoryRoot)
-      const bundledSkill = files.find((file) => file === 'skills' || file.startsWith('skills/'))
+      const files = await validatePluginTree(pluginRoot, repository.canonicalRoot)
+      const bundledSkill = files.find((file) => file.path === 'skills' || file.path.startsWith('skills/'))
       if (bundledSkill) throw new Error('Plugin Skill content must be published by a Registry and referenced from plugin.yaml')
+      const unsupported = files.find((file) => file.path !== 'plugin.yaml'
+        && file.path !== 'release.lock.json'
+        && file.path !== 'hooks.json'
+        && !file.path.startsWith('scripts/'))
+      if (unsupported) throw new Error(`Plugin contains unsupported bundle file: ${unsupported.path}`)
       const manifest = parsePluginManifest(await readFile(path.join(pluginRoot, 'plugin.yaml'), 'utf8'), pluginID)
-      if (availableSkills) {
-        for (const reference of manifest.skills ?? []) {
-          const identity = pluginSkillReferenceIdentity(reference)
-          if (!availableSkills.has(identity)) throw new Error(`references missing Registry Skill: ${identity}`)
-        }
+      const bundleFiles: Record<string, TarFileInput> = {}
+      for (const file of files) {
+        if (file.path !== 'hooks.json' && !file.path.startsWith('scripts/')) continue
+        bundleFiles[file.path] = { bytes: new Uint8Array(await readFile(path.join(pluginRoot, file.path))), mode: file.mode }
       }
+      plugins.push({ id: pluginID, manifest, files: bundleFiles })
     } catch (error) {
       failures.push(new Error(`${pluginID}: ${error instanceof Error ? error.message : String(error)}`, { cause: error }))
     }
   }
   if (failures.length) throw new AggregateError(failures, failures.map((error) => error.message).join('\n'))
-  return pluginIDs
+  return plugins
+}
+
+export async function validateCommittedPlugins(projectRoot: string, availableSkills?: ReadonlySet<string>) {
+  const plugins = await loadCommittedPlugins(projectRoot)
+  const failures: Error[] = []
+  if (availableSkills) {
+    for (const plugin of plugins) {
+      for (const reference of plugin.manifest.skills ?? []) {
+        const identity = pluginSkillReferenceIdentity(reference)
+        if (!availableSkills.has(identity)) {
+          failures.push(new Error(`${plugin.id}: references missing Registry Skill: ${identity}`))
+        }
+      }
+    }
+  }
+  if (failures.length) throw new AggregateError(failures, failures.map((error) => error.message).join('\n'))
+  return plugins.map((plugin) => plugin.id)
 }

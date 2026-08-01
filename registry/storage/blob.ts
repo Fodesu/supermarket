@@ -25,6 +25,7 @@ import {
   validateStoredSnapshot,
   verifiedAssetStream,
 } from './validation'
+import { putImmutableObject } from './immutable'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -163,7 +164,7 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     }
     const revision = assertDigest(registrySnapshotRevision(bytes))
     const key = `skill-registries/${id}/snapshots/${revision}.json`
-    await this.putImmutableObject(key, bytes, 'Snapshot')
+    await putImmutableObject(this.backend, key, bytes, 'Snapshot')
     const publishedAt = options.publishedAt ?? new Date().toISOString()
     if (!Number.isFinite(Date.parse(publishedAt))) throw new Error(`Invalid Snapshot publication time: ${publishedAt}`)
     await this.putState({
@@ -175,48 +176,6 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     return revision
   }
 
-  // Uploads a digest-addressed object. These keys are immutable: a duplicate or
-  // late-landing PUT writes identical bytes, so an unknown outcome is safe to
-  // settle by reading the key back, and safe to retry while it is still absent.
-  // Exhausted retries throw a plain Error on purpose — unlike mutable pointer
-  // writes, an in-flight PUT that lands later cannot corrupt anything, so the
-  // publication does not need special recovery after this failure for safety.
-  private async putImmutableObject(key: string, bytes: Uint8Array, label: string) {
-    const expected = await sha256(bytes)
-    let lastError: unknown
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      if (attempt > 1) await new Promise((resolve) => setTimeout(resolve, attempt === 2 ? 500 : 1_500))
-      try {
-        if (this.conditionalBackend) {
-          const created = await this.conditionalBackend.putConditional(key, bytes, null)
-          if (created) return true
-          const stored = await this.backend.get(key)
-          if (!stored) throw new Error(`${label} appeared but could not be read: ${key}`)
-          if (stored.length !== bytes.length || await sha256(stored) !== expected) {
-            throw new Error(`${label} is immutable: ${key}`)
-          }
-          return false
-        } else {
-          const stored = await this.backend.get(key)
-          if (stored) {
-            if (stored.length !== bytes.length || await sha256(stored) !== expected) {
-              throw new Error(`${label} is immutable: ${key}`)
-            }
-            return false
-          }
-          await this.backend.put(key, bytes)
-          return true
-        }
-      } catch (error) {
-        if (error instanceof Error && error.message === `${label} is immutable: ${key}`) throw error
-        lastError = error
-      }
-      const stored = await this.backend.get(key).catch(() => null)
-      if (stored && stored.length === bytes.length && await sha256(stored) === expected) return true
-    }
-    throw new Error(`${label} upload did not complete: ${key}`, { cause: lastError })
-  }
-
   async putArtifact(descriptor: SkillArtifactDescriptor, bytes: Uint8Array) {
     assertDigest(descriptor.digest)
     if (descriptor.format !== 'memoh_skill_v1') throw new Error(`Unsupported artifact format: ${descriptor.format}`)
@@ -224,7 +183,7 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     if (descriptor.size !== bytes.length) throw new Error('Artifact size does not match its content')
     if (descriptor.digest !== await sha256(bytes)) throw new Error('Artifact digest does not match its content')
     const archiveKey = `skill-artifacts/${descriptor.digest}.tar.gz`
-    return { stored: await this.putImmutableObject(archiveKey, bytes, 'Artifact') }
+    return { stored: await putImmutableObject(this.backend, archiveKey, bytes, 'Artifact') }
   }
 
   async getArtifact(digest: string) {
@@ -272,7 +231,7 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
       }
       const storedImage = await this.backend.get(imageKey)
       if (!storedImage) {
-        await this.putImmutableObject(imageKey, bytes, 'Skill image')
+        await putImmutableObject(this.backend, imageKey, bytes, 'Skill image')
         return { stored: true }
       }
       if (storedImage.length !== bytes.length || await sha256(storedImage) !== digest) {
@@ -284,9 +243,9 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     if (storedImage) {
       if (await sha256(storedImage) !== digest) throw new Error(`Skill image ${digest} content is immutable`)
     } else {
-      await this.putImmutableObject(imageKey, bytes, 'Skill image')
+      await putImmutableObject(this.backend, imageKey, bytes, 'Skill image')
     }
-    await this.putImmutableObject(metadataKey, metadata, 'Skill image metadata')
+    await putImmutableObject(this.backend, metadataKey, metadata, 'Skill image metadata')
     return { stored: !storedImage }
   }
 

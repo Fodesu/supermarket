@@ -1,8 +1,9 @@
 import path from 'node:path'
 import { loadSkillRegistryDefinitions } from '#registry/definitions/repository'
-import { validateCommittedPlugins } from '#plugin/repository'
 import { buildSkillRegistryCandidate } from '#registry/publish/candidate'
 import { assertReleaseCandidate, loadRegistryReleaseLock } from '#registry/publish/release-lock'
+import { buildPluginReleaseCandidates } from '#plugin/release'
+import { assertPluginReleaseCandidate, loadPluginReleaseLock } from '#plugin/release-lock'
 
 const projectRoot = path.resolve(import.meta.dirname, '../..')
 const definitions = await loadSkillRegistryDefinitions(projectRoot)
@@ -14,9 +15,13 @@ const candidates = await Promise.all(definitions.filter((definition) => definiti
   assertReleaseCandidate(definition, lock, candidate.revision)
   return candidate
 }))
-const availableSkills = new Set(candidates.flatMap((candidate) => candidate.skills.map(
-  (skill) => `${skill.registry_id}/${skill.package_id}/${skill.skill_id}`,
-)))
-const plugins = await validateCommittedPlugins(projectRoot, availableSkills)
+const plugins = await buildPluginReleaseCandidates(projectRoot, candidates.map((candidate) => ({
+  revision: candidate.revision,
+  snapshot: candidate.snapshot,
+})))
+await Promise.all(plugins.map(async (plugin) => {
+  const lock = await loadPluginReleaseLock(projectRoot, plugin.plugin_id)
+  assertPluginReleaseCandidate(plugin.plugin_id, lock, plugin.revision)
+}))
 console.log(`Validated ${definitions.length} Skill Registries: ${definitions.map((definition) => definition.id).join(', ')}`)
-console.log(`Validated ${plugins.length} Plugins: ${plugins.join(', ')}`)
+console.log(`Validated ${plugins.length} Plugin releases: ${plugins.map((plugin) => plugin.plugin_id).join(', ')}`)
