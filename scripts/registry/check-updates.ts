@@ -12,6 +12,16 @@ import {
   renderRegistryReleaseDiff,
 } from '#registry/review/release-diff'
 import type { SkillRegistryDefinition } from '#registry/types'
+import { buildPluginReleaseCandidates } from '#plugin/release'
+import {
+  assertPluginReleaseCandidate,
+  loadPluginReleaseLock,
+  writePluginReleaseLock,
+} from '#plugin/release-lock'
+import {
+  diffPluginReleaseCandidates,
+  renderPluginReleaseDiffs,
+} from '#plugin/review/release-diff'
 
 export interface RegistryUpdate {
   registry: string
@@ -111,8 +121,8 @@ async function prepareRegistryUpdate(input: {
   if (!/^[a-f0-9]{40}$/.test(input.candidateRevision)) {
     throw new Error('Candidate revision must be a full Git commit hash')
   }
-  const definition = (await loadSkillRegistryDefinitions(input.projectRoot))
-    .find((item) => item.id === input.registry)
+  const definitions = await loadSkillRegistryDefinitions(input.projectRoot)
+  const definition = definitions.find((item) => item.id === input.registry)
   if (!definition) throw new Error(`Registry not found: ${input.registry}`)
   if (definition.source.type !== 'git' || !definition.source.tracking_ref) {
     throw new Error(`${input.registry}: Registry does not track a Git ref`)
@@ -129,23 +139,49 @@ async function prepareRegistryUpdate(input: {
     ...definition,
     source: { ...definition.source, revision: input.candidateRevision },
   }
-  const [lock, approved, candidate] = await Promise.all([
+  const approvedCandidates = await Promise.all(definitions.filter((item) => item.enabled)
+    .map((item) => buildSkillRegistryCandidate(item, input.projectRoot)))
+  const approved = approvedCandidates.find((item) => item.definition.id === definition.id)!
+  const [lock, candidate] = await Promise.all([
     loadRegistryReleaseLock(input.projectRoot, definition),
-    buildSkillRegistryCandidate(definition, input.projectRoot),
     buildSkillRegistryCandidate(candidateDefinition, input.projectRoot),
   ])
   assertReleaseCandidate(definition, lock, approved.revision)
   const diff = diffRegistryCandidates(approved, candidate)
+  const approvedPlugins = await buildPluginReleaseCandidates(
+    input.projectRoot,
+    approvedCandidates.map((item) => ({ revision: item.revision, snapshot: item.snapshot })),
+  )
+  await Promise.all(approvedPlugins.map(async (plugin) => {
+    const pluginLock = await loadPluginReleaseLock(input.projectRoot, plugin.plugin_id)
+    assertPluginReleaseCandidate(plugin.plugin_id, pluginLock, plugin.revision)
+  }))
+  const candidatePlugins = await buildPluginReleaseCandidates(
+    input.projectRoot,
+    approvedCandidates.map((item) => item.definition.id === definition.id
+      ? { revision: candidate.revision, snapshot: candidate.snapshot }
+      : { revision: item.revision, snapshot: item.snapshot }),
+  )
+  const pluginDiffs = diffPluginReleaseCandidates(approvedPlugins, candidatePlugins)
   const url = compareURL(
     definition.source.url,
     definition.source.revision,
     input.candidateRevision,
   )
-  await writeFile(input.reportPath, renderRegistryReleaseDiff(diff, url))
+  await writeFile(input.reportPath, [
+    renderRegistryReleaseDiff(diff, url),
+    renderPluginReleaseDiffs(pluginDiffs),
+  ].filter(Boolean).join('\n'))
   await applyRevision(input.projectRoot, definition, input.candidateRevision)
   await writeRegistryReleaseLock(input.projectRoot, candidateDefinition, {
     snapshot_revision: candidate.revision,
   })
+  for (const pluginDiff of pluginDiffs) {
+    const plugin = candidatePlugins.find((item) => item.plugin_id === pluginDiff.plugin)!
+    await writePluginReleaseLock(input.projectRoot, plugin.plugin_id, {
+      release_revision: plugin.revision,
+    })
+  }
   return diff
 }
 
