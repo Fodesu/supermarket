@@ -40,20 +40,25 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: .bun-version
-      - name: Require current main for production publication
+      - name: Require current main before production validation
         if: ${{ (github.event_name != 'workflow_dispatch' || inputs.environment == 'production') }}
         run: |
           git fetch origin main --depth=1
           test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
       - run: bun install --frozen-lockfile
       - run: bun run registry:validate
-      - name: Verify final main revision before production publication
+      - name: Rebuild and verify approved publication
         if: ${{ (github.event_name != 'workflow_dispatch' || inputs.environment == 'production') }}
         run: |
           bun run registry:publish
           bun test
           bun run typecheck
           bun run build
+      - name: Recheck current main before production publication
+        if: ${{ (github.event_name != 'workflow_dispatch' || inputs.environment == 'production') }}
+        run: |
+          git fetch origin main --depth=1
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
       - name: Publish pinned Registry revisions
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
