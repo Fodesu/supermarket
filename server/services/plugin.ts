@@ -140,6 +140,15 @@ export async function getPluginById(event: RuntimeEvent, pluginID: string) {
   return current ? publicPlugin(current) : undefined
 }
 
+export async function getPluginReleaseBytes(
+  event: RuntimeEvent,
+  pluginID: string,
+  revision: string,
+) {
+  return getRuntimePluginReleaseStore(event)
+    .then((store) => store.getReleaseBytes(pluginID, revision))
+}
+
 export async function getPluginDownload(event: RuntimeEvent, pluginID: string) {
   const store = await getRuntimePluginReleaseStore(event)
   const current = await currentPluginRelease(store, pluginID)
