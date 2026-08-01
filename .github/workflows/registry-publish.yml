@@ -47,6 +47,13 @@ jobs:
           test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
       - run: bun install --frozen-lockfile
       - run: bun run registry:validate
+      - name: Verify final main revision before production publication
+        if: ${{ (github.event_name != 'workflow_dispatch' || inputs.environment == 'production') }}
+        run: |
+          bun run registry:publish
+          bun test
+          bun run typecheck
+          bun run build
       - name: Publish pinned Registry revisions
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
