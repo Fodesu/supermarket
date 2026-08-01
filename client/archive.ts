@@ -1,7 +1,11 @@
 import { chmod, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createGzipDecoder, createTarDecoder, type ParsedTarEntry } from 'modern-tar'
-import { assertSafeArchivePath } from '#lib/archive'
+import {
+  assertSafeArchivePath,
+  assertSafeArchivePaths,
+  MEMOH_DIRECT_OWNER_PATH,
+} from '#lib/archive'
 import {
   MAX_SKILL_ARTIFACT_FILES,
   MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
@@ -80,14 +84,7 @@ async function parseTarStream(input: ReadableStream<Uint8Array>): Promise<Map<st
   }
 
   if (!files.size) throw new Error('Archive contains no files')
-  for (const name of files.keys()) {
-    const segments = name.split('/')
-    for (let index = 1; index < segments.length; index++) {
-      if (files.has(segments.slice(0, index).join('/'))) {
-        throw new Error(`Archive contains a conflicting path: ${name}`)
-      }
-    }
-  }
+  assertSafeArchivePaths(files.keys(), 'archive')
   return files
 }
 
@@ -108,6 +105,9 @@ export function parseGzipTarArchive(bytes: Uint8Array, limit = MAX_SKILL_ARTIFAC
 }
 
 export function validateSkillArchive(files: Map<string, ArchiveFile>) {
+  assertSafeArchivePaths(files.keys(), 'Skill archive', {
+    reservedRootPaths: [MEMOH_DIRECT_OWNER_PATH],
+  })
   if (!files.has('SKILL.md')) throw new Error('Skill archive does not contain SKILL.md at its root')
 }
 
