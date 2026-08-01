@@ -11,7 +11,8 @@ supermarket/
 │   │   ├── registry.yaml            # Repository-owned Registry definition
 │   │   ├── release.lock.json        # Approved Snapshot revision
 │   │   ├── plugins/<plugin-id>/     # Plugin source plus approved release.lock.json
-│   │   └── skills/<skill-id>/       # Repository-owned Skill sources
+│   │   └── packages/<package-id>/skills/<skill-id>/
+│   │                                   # Repository-owned Skill sources
 │   └── openai/
 │       ├── registry.yaml            # External Registry definition
 │       └── release.lock.json        # Approved Snapshot revision

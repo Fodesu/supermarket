@@ -175,7 +175,7 @@ describe('Skill Registry adapters', () => {
     })).rejects.toThrow('duplicate package ID')
   })
 
-  test('isolates packages that declare overlapping Skill roots', async () => {
+  test('imports explicitly declared nested Skill roots', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'codex-overlapping-skills-'))
     roots.push(root)
     await mkdir(path.join(root, 'packages/demo/.codex-plugin'), { recursive: true })
@@ -191,11 +191,14 @@ describe('Skill Registry adapters', () => {
     const result = await buildSkillCandidates({
       definition: definition('codex_marketplace_skills'), sourceRoot: root,
     })
-    expect(result.skills).toEqual([])
-    expect(result.diagnostics[0]?.message).toContain('overlapping skill roots')
+    expect(result.skills.map((skill) => `${skill.package_id}/${skill.skill_id}`)).toEqual([
+      'demo/skills',
+      'demo/nested',
+    ])
+    expect(result.diagnostics).toEqual([])
   })
 
-  test('isolates overlapping Skill roots declared by different Marketplace packages', async () => {
+  test('namespaces a shared Skill root declared by different Marketplace packages', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'codex-cross-package-overlap-'))
     roots.push(root)
     await mkdir(path.join(root, 'packages/outer/.codex-plugin'), { recursive: true })
@@ -215,11 +218,11 @@ describe('Skill Registry adapters', () => {
     const result = await buildSkillCandidates({
       definition: definition('codex_marketplace_skills'), sourceRoot: root,
     })
-    expect(result.skills).toHaveLength(1)
-    expect(result.skills[0]).toMatchObject({ package_id: 'outer', skill_id: 'demo' })
-    expect(result.diagnostics).toHaveLength(1)
-    expect(result.diagnostics[0]).toMatchObject({ package_id: 'inner', code: 'package_invalid' })
-    expect(result.diagnostics[0]?.message).toContain('overlapping skill roots')
+    expect(result.skills.map((skill) => `${skill.package_id}/${skill.skill_id}`)).toEqual([
+      'outer/demo',
+      'inner/demo',
+    ])
+    expect(result.diagnostics).toEqual([])
   })
 
   test('isolates per-package failures as diagnostics instead of aborting the registry build', async () => {
