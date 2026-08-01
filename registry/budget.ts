@@ -3,7 +3,6 @@ import { canonicalArchivePath } from '#lib/archive'
 export const MAX_REGISTRY_SKILLS = 10_000
 export const MAX_REGISTRY_SOURCE_FILES = 100_000
 export const MAX_REGISTRY_SOURCE_BYTES = 512 * 1024 * 1024
-export const MAX_REGISTRY_GIT_TREE_BYTES = 64 * 1024 * 1024
 export const MAX_REGISTRY_REVIEW_TEXT_BYTES = 64 * 1024 * 1024
 export const MAX_REGISTRY_METADATA_FILE_BYTES = 8 * 1024 * 1024
 export const MAX_REGISTRY_SNAPSHOT_BYTES = 8 * 1024 * 1024
