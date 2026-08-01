@@ -18,6 +18,22 @@ capabilities:
   - events
   - calendars
   - scheduling
+skills:
+  - registry_id: memoh
+    package_id: google-calendar
+    skill_id: google-calendar
+  - registry_id: memoh
+    package_id: google-calendar
+    skill_id: google-calendar-daily-brief
+  - registry_id: memoh
+    package_id: google-calendar
+    skill_id: google-calendar-free-up-time
+  - registry_id: memoh
+    package_id: google-calendar
+    skill_id: google-calendar-group-scheduler
+  - registry_id: memoh
+    package_id: google-calendar
+    skill_id: google-calendar-meeting-prep
 auth_requirements:
   - key: google_calendar_oauth
     type: managed_oauth

@@ -51,4 +51,26 @@ describe('Committed Plugin repository', () => {
 
     await expect(validateCommittedPlugins(root)).rejects.toThrow('registries/memoh')
   })
+
+  test('rejects bundled Skill content', async () => {
+    const { root, pluginRoot } = await repository()
+    await mkdir(path.join(pluginRoot, 'skills/demo'), { recursive: true })
+    await writeFile(path.join(pluginRoot, 'skills/demo/SKILL.md'), '---\nname: Demo\ndescription: Demo\n---\n')
+
+    await expect(validateCommittedPlugins(root)).rejects.toThrow('must be published by a Registry')
+  })
+
+  test('rejects references missing from approved Registry candidates', async () => {
+    const { root, pluginRoot } = await repository()
+    await writeFile(path.join(pluginRoot, 'plugin.yaml'), [
+      'schema_version: "1"', 'id: example', 'name: Example', 'version: 1.0.0',
+      'description: Example Plugin', 'author:', '  name: Memoh', 'skills:',
+      '  - registry_id: memoh', '    package_id: tools', '    skill_id: search',
+    ].join('\n'))
+
+    await expect(validateCommittedPlugins(root, new Set())).rejects.toThrow(
+      'references missing Registry Skill: memoh/tools/search',
+    )
+    await expect(validateCommittedPlugins(root, new Set(['memoh/tools/search']))).resolves.toEqual(['example'])
+  })
 })

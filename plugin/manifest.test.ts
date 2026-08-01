@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { parseBundledSkillDocument, parsePluginManifest } from './manifest'
+import { parsePluginManifest, pluginSkillReferenceIdentity } from './manifest'
 
 describe('Plugin manifests', () => {
   test('parses a complete remote MCP Plugin', () => {
@@ -19,10 +19,12 @@ describe('Plugin manifests', () => {
         auth_ref: 'oauth',
         visibility: 'hidden',
       }],
+      skills: [{ registry_id: 'memoh', package_id: 'example', skill_id: 'example-search' }],
     }, 'example')).toMatchObject({
       id: 'example',
       author: { name: 'Memoh', email: 'support@example.com' },
       mcps: [{ key: 'example', transport: 'http', auth_ref: 'oauth' }],
+      skills: [{ registry_id: 'memoh', package_id: 'example', skill_id: 'example-search' }],
     })
   })
 
@@ -46,20 +48,16 @@ describe('Plugin manifests', () => {
     })).toThrow('must use HTTPS')
   })
 
-  test('requires structured Skill frontmatter', () => {
-    expect(parseBundledSkillDocument('example/demo', [
-      '---',
-      'name: Demo',
-      'description: Demo Skill',
-      'metadata:',
-      '  tags: [demo]',
-      '---',
-      '# Demo',
-    ].join('\n'))).toMatchObject({
-      id: 'example/demo',
-      name: 'Demo',
-      metadata: { tags: ['demo'] },
-    })
-    expect(() => parseBundledSkillDocument('example/demo', '# Demo')).toThrow('frontmatter')
+  test('requires unique namespaced Registry Skill references', () => {
+    const base = {
+      schema_version: '1', id: 'example', name: 'Example', version: '1.0.0',
+      description: 'Example Plugin', author: { name: 'Memoh' },
+    }
+    const reference = { registry_id: 'memoh', package_id: 'notion', skill_id: 'search' }
+    expect(pluginSkillReferenceIdentity(reference)).toBe('memoh/notion/search')
+    expect(() => parsePluginManifest({ ...base, skills: [reference, reference] })).toThrow('duplicate reference')
+    expect(() => parsePluginManifest({
+      ...base, skills: [{ ...reference, registry_id: '../memoh' }],
+    })).toThrow('Invalid Registry ID')
   })
 })

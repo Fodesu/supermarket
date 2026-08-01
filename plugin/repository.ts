@@ -1,6 +1,6 @@
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
-import { parseBundledSkillDocument, parsePluginManifest } from './manifest'
+import { parsePluginManifest, pluginSkillReferenceIdentity } from './manifest'
 import { PluginBundleBudget } from './bundle'
 
 function isWithin(root: string, candidate: string) {
@@ -34,7 +34,7 @@ async function validatePluginTree(root: string, canonicalRepositoryRoot: string)
   return files.sort()
 }
 
-export async function validateCommittedPlugins(projectRoot: string) {
+export async function validateCommittedPlugins(projectRoot: string, availableSkills?: ReadonlySet<string>) {
   const canonicalProjectRoot = await realpath(projectRoot)
   let root = projectRoot
   for (const segment of ['registries', 'memoh', 'plugins']) {
@@ -58,10 +58,14 @@ export async function validateCommittedPlugins(projectRoot: string) {
     const pluginRoot = path.join(root, pluginID)
     try {
       const files = await validatePluginTree(pluginRoot, canonicalRepositoryRoot)
-      parsePluginManifest(await readFile(path.join(pluginRoot, 'plugin.yaml'), 'utf8'), pluginID)
-      for (const relativePath of files.filter((file) => /^skills\/[^/]+\/SKILL\.md$/.test(file))) {
-        const skillID = path.basename(path.dirname(relativePath))
-        parseBundledSkillDocument(`${pluginID}/${skillID}`, await readFile(path.join(pluginRoot, relativePath), 'utf8'))
+      const bundledSkill = files.find((file) => file === 'skills' || file.startsWith('skills/'))
+      if (bundledSkill) throw new Error('Plugin Skill content must be published by a Registry and referenced from plugin.yaml')
+      const manifest = parsePluginManifest(await readFile(path.join(pluginRoot, 'plugin.yaml'), 'utf8'), pluginID)
+      if (availableSkills) {
+        for (const reference of manifest.skills ?? []) {
+          const identity = pluginSkillReferenceIdentity(reference)
+          if (!availableSkills.has(identity)) throw new Error(`references missing Registry Skill: ${identity}`)
+        }
       }
     } catch (error) {
       failures.push(new Error(`${pluginID}: ${error instanceof Error ? error.message : String(error)}`, { cause: error }))

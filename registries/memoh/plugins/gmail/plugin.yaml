@@ -19,6 +19,13 @@ capabilities:
   - threads
   - labels
   - drafts
+skills:
+  - registry_id: memoh
+    package_id: gmail
+    skill_id: gmail
+  - registry_id: memoh
+    package_id: gmail
+    skill_id: gmail-inbox-triage
 auth_requirements:
   - key: gmail_oauth
     type: managed_oauth

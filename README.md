@@ -94,11 +94,20 @@ mcps:
 skills: []
 ```
 
-3. Optionally add `hooks.json`, `scripts/**`, and `skills/**`. Plugin download archives include those allowed files and `plugin.yaml`.
+Plugin Skills are Registry references, not embedded files:
+
+```yaml
+skills:
+  - registry_id: memoh
+    package_id: notion
+    skill_id: notion-meeting-intelligence
+```
+
+3. Optionally add `hooks.json` and `scripts/**`. Plugin download archives include those allowed files and `plugin.yaml`. Skill content must be published by a Registry; `registry:validate` rejects bundled `plugins/<id>/skills/**` content and missing references.
 
 ### Adding a Skill
 
-1. Create `registries/memoh/skills/<skill-id>/SKILL.md` with YAML frontmatter:
+1. Create `registries/memoh/packages/<package-id>/skills/<skill-id>/SKILL.md` with YAML frontmatter. For an independent Skill, use the Skill ID as both the package and Skill ID:
 
 ```markdown
 ---
@@ -154,7 +163,7 @@ bun run registry:lock -- --registry example
 bun run registry:validate
 ```
 
-Supported sources are `local` and HTTPS `git`; adapters are `skill_directory` and `codex_marketplace_skills`. A local source path is relative to the directory containing its `registry.yaml`. A Git source must pin an exact commit in `revision`; optional `tracking_ref` opts it into upstream update checks. `catalog_path` belongs only to the `codex_marketplace_skills` Adapter and is resolved from that Adapter's source root. Every enabled Registry must commit `release.lock.json`, whose `snapshot_revision` must equal the canonical Snapshot rebuilt from the approved source.
+Supported sources are `local` and HTTPS `git`; adapters are `skill_directory`, `skill_package_directory`, and `codex_marketplace_skills`. `skill_package_directory` reads `<package-id>/skills/<skill-id>` from its source root. A local source path is relative to the directory containing its `registry.yaml`. A Git source must pin an exact commit in `revision`; optional `tracking_ref` opts it into upstream update checks. `catalog_path` belongs only to the `codex_marketplace_skills` Adapter and is resolved from that Adapter's source root. Every enabled Registry must commit `release.lock.json`, whose `snapshot_revision` must equal the canonical Snapshot rebuilt from the approved source.
 
 The scheduled `Check Registry updates` GitHub workflow runs every 12 hours and resolves each configured `tracking_ref`. If every resolved commit already equals its approved `revision`, it makes no change and opens no PR. Each changed Registry gets its own candidate PR, so unrelated upstreams can be reviewed and approved independently. An open PR is updated only when its candidate definition changes; repeated checks of the same upstream revision leave its commit and existing reviews untouched. The PR groups changes by package and Skill, lists metadata and file changes, and includes bounded diffs for changed UTF-8 text files. Binary and larger files remain in the Artifact and are identified in the report by path, digest, size, and mode. It commits the candidate source revision and the resulting `release.lock.json`; CI rebuilds the candidate and requires the Snapshot revision to match the lock before publication. Merging that PR is the explicit approval step. The schedule is configured in `.github/workflows/registry-updates.yml`, and a manual run can optionally select one Registry.
 
