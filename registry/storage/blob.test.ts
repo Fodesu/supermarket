@@ -381,9 +381,9 @@ describe('SkillRegistryStore contract', () => {
     const original = new TextEncoder().encode('artifact')
     await expect(store.putArtifact({
       format: 'memoh_skill_v1', digest, size: original.length, content_type: 'application/gzip',
-    }, original)).rejects.toThrow('immutable')
-    const corrupt = await store.getArtifactStream(digest)
-    if (!(corrupt?.body instanceof ReadableStream)) throw new Error('Expected a corrupt R2 Artifact stream')
-    await expect(new Response(corrupt.body).arrayBuffer()).rejects.toThrow('corrupt')
+    }, original)).resolves.toEqual({ stored: true })
+    const repaired = await store.getArtifactStream(digest)
+    if (!(repaired?.body instanceof ReadableStream)) throw new Error('Expected a repaired R2 Artifact stream')
+    expect(new Uint8Array(await new Response(repaired.body).arrayBuffer())).toEqual(original)
   })
 })
