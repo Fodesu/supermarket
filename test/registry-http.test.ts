@@ -9,6 +9,7 @@ import skillIcon from '../server/api/artifacts/icon/[digest].get'
 import pluginArtifactDownload from '../server/api/artifacts/plugin/[digest].get'
 import pluginDownload from '../server/api/plugins/[id]/download.get'
 import pluginDetail from '../server/api/plugins/[id].get'
+import pluginReleaseHandler from '../server/api/plugins/[id]/releases/[revision].get'
 import plugins from '../server/api/plugins/index.get'
 import registrySkill from '../server/api/registries/[id]/packages/[packageId]/skills/[skillId].get'
 import registries from '../server/api/registries/index.get'
@@ -134,8 +135,9 @@ describe('Marketplace HTTP protocol', () => {
       }],
     }
     await pluginStore.putArtifact(pluginArtifact, pluginArchive)
+    const pluginReleaseBytes = serializePluginRelease(pluginRelease)
     const pluginRevision = await pluginStore.publishRelease(
-      serializePluginRelease(pluginRelease),
+      pluginReleaseBytes,
       'demo-plugin',
       { publishedAt: '2026-01-02T00:00:00.000Z' },
     )
@@ -150,6 +152,7 @@ describe('Marketplace HTTP protocol', () => {
     app.get('/api/plugins', plugins)
     app.get('/api/plugins/:id/download', pluginDownload)
     app.get('/api/plugins/:id', pluginDetail)
+    app.get('/api/plugins/:id/releases/:revision', pluginReleaseHandler)
     app.get('/api/artifacts/plugin/:digest', pluginArtifactDownload)
 
     const registryResponse = await app.fetch(new Request('http://local/api/registries'))
@@ -209,6 +212,17 @@ describe('Marketplace HTTP protocol', () => {
     const pluginResponse = await app.fetch(new Request('http://local/api/plugins/demo-plugin'))
     expect(pluginResponse.status).toBe(200)
     expect((await pluginResponse.json() as any).release.revision).toBe(pluginRevision)
+
+    const releaseURL = `http://local/api/plugins/demo-plugin/releases/${pluginRevision}`
+    const releaseResponse = await app.fetch(new Request(releaseURL))
+    expect(releaseResponse.headers.get('cache-control')).toContain('immutable')
+    expect(releaseResponse.headers.get('x-content-sha256')).toBe(pluginRevision)
+    const downloadedRelease = new Uint8Array(await releaseResponse.arrayBuffer())
+    expect(await sha256(downloadedRelease)).toBe(pluginRevision)
+    expect(new TextDecoder().decode(downloadedRelease)).toBe(new TextDecoder().decode(pluginReleaseBytes))
+    expect((await app.fetch(new Request(releaseURL, {
+      headers: { 'if-none-match': `"${pluginRevision}"` },
+    }))).status).toBe(304)
 
     const immutablePluginDownload = await app.fetch(new Request(
       `http://local/api/artifacts/plugin/${pluginArtifact.digest}`,
