@@ -127,10 +127,6 @@ async function prepareRegistryUpdate(input: {
   if (definition.source.type !== 'git' || !definition.source.tracking_ref) {
     throw new Error(`${input.registry}: Registry does not track a Git ref`)
   }
-  const liveCandidate = await resolveGitRevision(definition)
-  if (liveCandidate !== input.candidateRevision) {
-    throw new Error(`${input.registry}: upstream changed while preparing the update; run discovery again`)
-  }
   if (definition.source.revision === input.candidateRevision) {
     throw new Error(`${input.registry}: candidate revision is already approved`)
   }
