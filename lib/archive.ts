@@ -17,6 +17,10 @@ export interface ArchivePathOptions {
   maxArchiveBytes?: number
 }
 
+export function canonicalArchivePath(name: string) {
+  return name.toLowerCase().normalize('NFC')
+}
+
 const windowsReservedNamePattern = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
 
 export function assertSafeArchivePath(name: string, label = 'tar') {
@@ -37,12 +41,12 @@ export function assertSafeArchivePaths(
 ) {
   const reserved = (options.reservedRootPaths ?? []).map((name) => {
     assertSafeArchivePath(name, 'reserved archive')
-    return name.toLowerCase()
+    return canonicalArchivePath(name)
   })
   const seen = new Map<string, string>()
   for (const name of names) {
     assertSafeArchivePath(name, label)
-    const canonical = name.toLowerCase()
+    const canonical = canonicalArchivePath(name)
     if (reserved.some((root) => canonical === root || canonical.startsWith(`${root}/`))) {
       throw new Error(`Reserved ${label} path: ${name}`)
     }

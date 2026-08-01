@@ -9,6 +9,7 @@ import { normalizeSkillCategory } from '../catalog'
 import { resolveSkillRuntimeRequirements, skillInstallID } from '../definition'
 import { readDirectoryFiles, type SkillSourceFile } from '../filesystem'
 import type { SkillCandidate } from './types'
+import type { RegistryBuildBudget } from '../budget'
 
 function uniqueStrings(...values: unknown[]) {
   const output = new Set<string>()
@@ -65,12 +66,14 @@ export async function buildSkillCandidate(input: {
   icon?: SkillIcon
   iconAssets?: Array<{ descriptor: SkillImageAsset; bytes: Uint8Array }>
   sourceCategory?: string
+  budget: RegistryBuildBudget
 }): Promise<SkillCandidate> {
   const {
     definition, packageID, skillID, sourcePath, root, allowedRoot,
-    packageManifest = {}, sourceCategory, icon, iconAssets,
+    packageManifest = {}, sourceCategory, icon, iconAssets, budget,
   } = input
-  const files = await readDirectoryFiles(root, allowedRoot)
+  budget.addSkill(`${definition.id}/${packageID}/${skillID}`)
+  const files = await readDirectoryFiles(root, allowedRoot, budget)
   const { data, metadata } = parseSkill(files, skillID)
   const packageAuthor = normalizeAuthor(packageManifest.author)
   const category = normalizeSkillCategory(

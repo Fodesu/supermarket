@@ -3,10 +3,12 @@ import * as z from 'zod/mini'
 import { sha256 } from '#registry/digest'
 import { skillInstallID } from '#registry/definition'
 import {
+  MAX_SKILL_ARTIFACT_ARCHIVE_BYTES,
   MAX_SKILL_ARTIFACT_COMPRESSED_BYTES,
+  MAX_SKILL_ARTIFACT_FILES,
   MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
 } from '#registry/types'
-import { extractSkillArchive, parseGzipTarArchive, validateSkillArchive } from './archive'
+import { extractSkillArchive, parseGzipTarArchiveWithMetrics, validateSkillArchive } from './archive'
 import {
   MAX_REGISTRY_JSON_BYTES,
   readBoundedResponse,
@@ -39,6 +41,8 @@ interface InstallableSkillResponse {
     digest: string
     size: number
     uncompressed_size: number
+    archive_size: number
+    file_count: number
     download_url: string
   }
 }
@@ -51,8 +55,10 @@ const installableSkillSchema = z.object({
   artifact: z.object({
     format: z.literal('memoh_skill_v1'),
     digest: z.string().check(z.regex(/^[a-f0-9]{64}$/)),
-    size: z.number().check(z.int(), z.minimum(0), z.maximum(MAX_SKILL_ARTIFACT_COMPRESSED_BYTES)),
+    size: z.number().check(z.int(), z.minimum(1), z.maximum(MAX_SKILL_ARTIFACT_COMPRESSED_BYTES)),
     uncompressed_size: z.number().check(z.int(), z.minimum(1), z.maximum(MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES)),
+    archive_size: z.number().check(z.int(), z.minimum(1), z.maximum(MAX_SKILL_ARTIFACT_ARCHIVE_BYTES)),
+    file_count: z.number().check(z.int(), z.minimum(1), z.maximum(MAX_SKILL_ARTIFACT_FILES)),
     download_url: z.string(),
   }),
 })
@@ -68,6 +74,8 @@ function installableSkillResponse(value: unknown): InstallableSkillResponse {
       digest: artifact.digest,
       size: artifact.size,
       uncompressed_size: artifact.uncompressed_size,
+      archive_size: artifact.archive_size,
+      file_count: artifact.file_count,
       download_url: artifact.download_url,
     },
   }
@@ -122,11 +130,17 @@ switch (command) {
     if (bytes.length !== artifact.size) throw new Error(`Artifact size mismatch: expected ${artifact.size}, got ${bytes.length}`)
     const actualDigest = await sha256(bytes)
     if (actualDigest !== artifact.digest) throw new Error(`SHA-256 mismatch: expected ${artifact.digest}, got ${actualDigest}`)
-    const files = await parseGzipTarArchive(bytes)
+    const parsed = await parseGzipTarArchiveWithMetrics(bytes, artifact.archive_size)
+    const { files } = parsed
     validateSkillArchive(files)
-    const uncompressedSize = [...files.values()].reduce((total, file) => total + file.bytes.length, 0)
-    if (uncompressedSize !== artifact.uncompressed_size) {
-      throw new Error(`Artifact uncompressed size mismatch: expected ${artifact.uncompressed_size}, got ${uncompressedSize}`)
+    if (parsed.archiveSize !== artifact.archive_size) {
+      throw new Error(`Artifact archive size mismatch: expected ${artifact.archive_size}, got ${parsed.archiveSize}`)
+    }
+    if (parsed.fileCount !== artifact.file_count) {
+      throw new Error(`Artifact file count mismatch: expected ${artifact.file_count}, got ${parsed.fileCount}`)
+    }
+    if (parsed.uncompressedSize !== artifact.uncompressed_size) {
+      throw new Error(`Artifact uncompressed size mismatch: expected ${artifact.uncompressed_size}, got ${parsed.uncompressedSize}`)
     }
     const destination = path.resolve(option('--destination') ?? '.data/registry-client-installs')
     console.log(JSON.stringify({ installed_at: await extractSkillArchive(files, destination, installID), digest: actualDigest }, null, 2))

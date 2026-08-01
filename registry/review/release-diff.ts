@@ -1,10 +1,21 @@
 import { createTwoFilesPatch } from 'diff'
+import {
+  appendMarkdownLines,
+  combinedMarkdownLength,
+  markdownLines,
+  renderMarkdownLines,
+} from '#lib/markdown-lines'
 import type { CatalogSkill } from '../types'
 import type {
   CandidateFile,
   CandidateSkillReview,
   SkillRegistryCandidate,
 } from '../publish/candidate'
+
+export type RegistryReviewCandidate = Pick<
+  SkillRegistryCandidate,
+  'definition' | 'source_revision' | 'revision' | 'skills' | 'review'
+>
 
 type ChangeStatus = 'added' | 'removed' | 'changed'
 
@@ -134,7 +145,7 @@ function textFilePatches(previous?: CandidateSkillReview, candidate?: CandidateS
   })
 }
 
-function indexSkills(candidate: SkillRegistryCandidate) {
+function indexSkills(candidate: RegistryReviewCandidate) {
   return new Map(candidate.skills.map((skill) => [
     `${skill.package_id}/${skill.skill_id}`,
     skill,
@@ -142,8 +153,8 @@ function indexSkills(candidate: SkillRegistryCandidate) {
 }
 
 export function diffRegistryCandidates(
-  previous: SkillRegistryCandidate,
-  candidate: SkillRegistryCandidate,
+  previous: RegistryReviewCandidate,
+  candidate: RegistryReviewCandidate,
 ): RegistryReleaseDiff {
   if (previous.definition.id !== candidate.definition.id) {
     throw new Error('Cannot compare candidates from different Registries')
@@ -278,13 +289,16 @@ function renderSkill(skill: SkillReleaseDiff) {
 export function renderRegistryReleaseDiff(
   diff: RegistryReleaseDiff,
   compareURL?: string,
+  maximum = 60_000,
+  fullReportURL?: string,
 ) {
-  const maximum = 60_000
-  const truncationNotice = compareURL
-    ? '_Report truncated at a complete Skill boundary; use the upstream comparison link for the remaining source changes._'
-    : '_Report truncated at a complete Skill boundary; inspect the pinned source revision for the remaining changes._'
+  const truncationNotice = fullReportURL
+    ? `_Report truncated at a complete Skill boundary; [download the full workflow report](${fullReportURL}) while it is retained, then use the pinned source revision for the remaining changes._`
+    : compareURL
+      ? '_Report truncated at a complete Skill boundary; use the upstream comparison link for the remaining source changes._'
+      : '_Report truncated at a complete Skill boundary; inspect the pinned source revision for the remaining changes._'
   const approvalNotice = 'Merging this PR approves the pinned source and release.lock.json. R2 publication rebuilds the Snapshot and requires its revision to match that lock.'
-  const lines: string[] = [
+  const output = markdownLines([
     `## ${diff.registry} Registry update`,
     '',
     `Source: \`${diff.source_before.slice(0, 12)}\` → ${compareURL
@@ -300,35 +314,36 @@ export function renderRegistryReleaseDiff(
     `- Skills removed: ${diff.summary.skills_removed}`,
     `- Skills changed: ${diff.summary.skills_changed}`,
     '',
-  ]
+  ])
   let truncated = false
+  const reservedFooter = approvalNotice.length >= truncationNotice.length
+    ? approvalNotice
+    : truncationNotice
   for (const packageDiff of diff.packages) {
-    const packageStart = lines.length
-    const opening = [
+    const packageBlock = markdownLines([
       '<details>',
       `<summary><code>${packageDiff.package_id}</code> — ${packageDiff.status}, ${packageDiff.skills.length} Skill(s)</summary>`,
       '',
-    ]
-    lines.push(...opening)
+    ])
     let included = 0
     for (const skill of packageDiff.skills) {
-      const block = renderSkill(skill)
-      const projected = [...lines, ...block, '</details>', '', truncationNotice, ''].join('\n')
-      if (projected.length > maximum) {
+      const skillBlock = markdownLines(renderSkill(skill))
+      const ending = markdownLines(['</details>', '', reservedFooter, ''])
+      if (combinedMarkdownLength(output, packageBlock, skillBlock, ending) > maximum) {
         truncated = true
         break
       }
-      lines.push(...block)
+      appendMarkdownLines(packageBlock, skillBlock)
       included++
     }
     if (!included) {
-      lines.splice(packageStart)
       truncated = true
       break
     }
-    lines.push('</details>', '')
+    appendMarkdownLines(packageBlock, markdownLines(['</details>', '']))
+    appendMarkdownLines(output, packageBlock)
     if (truncated) break
   }
-  lines.push(truncated ? truncationNotice : approvalNotice, '')
-  return lines.join('\n')
+  appendMarkdownLines(output, markdownLines([truncated ? truncationNotice : approvalNotice, '']))
+  return renderMarkdownLines(output)
 }

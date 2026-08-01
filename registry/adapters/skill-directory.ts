@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises'
+import { readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { assertRegistryComponentID } from '../definition'
 import { resolveRealInside } from '../filesystem'
@@ -7,14 +7,16 @@ import { compareCanonicalText } from '#lib/order'
 import type { SkillAdapterInput, SkillAdapterResult, SkillCandidate } from './types'
 
 export async function readSkillDirectory(input: SkillAdapterInput): Promise<SkillAdapterResult> {
-  const { definition, sourceRoot } = input
+  const { definition, sourceRoot, budget } = input
   const skills: SkillCandidate[] = []
   const entries = await readdir(sourceRoot, { withFileTypes: true })
   entries.sort((a, b) => compareCanonicalText(a.name, b.name))
   for (const entry of entries) {
     if (!entry.isDirectory()) continue
     try {
-      await readFile(path.join(sourceRoot, entry.name, 'SKILL.md'))
+      if (!(await stat(path.join(sourceRoot, entry.name, 'SKILL.md'))).isFile()) {
+        throw new Error(`Skill ${entry.name} SKILL.md must be a regular file`)
+      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
       throw error
@@ -23,6 +25,7 @@ export async function readSkillDirectory(input: SkillAdapterInput): Promise<Skil
     skills.push(await buildSkillCandidate({
       definition, packageID: id, skillID: id, sourcePath: id,
       root: await resolveRealInside(sourceRoot, id), allowedRoot: sourceRoot,
+      budget,
     }))
   }
   return { skills, diagnostics: [] }

@@ -6,8 +6,18 @@ import type {
   SkillRegistrySnapshot,
 } from '../types'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../types'
-import { MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES } from '../types'
+import {
+  MAX_SKILL_ARTIFACT_ARCHIVE_BYTES,
+  MAX_SKILL_ARTIFACT_FILES,
+  MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
+} from '../types'
 import { assertRegistryComponentID, isSkillRuntimeOS } from '../definition'
+import {
+  MAX_REGISTRY_SKILLS,
+  MAX_REGISTRY_SOURCE_BYTES,
+  MAX_REGISTRY_SOURCE_FILES,
+} from '../budget'
+import { assertSafeArchivePaths, MEMOH_DIRECT_OWNER_PATH } from '#lib/archive'
 
 export function assertDigest(value: string): string {
   if (!/^[a-f0-9]{64}$/.test(value)) throw new Error(`Invalid artifact digest: ${value}`)
@@ -18,7 +28,7 @@ const artifactBlobSchema = z.object({
   format: z.literal('memoh_skill_v1'),
   content_type: z.literal('application/gzip'),
   digest: z.string(),
-  size: z.number().check(z.int(), z.minimum(0), z.maximum(MAX_SKILL_ARTIFACT_COMPRESSED_BYTES)),
+  size: z.number().check(z.int(), z.minimum(1), z.maximum(MAX_SKILL_ARTIFACT_COMPRESSED_BYTES)),
 })
 
 const imageAssetSchema = z.object({
@@ -56,6 +66,11 @@ export function validateStoredSnapshot(
   if (snapshot.source.type === 'git' && typeof snapshot.source.repository !== 'string') {
     throw new Error(`Invalid stored Snapshot source: ${key}`)
   }
+  if (snapshot.skills.length > MAX_REGISTRY_SKILLS) {
+    throw new Error(`Stored Snapshot exceeds ${MAX_REGISTRY_SKILLS} Skills: ${key}`)
+  }
+  let totalSourceBytes = 0
+  let totalFiles = 0
   for (const skill of snapshot.skills) {
     if (!skill || !skill.artifact || typeof skill.source_path !== 'string' || !skill.source_path
       || !Array.isArray(skill.files) || !Array.isArray(skill.tags) || !skill.author
@@ -66,6 +81,9 @@ export function validateStoredSnapshot(
     try {
       assertRegistryComponentID(skill.package_id, 'package ID')
       assertRegistryComponentID(skill.skill_id, 'skill ID')
+      assertSafeArchivePaths(skill.files, 'Snapshot Skill', {
+        reservedRootPaths: [MEMOH_DIRECT_OWNER_PATH],
+      })
       if (skill.runtime_requirements && (
         !Array.isArray(skill.runtime_requirements.os)
         || skill.runtime_requirements.os.length === 0
@@ -74,7 +92,7 @@ export function validateStoredSnapshot(
         throw new Error('Catalog Skill contains invalid runtime requirements')
       }
       assertDigest(skill.artifact.digest)
-      if (!Number.isSafeInteger(skill.artifact.size) || skill.artifact.size < 0
+      if (!Number.isSafeInteger(skill.artifact.size) || skill.artifact.size < 1
         || skill.artifact.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) {
         throw new Error('Catalog Skill contains invalid Artifact size')
       }
@@ -83,6 +101,25 @@ export function validateStoredSnapshot(
         || skill.artifact.uncompressed_size > MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES) {
         throw new Error('Catalog Skill contains invalid uncompressed Artifact size')
       }
+      if (!Number.isSafeInteger(skill.artifact.archive_size)
+        || skill.artifact.archive_size < 1
+        || skill.artifact.archive_size > MAX_SKILL_ARTIFACT_ARCHIVE_BYTES) {
+        throw new Error('Catalog Skill contains invalid archive Artifact size')
+      }
+      if (!Number.isSafeInteger(skill.artifact.file_count)
+        || skill.artifact.file_count < 1
+        || skill.artifact.file_count > MAX_SKILL_ARTIFACT_FILES
+        || skill.artifact.file_count !== skill.files.length) {
+        throw new Error('Catalog Skill contains invalid Artifact file count')
+      }
+      if (skill.artifact.uncompressed_size > MAX_REGISTRY_SOURCE_BYTES - totalSourceBytes) {
+        throw new Error('Catalog Skills exceed the Registry source byte limit')
+      }
+      if (skill.artifact.file_count > MAX_REGISTRY_SOURCE_FILES - totalFiles) {
+        throw new Error('Catalog Skills exceed the Registry source file limit')
+      }
+      totalSourceBytes += skill.artifact.uncompressed_size
+      totalFiles += skill.artifact.file_count
       for (const image of [skill.icon?.card, skill.icon?.detail, skill.icon?.dark]) {
         if (image) {
           assertDigest(image.digest)

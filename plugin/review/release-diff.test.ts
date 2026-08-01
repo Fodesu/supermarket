@@ -22,6 +22,7 @@ function candidate(revision: string, registryRevision: string, skillDigest: stri
       install_id: 'memoh+tools+search',
       artifact: {
         format: 'memoh_skill_v1', digest: skillDigest, size: 20, uncompressed_size: 30,
+        archive_size: 1_024, file_count: 1,
         content_type: 'application/gzip',
       },
     }],
@@ -41,7 +42,11 @@ describe('Plugin release review', () => {
     expect(diffs).toHaveLength(1)
     expect(diffs[0]).toMatchObject({
       plugin: 'example', bundle_before: 'f'.repeat(64), bundle_after: 'f'.repeat(64),
-      skills: [{ identity: 'memoh/tools/search', artifact_before: 'c'.repeat(64), artifact_after: 'f'.repeat(64) }],
+      skills: [{
+        identity: 'memoh/tools/search',
+        artifact_before: { digest: 'c'.repeat(64) },
+        artifact_after: { digest: 'f'.repeat(64) },
+      }],
     })
     const report = renderPluginReleaseDiffs(diffs)
     expect(report).toContain('Affected Plugin releases')
@@ -53,5 +58,33 @@ describe('Plugin release review', () => {
     const current = candidate('a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64))
     expect(diffPluginReleaseCandidates([current], [current])).toEqual([])
     expect(renderPluginReleaseDiffs([])).toBe('')
+  })
+
+  test('shows extraction metadata changes even when the Artifact digest is unchanged', () => {
+    const previous = candidate('a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64))
+    const next = candidate('d'.repeat(64), 'b'.repeat(64), 'c'.repeat(64))
+    next.release.skills[0]!.artifact.archive_size = 2_048
+
+    const diffs = diffPluginReleaseCandidates([previous], [next])
+    expect(diffs[0]?.skills[0]).toMatchObject({
+      artifact_before: { digest: 'c'.repeat(64), archive_size: 1_024 },
+      artifact_after: { digest: 'c'.repeat(64), archive_size: 2_048 },
+    })
+    expect(renderPluginReleaseDiffs(diffs)).toContain('2048 B tar')
+  })
+
+  test('truncates a large report at a complete Skill boundary', () => {
+    const previous = candidate('a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64))
+    const next = candidate('d'.repeat(64), 'e'.repeat(64), 'f'.repeat(64))
+    const diff = diffPluginReleaseCandidates([previous], [next])[0]!
+    const report = renderPluginReleaseDiffs([
+      { ...diff, skills: Array.from({ length: 100 }, (_, index) => ({
+        ...diff.skills[0]!, identity: `memoh/tools/search-${index}`,
+      })) },
+    ], 2_000)
+
+    expect(report.length).toBeLessThanOrEqual(2_000)
+    expect(report).toContain('truncated at a complete Skill boundary')
+    expect(report).not.toContain('approves both the Registry release')
   })
 })

@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises'
+import { readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import type {
   RegistryDiagnostic,
@@ -13,6 +13,12 @@ import { compareCanonicalText } from '#lib/order'
 import { sha256 } from '../digest'
 import { buildSkillCandidate, hasComponent } from './common'
 import type { SkillAdapterInput, SkillAdapterResult, SkillCandidate } from './types'
+import {
+  MAX_REGISTRY_METADATA_FILE_BYTES,
+  rethrowRegistryBudgetError,
+  type RegistryBuildBudget,
+} from '../budget'
+import { readFileBounded } from '../filesystem'
 
 interface MarketplaceEntry {
   name: string
@@ -32,10 +38,11 @@ function packageDiagnosticMessage(error: unknown, sourceRoot: string) {
   return `Skipped package: ${stable}`
 }
 
-function parseMarketplace(raw: unknown): MarketplaceEntry[] {
+function parseMarketplace(raw: unknown, budget: RegistryBuildBudget): MarketplaceEntry[] {
   if (!raw || typeof raw !== 'object') throw new Error('Codex Marketplace must contain a plugins array')
   const plugins = (raw as Record<string, unknown>).plugins
   if (!Array.isArray(plugins)) throw new Error('Codex Marketplace must contain a plugins array')
+  budget.assertSkillEntries(plugins.length, 'Codex Marketplace')
   const names = new Set<string>()
   return plugins.map((value, index) => {
     if (!value || typeof value !== 'object') throw new Error(`Marketplace package ${index} must be an object`)
@@ -108,8 +115,16 @@ function declaredImagePath(value: unknown, field: string) {
   return relativePath
 }
 
-async function readImageAsset(packageRoot: string, relativePath: string) {
-  const bytes = new Uint8Array(await readFile(await resolveRealInside(packageRoot, relativePath)))
+async function readImageAsset(
+  packageRoot: string,
+  relativePath: string,
+  budget: RegistryBuildBudget,
+) {
+  const bytes = await readFileBounded(
+    await resolveRealInside(packageRoot, relativePath),
+    MAX_SKILL_IMAGE_BYTES,
+    budget,
+  )
   if (!bytes.length || bytes.length > MAX_SKILL_IMAGE_BYTES) {
     throw new Error(`Skill image ${relativePath} must be between 1 and ${MAX_SKILL_IMAGE_BYTES} bytes`)
   }
@@ -126,7 +141,11 @@ async function readImageAsset(packageRoot: string, relativePath: string) {
   return { descriptor, bytes }
 }
 
-async function packageIcon(packageRoot: string, manifest: Record<string, unknown>) {
+async function packageIcon(
+  packageRoot: string,
+  manifest: Record<string, unknown>,
+  budget: RegistryBuildBudget,
+) {
   const ui = manifest.interface && typeof manifest.interface === 'object'
     ? manifest.interface as Record<string, unknown>
     : {}
@@ -143,7 +162,7 @@ async function packageIcon(packageRoot: string, manifest: Record<string, unknown
   const assets: Array<{ descriptor: SkillImageAsset; bytes: Uint8Array }> = []
   for (const [kind, imagePath] of Object.entries(paths) as Array<[keyof typeof paths, string | undefined]>) {
     if (!imagePath) continue
-    const asset = await readImageAsset(packageRoot, imagePath)
+    const asset = await readImageAsset(packageRoot, imagePath, budget)
     icon[kind] = asset.descriptor
     if (!assets.some((item) => item.descriptor.digest === asset.descriptor.digest)) assets.push(asset)
   }
@@ -153,7 +172,9 @@ async function packageIcon(packageRoot: string, manifest: Record<string, unknown
 async function discoverSkillRoots(packageRoot: string, declaredPath: string) {
   const declaredRoot = await resolveRealInside(packageRoot, declaredPath)
   try {
-    await readFile(path.join(declaredRoot, 'SKILL.md'))
+    if (!(await stat(path.join(declaredRoot, 'SKILL.md'))).isFile()) {
+      throw new Error(`Codex skill path "${declaredPath}" SKILL.md must be a regular file`)
+    }
     return [{ id: assertRegistryComponentID(path.posix.basename(declaredPath), 'skill ID'), root: declaredRoot, relativePath: declaredPath }]
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
@@ -164,7 +185,7 @@ async function discoverSkillRoots(packageRoot: string, declaredPath: string) {
     if (!entry.isDirectory()) continue
     const root = await resolveRealInside(declaredRoot, entry.name)
     try {
-      await readFile(path.join(root, 'SKILL.md'))
+      if (!(await stat(path.join(root, 'SKILL.md'))).isFile()) continue
       roots.push({ id: assertRegistryComponentID(entry.name, 'skill ID'), root, relativePath: `${declaredPath}/${entry.name}` })
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
@@ -174,13 +195,62 @@ async function discoverSkillRoots(packageRoot: string, declaredPath: string) {
   return roots
 }
 
+interface SkillRootEntry {
+  root: string
+  label: string
+}
+
+interface SkillRootNode {
+  children: Map<string, SkillRootNode>
+  accepted?: SkillRootEntry
+  descendant?: SkillRootEntry
+}
+
+function rootSegments(root: string) {
+  const absolute = path.resolve(root)
+  const parsed = path.parse(absolute)
+  return [parsed.root, ...absolute.slice(parsed.root.length).split(path.sep).filter(Boolean)]
+}
+
+class SkillRootIndex {
+  private readonly root: SkillRootNode = { children: new Map() }
+
+  overlap(root: string) {
+    let node = this.root
+    for (const segment of rootSegments(root)) {
+      if (node.accepted) return node.accepted
+      const next = node.children.get(segment)
+      if (!next) return undefined
+      node = next
+    }
+    return node.accepted ?? node.descendant
+  }
+
+  add(entry: SkillRootEntry) {
+    let node = this.root
+    const ancestors = [node]
+    for (const segment of rootSegments(entry.root)) {
+      let next = node.children.get(segment)
+      if (!next) {
+        next = { children: new Map() }
+        node.children.set(segment, next)
+      }
+      node = next
+      ancestors.push(node)
+    }
+    node.accepted = entry
+    for (const ancestor of ancestors) ancestor.descendant ??= entry
+  }
+}
+
 export async function readCodexMarketplace(input: SkillAdapterInput): Promise<SkillAdapterResult> {
-  const { definition, sourceRoot, ensurePaths } = input
+  const { definition, sourceRoot, ensurePaths, budget } = input
   if (definition.adapter.type !== 'codex_marketplace_skills') {
     throw new Error(`${definition.id}: expected codex_marketplace_skills adapter`)
   }
   const catalogPath = await resolveRealInside(sourceRoot, definition.adapter.catalog_path)
-  const entries = parseMarketplace(JSON.parse(await readFile(catalogPath, 'utf8')))
+  const catalogBytes = await readFileBounded(catalogPath, MAX_REGISTRY_METADATA_FILE_BYTES, budget)
+  const entries = parseMarketplace(JSON.parse(new TextDecoder().decode(catalogBytes)), budget)
 
   const diagnostics: RegistryDiagnostic[] = []
   const candidates: Array<{ entry: MarketplaceEntry; packagePath: string }> = []
@@ -206,7 +276,8 @@ export async function readCodexMarketplace(input: SkillAdapterInput): Promise<Sk
     try {
       const packageRoot = await resolveRealInside(sourceRoot, item.packagePath)
       const manifestPath = await resolveRealInside(packageRoot, '.codex-plugin/plugin.json')
-      const parsed = JSON.parse(await readFile(manifestPath, 'utf8'))
+      const manifestBytes = await readFileBounded(manifestPath, MAX_REGISTRY_METADATA_FILE_BYTES, budget)
+      const parsed = JSON.parse(new TextDecoder().decode(manifestBytes))
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
         throw new Error('manifest must be an object')
       }
@@ -238,6 +309,7 @@ export async function readCodexMarketplace(input: SkillAdapterInput): Promise<Sk
       ].filter((value): value is string => Boolean(value))
       prepared.push({ ...item, packageRoot, manifest, skillPaths, iconPaths })
     } catch (error) {
+      rethrowRegistryBudgetError(error)
       diagnostics.push({
         package_id: item.entry.name,
         code: 'package_invalid',
@@ -251,31 +323,58 @@ export async function readCodexMarketplace(input: SkillAdapterInput): Promise<Sk
   ]))
 
   const skills: SkillCandidate[] = []
+  const acceptedRoots = new SkillRootIndex()
   for (const item of prepared) {
     try {
       const packageSkills: SkillCandidate[] = []
-      const presentation = await packageIcon(item.packageRoot, item.manifest)
+      const presentation = await packageIcon(item.packageRoot, item.manifest, budget)
       const seen = new Set<string>()
+      const packageRoots = new SkillRootIndex()
+      const roots: Awaited<ReturnType<typeof discoverSkillRoots>> = []
       for (const skillPath of item.skillPaths) {
         for (const root of await discoverSkillRoots(item.packageRoot, skillPath)) {
           if (seen.has(root.id)) throw new Error(`duplicate skill ID ${root.id}`)
+          const overlap = packageRoots.overlap(root.root)
+          if (overlap) {
+            throw new Error(`overlapping skill roots ${overlap.label} and ${root.relativePath}`)
+          }
           seen.add(root.id)
-          packageSkills.push(await buildSkillCandidate({
-            definition,
-            packageID: item.entry.name,
-            skillID: root.id,
-            sourcePath: `${item.packagePath}/${root.relativePath}`,
-            root: root.root,
-            allowedRoot: item.packageRoot,
-            packageManifest: item.manifest,
-            sourceCategory: item.entry.category,
-            icon: presentation.icon,
-            iconAssets: presentation.assets,
-          }))
+          roots.push(root)
+          packageRoots.add({ root: root.root, label: root.relativePath })
         }
       }
+      for (const root of roots) {
+        const overlap = acceptedRoots.overlap(root.root)
+        if (overlap) {
+          throw new Error(
+            `overlapping skill roots ${overlap.label} and ${item.packagePath}/${root.relativePath}`,
+          )
+        }
+      }
+      for (const root of roots) {
+        packageSkills.push(await buildSkillCandidate({
+          definition,
+          packageID: item.entry.name,
+          skillID: root.id,
+          sourcePath: `${item.packagePath}/${root.relativePath}`,
+          root: root.root,
+          allowedRoot: item.packageRoot,
+          packageManifest: item.manifest,
+          sourceCategory: item.entry.category,
+          icon: presentation.icon,
+          iconAssets: presentation.assets,
+          budget,
+        }))
+      }
       skills.push(...packageSkills)
+      for (const root of roots) {
+        acceptedRoots.add({
+          root: root.root,
+          label: `${item.packagePath}/${root.relativePath}`,
+        })
+      }
     } catch (error) {
+      rethrowRegistryBudgetError(error)
       diagnostics.push({
         package_id: item.entry.name,
         code: 'package_invalid',

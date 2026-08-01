@@ -6,9 +6,7 @@ import type { SkillRegistryDefinition } from '../types'
 import { resolveRealInside } from '../filesystem'
 import { compareCanonicalText } from '#lib/order'
 import type { MaterializedSkillRegistrySource } from './types'
-
-const maxRegistryRevisionFiles = 100_000
-const maxRegistryRevisionBytes = 10 * 1024 * 1024 * 1024
+import { MAX_REGISTRY_SOURCE_BYTES, MAX_REGISTRY_SOURCE_FILES } from '../budget'
 
 async function directoryRevision(root: string) {
   const physicalRoot = await resolveRealInside(root)
@@ -30,7 +28,7 @@ async function directoryRevision(root: string) {
       if (!stats.isFile()) continue
       fileCount++
       totalBytes += stats.size
-      if (fileCount > maxRegistryRevisionFiles || totalBytes > maxRegistryRevisionBytes) {
+      if (fileCount > MAX_REGISTRY_SOURCE_FILES || totalBytes > MAX_REGISTRY_SOURCE_BYTES) {
         throw new Error('Registry source exceeds revision hashing limits')
       }
       hash.update(path.relative(physicalRoot, target).replaceAll(path.sep, '/'))

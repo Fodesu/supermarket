@@ -1,11 +1,18 @@
-import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES, type SkillRegistrySnapshot } from '#registry/types'
-import { MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES } from '#registry/types'
+import {
+  MAX_SKILL_ARTIFACT_ARCHIVE_BYTES,
+  MAX_SKILL_ARTIFACT_COMPRESSED_BYTES,
+  MAX_SKILL_ARTIFACT_FILES,
+  MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
+  type SkillArtifactDescriptor,
+  type SkillRegistrySnapshot,
+} from '#registry/types'
 import { catalogSkillsFromSnapshot } from '#registry/snapshot'
 import { sha256 } from '#registry/digest'
 import { assertDigest } from '#registry/storage/validation'
-import { isSkillRuntimeOS } from '#registry/definition'
+import { isSkillRuntimeOS, skillInstallID } from '#registry/definition'
 import { sameBytes } from '#registry/snapshot'
 import { packagePlugin, type PackagedPlugin } from './artifact'
+import { MAX_PLUGIN_ARTIFACT_COMPRESSED_BYTES } from './bundle'
 import { parsePluginManifest, pluginSkillReferenceIdentity } from './manifest'
 import { loadCommittedPlugins } from './repository'
 import type {
@@ -15,11 +22,15 @@ import type {
 } from './types'
 import {
   MAX_PLUGIN_RELEASE_SKILLS,
+  MAX_PLUGIN_SKILL_ARTIFACTS_ARCHIVE_BYTES,
+  MAX_PLUGIN_SKILL_ARTIFACTS_COMPRESSED_BYTES,
+  MAX_PLUGIN_SKILL_ARTIFACTS_FILES,
   MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES,
 } from './types'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
+const sourceRevisionPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/
 
 export interface ApprovedSkillRegistrySnapshot {
   revision: string
@@ -45,7 +56,8 @@ export function pluginReleaseRevision(bytes: Uint8Array) {
 function validatePluginArtifact(descriptor: PluginArtifactDescriptor, label: string) {
   assertDigest(descriptor.digest)
   if (descriptor.format !== 'memoh_plugin_v1' || descriptor.content_type !== 'application/gzip'
-    || !Number.isSafeInteger(descriptor.size) || descriptor.size < 1) {
+    || !Number.isSafeInteger(descriptor.size) || descriptor.size < 1
+    || descriptor.size > MAX_PLUGIN_ARTIFACT_COMPRESSED_BYTES) {
     throw new Error(`${label} contains an invalid Plugin Artifact`)
   }
 }
@@ -53,14 +65,27 @@ function validatePluginArtifact(descriptor: PluginArtifactDescriptor, label: str
 function validateResolvedSkill(skill: PluginResolvedSkill, label: string) {
   const identity = pluginSkillReferenceIdentity(skill)
   assertDigest(skill.registry_revision)
-  if (!skill.source_revision || !skill.install_id) throw new Error(`${label} contains an invalid Skill lock: ${identity}`)
+  if (typeof skill.source_revision !== 'string' || !sourceRevisionPattern.test(skill.source_revision)
+    || typeof skill.install_id !== 'string'
+    || skill.install_id !== skillInstallID(skill.registry_id, skill.package_id, skill.skill_id)) {
+    throw new Error(`${label} contains an invalid Skill lock: ${identity}`)
+  }
+  if (!skill.artifact || typeof skill.artifact !== 'object') {
+    throw new Error(`${label} contains an invalid Skill Artifact: ${identity}`)
+  }
   assertDigest(skill.artifact.digest)
   if (skill.artifact.format !== 'memoh_skill_v1' || skill.artifact.content_type !== 'application/gzip'
     || !Number.isSafeInteger(skill.artifact.size) || skill.artifact.size < 1
     || skill.artifact.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES
     || !Number.isSafeInteger(skill.artifact.uncompressed_size)
     || skill.artifact.uncompressed_size < 1
-    || skill.artifact.uncompressed_size > MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES) {
+    || skill.artifact.uncompressed_size > MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES
+    || !Number.isSafeInteger(skill.artifact.archive_size)
+    || skill.artifact.archive_size < 1
+    || skill.artifact.archive_size > MAX_SKILL_ARTIFACT_ARCHIVE_BYTES
+    || !Number.isSafeInteger(skill.artifact.file_count)
+    || skill.artifact.file_count < 1
+    || skill.artifact.file_count > MAX_SKILL_ARTIFACT_FILES) {
     throw new Error(`${label} contains an invalid Skill Artifact: ${identity}`)
   }
   if (skill.runtime_requirements && (
@@ -68,7 +93,20 @@ function validateResolvedSkill(skill: PluginResolvedSkill, label: string) {
     || !skill.runtime_requirements.os.length
     || skill.runtime_requirements.os.some((os) => !isSkillRuntimeOS(os))
   )) throw new Error(`${label} contains invalid Skill runtime requirements: ${identity}`)
-  return skill.artifact.uncompressed_size
+  return skill.artifact
+}
+
+function sameSkillArtifactDescriptor(
+  left: SkillArtifactDescriptor,
+  right: SkillArtifactDescriptor,
+) {
+  return left.format === right.format
+    && left.digest === right.digest
+    && left.size === right.size
+    && left.uncompressed_size === right.uncompressed_size
+    && left.archive_size === right.archive_size
+    && left.file_count === right.file_count
+    && left.content_type === right.content_type
 }
 
 export function parsePluginRelease(
@@ -95,17 +133,38 @@ export function parsePluginRelease(
     throw new Error(`${label} exceeds the ${MAX_PLUGIN_RELEASE_SKILLS} Skill limit`)
   }
   let totalUncompressedSize = 0
+  let totalCompressedSize = 0
+  let totalArchiveSize = 0
+  let totalFileCount = 0
+  const artifactsByDigest = new Map<string, SkillArtifactDescriptor>()
   for (let index = 0; index < references.length; index++) {
     const reference = references[index]!
     const resolved = release.skills[index]!
     if (pluginSkillReferenceIdentity(reference) !== pluginSkillReferenceIdentity(resolved)) {
       throw new Error(`${label} Skill lock order does not match plugin.yaml`)
     }
-    const uncompressedSize = validateResolvedSkill(resolved, label)
-    if (uncompressedSize > MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES - totalUncompressedSize) {
+    const artifact = validateResolvedSkill(resolved, label)
+    const existingArtifact = artifactsByDigest.get(artifact.digest)
+    if (existingArtifact && !sameSkillArtifactDescriptor(existingArtifact, artifact)) {
+      throw new Error(`${label} contains inconsistent descriptors for Skill Artifact: ${artifact.digest}`)
+    }
+    artifactsByDigest.set(artifact.digest, artifact)
+    if (artifact.size > MAX_PLUGIN_SKILL_ARTIFACTS_COMPRESSED_BYTES - totalCompressedSize) {
+      throw new Error(`${label} Skill Artifacts exceed the ${MAX_PLUGIN_SKILL_ARTIFACTS_COMPRESSED_BYTES} byte compressed limit`)
+    }
+    if (artifact.uncompressed_size > MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES - totalUncompressedSize) {
       throw new Error(`${label} Skill Artifacts exceed the ${MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES} byte uncompressed limit`)
     }
-    totalUncompressedSize += uncompressedSize
+    if (artifact.archive_size > MAX_PLUGIN_SKILL_ARTIFACTS_ARCHIVE_BYTES - totalArchiveSize) {
+      throw new Error(`${label} Skill Artifacts exceed the ${MAX_PLUGIN_SKILL_ARTIFACTS_ARCHIVE_BYTES} byte archive limit`)
+    }
+    if (artifact.file_count > MAX_PLUGIN_SKILL_ARTIFACTS_FILES - totalFileCount) {
+      throw new Error(`${label} Skill Artifacts exceed the ${MAX_PLUGIN_SKILL_ARTIFACTS_FILES} file limit`)
+    }
+    totalCompressedSize += artifact.size
+    totalUncompressedSize += artifact.uncompressed_size
+    totalArchiveSize += artifact.archive_size
+    totalFileCount += artifact.file_count
   }
   const canonical = serializePluginRelease(release)
   if (!sameBytes(bytes, canonical)) throw new Error(`${label} must use canonical JSON formatting`)

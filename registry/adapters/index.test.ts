@@ -175,6 +175,53 @@ describe('Skill Registry adapters', () => {
     })).rejects.toThrow('duplicate package ID')
   })
 
+  test('isolates packages that declare overlapping Skill roots', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'codex-overlapping-skills-'))
+    roots.push(root)
+    await mkdir(path.join(root, 'packages/demo/.codex-plugin'), { recursive: true })
+    await writeFile(path.join(root, 'marketplace.json'), JSON.stringify({ plugins: [
+      { name: 'demo', source: 'packages/demo' },
+    ] }))
+    await writeFile(path.join(root, 'packages/demo/.codex-plugin/plugin.json'), JSON.stringify({
+      name: 'demo', skills: ['./skills', './skills/nested'],
+    }))
+    await writeSkill(root, 'packages/demo/skills', 'Root')
+    await writeSkill(root, 'packages/demo/skills/nested', 'Nested')
+
+    const result = await buildSkillCandidates({
+      definition: definition('codex_marketplace_skills'), sourceRoot: root,
+    })
+    expect(result.skills).toEqual([])
+    expect(result.diagnostics[0]?.message).toContain('overlapping skill roots')
+  })
+
+  test('isolates overlapping Skill roots declared by different Marketplace packages', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'codex-cross-package-overlap-'))
+    roots.push(root)
+    await mkdir(path.join(root, 'packages/outer/.codex-plugin'), { recursive: true })
+    await mkdir(path.join(root, 'packages/outer/inner/.codex-plugin'), { recursive: true })
+    await writeFile(path.join(root, 'marketplace.json'), JSON.stringify({ plugins: [
+      { name: 'outer', source: 'packages/outer' },
+      { name: 'inner', source: 'packages/outer/inner' },
+    ] }))
+    await writeFile(path.join(root, 'packages/outer/.codex-plugin/plugin.json'), JSON.stringify({
+      name: 'outer', skills: './inner/skills/demo',
+    }))
+    await writeFile(path.join(root, 'packages/outer/inner/.codex-plugin/plugin.json'), JSON.stringify({
+      name: 'inner', skills: './skills/demo',
+    }))
+    await writeSkill(root, 'packages/outer/inner/skills/demo', 'Demo')
+
+    const result = await buildSkillCandidates({
+      definition: definition('codex_marketplace_skills'), sourceRoot: root,
+    })
+    expect(result.skills).toHaveLength(1)
+    expect(result.skills[0]).toMatchObject({ package_id: 'outer', skill_id: 'demo' })
+    expect(result.diagnostics).toHaveLength(1)
+    expect(result.diagnostics[0]).toMatchObject({ package_id: 'inner', code: 'package_invalid' })
+    expect(result.diagnostics[0]?.message).toContain('overlapping skill roots')
+  })
+
   test('isolates per-package failures as diagnostics instead of aborting the registry build', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'codex-package-isolation-'))
     roots.push(root)

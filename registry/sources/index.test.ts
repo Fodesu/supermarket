@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type { SkillRegistryDefinition } from '../types'
 import { buildSkillCandidates } from '../adapters/index'
 import { materializeSkillRegistrySource } from './index'
+import { assertGitTreeMaterialization, gitSparsePattern } from './git'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
@@ -21,6 +23,23 @@ async function revParseHead(cwd: string) {
 }
 
 describe('Skill Registry Git sources', () => {
+  test('rejects oversized or unsupported Git tree materialization before checkout', () => {
+    const entry = (path: string, mode = '100644', size = 1) =>
+      `${mode} blob ${'a'.repeat(40)} ${size}\t${path}\0`
+    expect(assertGitTreeMaterialization(entry('one') + entry('two'), 2))
+      .toEqual({ fileCount: 2, sourceBytes: 2 })
+    expect(() => assertGitTreeMaterialization(entry('one') + entry('two'), 1))
+      .toThrow('exceeds 1 files')
+    expect(() => assertGitTreeMaterialization(entry('link', '120000'), 2))
+      .toThrow('unsupported tree entry')
+    expect(() => assertGitTreeMaterialization(entry('large', '100644', 3), 2, 2))
+      .toThrow('exceeds 2 bytes')
+    expect(() => assertGitTreeMaterialization(entry('metadata'), 2, 2, 4))
+      .toThrow('tree metadata exceeds 4 bytes')
+    expect(gitSparsePattern('wanted')).toBe('/wanted')
+    expect(() => gitSparsePattern('wanted ')).toThrow('cannot be represented safely')
+  })
+
   test('fetches one revision and expands sparse Marketplace paths on demand', async () => {
     const repository = await mkdtemp(path.join(os.tmpdir(), 'skill-source-repository-'))
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'skill-source-project-'))
@@ -28,11 +47,19 @@ describe('Skill Registry Git sources', () => {
     await git(repository, 'init', '-b', 'main')
     await git(repository, 'config', 'user.email', 'test@example.com')
     await git(repository, 'config', 'user.name', 'Test')
+    await git(repository, 'config', 'uploadpack.allowFilter', 'true')
+    await git(repository, 'config', 'uploadpack.allowAnySHA1InWant', 'true')
     await mkdir(path.join(repository, 'plugins/demo/.codex-plugin'), { recursive: true })
     await mkdir(path.join(repository, 'plugins/demo/skills/example'), { recursive: true })
     await writeFile(path.join(repository, 'marketplace.json'), JSON.stringify({
       plugins: [{ name: 'demo', source: { source: 'local', path: 'plugins/demo' } }],
     }))
+    await mkdir(path.join(repository, 'nested'), { recursive: true })
+    await writeFile(path.join(repository, 'nested/marketplace.json'), 'not selected')
+    await writeFile(
+      path.join(repository, '.gitattributes'),
+      'plugins/demo/skills/example/SKILL.md text eol=crlf\n',
+    )
     await writeFile(path.join(repository, 'plugins/demo/.codex-plugin/plugin.json'), JSON.stringify({
       name: 'demo', skills: './skills',
     }))
@@ -43,7 +70,9 @@ describe('Skill Registry Git sources', () => {
     const definition: SkillRegistryDefinition = {
       schema_version: '1', id: 'example', name: 'Example', enabled: true, priority: 10,
       adapter: { type: 'codex_marketplace_skills', catalog_path: 'marketplace.json' },
-      source: { type: 'git', url: repository, revision: await revParseHead(repository) },
+      source: {
+        type: 'git', url: pathToFileURL(repository).href, revision: await revParseHead(repository),
+      },
     }
     const source = await materializeSkillRegistrySource(definition, projectRoot)
     try {
@@ -53,6 +82,12 @@ describe('Skill Registry Git sources', () => {
       })
       expect(result.skills).toHaveLength(1)
       expect(result.skills[0]).toMatchObject({ package_id: 'demo', skill_id: 'example' })
+      expect(await Bun.file(path.join(source.root, 'nested/marketplace.json')).exists()).toBe(false)
+      expect(await Bun.file(path.join(source.root, '.gitattributes')).exists()).toBe(false)
+      expect(await readFile(path.join(
+        source.root,
+        'plugins/demo/skills/example/SKILL.md',
+      ), 'utf8')).not.toContain('\r')
     } finally {
       await source.cleanup()
     }

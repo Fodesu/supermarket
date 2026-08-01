@@ -7,7 +7,9 @@ import type {
 } from '../types'
 import * as z from 'zod/mini'
 import {
+  MAX_SKILL_ARTIFACT_ARCHIVE_BYTES,
   MAX_SKILL_ARTIFACT_COMPRESSED_BYTES,
+  MAX_SKILL_ARTIFACT_FILES,
   MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
 } from '../types'
 import { assertRegistryID } from '../definition'
@@ -29,11 +31,12 @@ import {
   verifiedAssetStream,
 } from './validation'
 import { putImmutableObject } from './immutable'
+import { parseGzipTarArchiveWithMetrics, validateSkillArchive } from '../artifacts/archive'
+import { MAX_REGISTRY_SNAPSHOT_BYTES } from '../budget'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 export const MAX_REGISTRY_STATE_BYTES = 256 * 1024
-export const MAX_REGISTRY_SNAPSHOT_BYTES = 8 * 1024 * 1024
 
 const summaryCountsSchema = z.object({
   skill_count: z.number().check(z.int(), z.minimum(0)),
@@ -182,13 +185,34 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
   async putArtifact(descriptor: SkillArtifactDescriptor, bytes: Uint8Array) {
     assertDigest(descriptor.digest)
     if (descriptor.format !== 'memoh_skill_v1') throw new Error(`Unsupported artifact format: ${descriptor.format}`)
+    if (!Number.isSafeInteger(descriptor.size) || descriptor.size < 1) throw new Error('Artifact has invalid compressed size')
     if (descriptor.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) throw new Error('Artifact exceeds compressed size limit')
     if (!Number.isSafeInteger(descriptor.uncompressed_size) || descriptor.uncompressed_size < 1
       || descriptor.uncompressed_size > MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES) {
       throw new Error('Artifact has invalid uncompressed size')
     }
+    if (!Number.isSafeInteger(descriptor.archive_size) || descriptor.archive_size < 1
+      || descriptor.archive_size > MAX_SKILL_ARTIFACT_ARCHIVE_BYTES) {
+      throw new Error('Artifact has invalid archive size')
+    }
+    if (!Number.isSafeInteger(descriptor.file_count) || descriptor.file_count < 1
+      || descriptor.file_count > MAX_SKILL_ARTIFACT_FILES) {
+      throw new Error('Artifact has invalid file count')
+    }
     if (descriptor.size !== bytes.length) throw new Error('Artifact size does not match its content')
     if (descriptor.digest !== await sha256(bytes)) throw new Error('Artifact digest does not match its content')
+    let parsed
+    try {
+      parsed = await parseGzipTarArchiveWithMetrics(bytes, descriptor.archive_size)
+      validateSkillArchive(parsed.files)
+    } catch (error) {
+      throw new Error('Artifact is not a valid Skill archive', { cause: error })
+    }
+    if (parsed.uncompressedSize !== descriptor.uncompressed_size
+      || parsed.archiveSize !== descriptor.archive_size
+      || parsed.fileCount !== descriptor.file_count) {
+      throw new Error('Artifact extraction metadata does not match its content')
+    }
     const archiveKey = `skill-artifacts/${descriptor.digest}.tar.gz`
     return {
       stored: await putImmutableObject(this.backend, archiveKey, bytes, 'Artifact', { repairCorrupt: true }),

@@ -67,11 +67,22 @@ jobs:
         env:
           REGISTRY: ${{ matrix.registry }}
           CANDIDATE_REVISION: ${{ matrix.candidate_revision }}
+          FULL_REPORT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts
         run: |
           bun run registry:updates -- \
             --registry "$REGISTRY" \
             --candidate "$CANDIDATE_REVISION" \
-            --report "$RUNNER_TEMP/registry-update.md"
+            --report "$RUNNER_TEMP/registry-update.md" \
+            --full-report "$RUNNER_TEMP/registry-update-full.md" \
+            --full-report-url "$FULL_REPORT_URL" \
+            --plugin-comment-dir "$RUNNER_TEMP/registry-plugin-review"
+      - name: Upload full review report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: registry-update-${{ matrix.registry }}-${{ matrix.candidate_revision }}
+          path: ${{ runner.temp }}/registry-update-full.md
+          if-no-files-found: error
+          retention-days: 90
       - id: candidate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -119,6 +130,9 @@ jobs:
                   --head "$branch" \
                   --title "$title" \
                   --body-file "$RUNNER_TEMP/registry-update.md"
+                pr_number="$(gh pr view "$branch" --json number --jq .number)"
+                echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+                echo "review_comments=true" >> "$GITHUB_OUTPUT"
                 echo "verify=true" >> "$GITHUB_OUTPUT"
                 ;;
               OPEN)
@@ -129,13 +143,17 @@ jobs:
                 else
                   echo "verify=false" >> "$GITHUB_OUTPUT"
                 fi
+                echo "pr_number=$existing_number" >> "$GITHUB_OUTPUT"
+                echo "review_comments=true" >> "$GITHUB_OUTPUT"
                 echo "$REGISTRY candidate is already open as PR #$existing_number; left its commit and review unchanged."
                 ;;
               CLOSED)
+                echo "review_comments=false" >> "$GITHUB_OUTPUT"
                 echo "verify=false" >> "$GITHUB_OUTPUT"
                 echo "$REGISTRY candidate was rejected in PR #$existing_number; reopen it explicitly to reconsider."
                 ;;
               MERGED)
+                echo "review_comments=false" >> "$GITHUB_OUTPUT"
                 echo "verify=false" >> "$GITHUB_OUTPUT"
                 echo "$REGISTRY candidate was already merged in PR #$existing_number."
                 ;;
@@ -153,6 +171,29 @@ jobs:
             --head "$branch" \
             --title "$title" \
             --body-file "$RUNNER_TEMP/registry-update.md"
+          pr_number="$(gh pr view "$branch" --json number --jq .number)"
+          echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+          echo "review_comments=true" >> "$GITHUB_OUTPUT"
+      - name: Publish persistent Plugin review comments
+        if: steps.candidate.outputs.review_comments == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.candidate.outputs.pr_number }}
+        run: |
+          shopt -s nullglob
+          reports=("$RUNNER_TEMP"/registry-plugin-review/*.md)
+          if (( ${#reports[@]} == 0 )); then
+            exit 0
+          fi
+          existing="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]") | .body')"
+          for report in "${reports[@]}"; do
+            marker="$(head -n 1 "$report")"
+            if [[ "$existing" != *"$marker"* ]]; then
+              gh pr comment "$PR_NUMBER" --body-file "$report"
+              existing+=$'\n'"$marker"
+            fi
+          done
       - name: Verify immutable candidate
         if: steps.candidate.outputs.verify == 'true'
         env:

@@ -3,6 +3,7 @@ import { createTar, gzip, type TarFileInput } from '#lib/archive'
 import { sha256 } from '#registry/digest'
 import {
   MAX_PLUGIN_ARCHIVE_BYTES,
+  MAX_PLUGIN_ARTIFACT_COMPRESSED_BYTES,
   MAX_PLUGIN_BUNDLE_UNCOMPRESSED_BYTES,
   PluginBundleBudget,
 } from './bundle'
@@ -28,6 +29,9 @@ export async function packagePlugin(plugin: CommittedPlugin): Promise<PackagedPl
     maxContentBytes: MAX_PLUGIN_BUNDLE_UNCOMPRESSED_BYTES,
     maxArchiveBytes: MAX_PLUGIN_ARCHIVE_BYTES,
   }))
+  if (bytes.length > MAX_PLUGIN_ARTIFACT_COMPRESSED_BYTES) {
+    throw new Error(`Compressed Plugin Artifact exceeds ${MAX_PLUGIN_ARTIFACT_COMPRESSED_BYTES} bytes`)
+  }
   const descriptor: PluginArtifactDescriptor = {
     format: 'memoh_plugin_v1',
     digest: await sha256(bytes),
