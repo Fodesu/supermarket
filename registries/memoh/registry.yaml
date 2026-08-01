@@ -4,7 +4,7 @@ name: Memoh
 enabled: true
 priority: 1000
 adapter:
-  type: skill_directory
+  type: skill_package_directory
 source:
   type: local
-  path: skills
+  path: packages

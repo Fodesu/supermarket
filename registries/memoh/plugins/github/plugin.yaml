@@ -19,6 +19,10 @@ capabilities:
   - issues
   - pull-requests
   - code-search
+skills:
+  - registry_id: memoh
+    package_id: github
+    skill_id: github
 auth_requirements:
   - key: github_oauth
     type: managed_oauth

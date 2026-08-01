@@ -46,6 +46,49 @@ describe('Skill Registry adapters', () => {
     expect(result.skills[0]!.files['run.sh']?.mode).toBe(0o755)
   })
 
+  test('imports namespaced skills from package directories', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'package-skills-'))
+    roots.push(root)
+    await writeSkill(root, 'notion/skills/search', 'Search')
+    await writeSkill(root, 'notion/skills/write', 'Write')
+    await writeSkill(root, 'github/skills/review', 'Review')
+
+    const result = await buildSkillCandidates({
+      definition: definition('skill_package_directory'), sourceRoot: root,
+    })
+
+    expect(result.diagnostics).toEqual([])
+    expect(result.skills.map((skill) => ({
+      package_id: skill.package_id,
+      skill_id: skill.skill_id,
+      install_id: skill.install_id,
+      source_path: skill.source_path,
+    }))).toEqual([
+      {
+        package_id: 'github', skill_id: 'review', install_id: 'example+github+review',
+        source_path: 'github/skills/review',
+      },
+      {
+        package_id: 'notion', skill_id: 'search', install_id: 'example+notion+search',
+        source_path: 'notion/skills/search',
+      },
+      {
+        package_id: 'notion', skill_id: 'write', install_id: 'example+notion+write',
+        source_path: 'notion/skills/write',
+      },
+    ])
+  })
+
+  test('rejects malformed package directories', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'invalid-package-skills-'))
+    roots.push(root)
+    await mkdir(path.join(root, 'empty/skills'), { recursive: true })
+
+    await expect(buildSkillCandidates({
+      definition: definition('skill_package_directory'), sourceRoot: root,
+    })).rejects.toThrow('package contains no skills')
+  })
+
   test('flattens Codex package skills and skips packages with runtime components', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'codex-skills-'))
     roots.push(root)

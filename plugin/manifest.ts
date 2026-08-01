@@ -1,9 +1,6 @@
 import { parse as parseYaml } from 'yaml'
 import * as z from 'zod/mini'
-import type {
-  BundledPluginSkill,
-  PluginManifest,
-} from './types'
+import type { PluginManifest, PluginSkillReference } from './types'
 
 const pluginIDPattern = /^[a-z0-9][a-z0-9._-]*$/
 
@@ -63,19 +60,9 @@ const mcpSchema = z.discriminatedUnion('transport', [
 ])
 
 const skillSchema = z.object({
-  key: nonEmpty,
-  name: optionalNonEmpty,
-  path: nonEmpty,
-})
-
-const bundledSkillFrontmatterSchema = z.object({
-  name: nonEmpty,
-  description: nonEmpty,
-  metadata: z.optional(z.object({
-    author: z.optional(authorSchema),
-    tags: stringList,
-    homepage: optionalNonEmpty,
-  })),
+  registry_id: nonEmpty.check(z.refine((value) => pluginIDPattern.test(value), 'Invalid Registry ID')),
+  package_id: nonEmpty.check(z.refine((value) => pluginIDPattern.test(value), 'Invalid package ID')),
+  skill_id: nonEmpty.check(z.refine((value) => pluginIDPattern.test(value), 'Invalid Skill ID')),
 })
 
 function uniqueKeys(label: string) {
@@ -85,6 +72,15 @@ function uniqueKeys(label: string) {
       if (seen.has(item.key)) ctx.addIssue({ code: 'custom', message: `${label} contains duplicate key: ${item.key}` })
       seen.add(item.key)
     }
+  }
+}
+
+function uniqueSkillReferences(items: PluginSkillReference[], ctx: z.core.$RefinementCtx<PluginSkillReference[]>) {
+  const seen = new Set<string>()
+  for (const item of items) {
+    const identity = pluginSkillReferenceIdentity(item)
+    if (seen.has(identity)) ctx.addIssue({ code: 'custom', message: `skills contains duplicate reference: ${identity}` })
+    seen.add(identity)
   }
 }
 
@@ -103,7 +99,7 @@ const pluginManifestSchema = z.object({
   variables: z.optional(z.array(variableSchema)),
   auth_requirements: z.optional(z.array(authRequirementSchema).check(z.superRefine(uniqueKeys('auth_requirements')))),
   mcps: z.optional(z.array(mcpSchema).check(z.superRefine(uniqueKeys('mcps')))),
-  skills: z.optional(z.array(skillSchema)),
+  skills: z.optional(z.array(skillSchema).check(z.superRefine(uniqueSkillReferences))),
 }).check(z.superRefine((manifest, ctx) => {
   const authKeys = new Set((manifest.auth_requirements ?? []).map((item) => item.key))
   manifest.mcps?.forEach((mcp, index) => {
@@ -143,20 +139,6 @@ export function parsePluginManifest(raw: unknown, expectedID?: string): PluginMa
   return manifest
 }
 
-export function parseBundledSkillDocument(id: string, text: string): BundledPluginSkill {
-  const frontmatter = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/)
-  if (!frontmatter) throw new Error(`${id}/SKILL.md requires YAML frontmatter`)
-  const parsed = decode(bundledSkillFrontmatterSchema, object(parseYaml(frontmatter[1] ?? ''), `${id}/SKILL.md frontmatter`))
-  return {
-    id,
-    name: parsed.name,
-    description: parsed.description,
-    metadata: {
-      author: parsed.metadata?.author ?? { name: '', email: '' },
-      tags: parsed.metadata?.tags,
-      homepage: parsed.metadata?.homepage,
-    },
-    content: (frontmatter[2] ?? '').trim(),
-    files: [],
-  }
+export function pluginSkillReferenceIdentity(reference: PluginSkillReference): string {
+  return `${reference.registry_id}/${reference.package_id}/${reference.skill_id}`
 }

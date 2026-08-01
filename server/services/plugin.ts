@@ -1,41 +1,12 @@
 import { useStorage } from 'nitro/storage'
 import { stringify as stringifyYaml } from 'yaml'
-import { parseBundledSkillDocument, parsePluginManifest } from '#plugin/manifest'
+import { parsePluginManifest } from '#plugin/manifest'
 import { PluginBundleBudget } from '#plugin/bundle'
-import {
-  type BundledPluginSkill,
-  type PluginEntry,
-} from '#plugin/types'
+import type { PluginEntry } from '#plugin/types'
 
 let cache: PluginEntry[] | null = null
 
-const bundledPluginAssetPrefixes = ['skills:', 'scripts:']
-
-async function readBundledSkills(pluginID: string) {
-  const storage = useStorage('assets/plugins')
-  const allKeys = await storage.getKeys()
-  const prefix = `${pluginID}:skills:`
-  const skillIds = new Set<string>()
-
-  for (const key of allKeys) {
-    if (!key.startsWith(prefix)) continue
-    const parts = key.substring(prefix.length).split(':')
-    if (parts[0]) skillIds.add(parts[0])
-  }
-
-  const skills: BundledPluginSkill[] = []
-  for (const skillID of skillIds) {
-    const baseKey = `${prefix}${skillID}:`
-    const skillMdKey = `${baseKey}SKILL.md`
-    const text = (await storage.getItem(skillMdKey)) as string
-    if (!text) throw new Error(`${pluginID}/${skillID}: missing SKILL.md`)
-    const files = allKeys
-      .filter((key) => key.startsWith(baseKey))
-      .map((key) => key.substring(baseKey.length).replaceAll(':', '/'))
-    skills.push({ ...parseBundledSkillDocument(`${pluginID}/${skillID}`, text), id: skillID, files })
-  }
-  return skills
-}
+const bundledPluginAssetPrefixes = ['scripts:']
 
 async function scanExplicitPlugins(): Promise<PluginEntry[]> {
   const storage = useStorage('assets/plugins')
@@ -47,10 +18,7 @@ async function scanExplicitPlugins(): Promise<PluginEntry[]> {
     const id = key.slice(0, -':plugin.yaml'.length)
     const text = (await storage.getItem(key)) as string
     if (!text) throw new Error(`${id}: missing plugin.yaml`)
-    plugins.push({
-      ...parsePluginManifest(text, id),
-      bundled_skills: await readBundledSkills(id),
-    })
+    plugins.push(parsePluginManifest(text, id))
   }
 
   return plugins
@@ -126,8 +94,7 @@ export async function getPluginFiles(id: string): Promise<Record<string, Uint8Ar
   if (!plugin) return {}
 
   const encoder = new TextEncoder()
-  const { bundled_skills: _bundledSkills, ...manifest } = plugin
-  const manifestBytes = encoder.encode(stringifyYaml(manifest))
+  const manifestBytes = encoder.encode(stringifyYaml(plugin))
   const files: Record<string, Uint8Array> = {
     'plugin.yaml': manifestBytes,
   }

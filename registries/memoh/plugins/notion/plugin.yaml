@@ -19,6 +19,19 @@ capabilities:
   - databases
   - search
   - comments
+skills:
+  - registry_id: memoh
+    package_id: notion
+    skill_id: notion-knowledge-capture
+  - registry_id: memoh
+    package_id: notion
+    skill_id: notion-meeting-intelligence
+  - registry_id: memoh
+    package_id: notion
+    skill_id: notion-research-documentation
+  - registry_id: memoh
+    package_id: notion
+    skill_id: notion-spec-to-implementation
 auth_requirements:
   - key: notion_oauth
     type: managed_oauth

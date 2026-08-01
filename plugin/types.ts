@@ -35,10 +35,10 @@ export interface PluginMcpResource {
   capabilities?: string[]
 }
 
-export interface PluginSkillResource {
-  key: string
-  name?: string
-  path: string
+export interface PluginSkillReference {
+  registry_id: string
+  package_id: string
+  skill_id: string
 }
 
 export interface PluginManifest {
@@ -56,22 +56,7 @@ export interface PluginManifest {
   variables?: PluginVariable[]
   auth_requirements?: PluginAuthRequirement[]
   mcps?: PluginMcpResource[]
-  skills?: PluginSkillResource[]
+  skills?: PluginSkillReference[]
 }
 
-export interface BundledPluginSkill {
-  id: string
-  name: string
-  description: string
-  metadata: {
-    author: PluginAuthor
-    tags?: string[]
-    homepage?: string
-  }
-  content: string
-  files: string[]
-}
-
-export interface PluginEntry extends PluginManifest {
-  bundled_skills?: BundledPluginSkill[]
-}
+export type PluginEntry = PluginManifest

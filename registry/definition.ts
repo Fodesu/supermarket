@@ -85,6 +85,13 @@ function parseAdapter(raw: unknown, id: string): SkillRegistryDefinition['adapte
     if (!parsed.success) throw new Error(parsed.error.issues[0]!.message)
     return { type: 'skill_directory' }
   }
+  if (type === 'skill_package_directory') {
+    const parsed = z.strictObject({ type: z.literal('skill_package_directory') }, {
+      error: (issue) => issue.code === 'unrecognized_keys' ? `${id}: skill_package_directory adapter contains unsupported fields` : undefined,
+    }).safeParse(data)
+    if (!parsed.success) throw new Error(parsed.error.issues[0]!.message)
+    return { type: 'skill_package_directory' }
+  }
   if (type === 'codex_marketplace_skills') {
     const parsed = z.strictObject({
       type: z.literal('codex_marketplace_skills'),
