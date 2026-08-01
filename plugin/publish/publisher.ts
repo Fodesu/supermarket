@@ -1,7 +1,7 @@
 import type { PluginReleaseStore } from '../storage/contracts'
 import type { SkillRegistryStore } from '#registry/storage/contracts'
 import { assertSkillArtifactsAvailable } from '#registry/storage/availability'
-import type { PluginReleaseCandidate } from '../release'
+import { serializePluginRelease, type PluginReleaseCandidate } from '../release'
 import {
   assertPluginReleaseCandidate,
   type PluginReleaseLock,
@@ -57,8 +57,9 @@ export class PluginReleasePublisher {
     } catch {
       existing = null
     }
+    const releaseBytes = serializePluginRelease(candidate.release)
     const publishedRevision = await this.store.publishRelease(
-      candidate.releaseBytes,
+      releaseBytes,
       candidate.plugin_id,
       { expectedVersion, expectedRevision: lock.release_revision },
     )

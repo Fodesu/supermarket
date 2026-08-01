@@ -27,7 +27,7 @@ function candidate(revision: string, registryRevision: string, skillDigest: stri
     }],
   }
   return {
-    plugin_id: 'example', revision, release, releaseBytes: new Uint8Array(),
+    plugin_id: 'example', revision, release,
     artifact: { descriptor: artifact, bytes: new Uint8Array() },
   }
 }
