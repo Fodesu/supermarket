@@ -100,8 +100,6 @@ Base URL: `https://supermarket.memoh.ai`
 Registry Skills use the identity `(registry_id, package_id, skill_id)`. The reference client installs them into `<registry_id>+<package_id>+<skill_id>`.
 Plugin source manifests use those identities as references. A published Plugin release resolves each reference to a fixed Registry Snapshot revision and Skill Artifact digest, so installing the same Plugin release always installs the same Skill content.
 The installation identity is supplied by the client rather than embedded as an archive directory; the archive itself contains the Skill files at its root.
-`/api/mcps` and descendant paths intentionally return `404`; standalone MCP Registry discovery is no longer part of Supermarket.
-
 ## Contributing
 
 ### Adding a Plugin
