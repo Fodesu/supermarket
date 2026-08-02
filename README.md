@@ -28,7 +28,53 @@ supermarket/
 └── vite.config.ts
 ```
 
-Registry Skills and Plugins are published into `.data/registries` locally or R2 when deployed; neither Catalog data nor installable content is bundled into the API Worker. A Registry Snapshot is the complete runtime Skill catalog. Each Plugin has an immutable release descriptor that binds its Bundle digest and the exact Registry Snapshot and Skill Artifact digest for every referenced Skill. Git commits `release.lock.json` files as approval records. Runtime `state.json` objects are the only mutable pointers and select the current approved Snapshot or Plugin release after every referenced immutable object has been stored.
+Registry Skills and Plugins are published into `.data/registries` locally or R2 when deployed; neither Registry Snapshots nor installable content is bundled into the API Worker. A Registry Snapshot is the complete immutable stored Skill set for one Registry. The API hydrates the current Snapshot of every enabled Registry into the searchable Catalog view. Each Plugin has an immutable release descriptor that binds its Bundle digest and the exact Registry Snapshot and Skill Artifact descriptor for every referenced Skill. Git commits `release.lock.json` files as approval records. Runtime `state.json` objects are the only mutable pointers and select the current approved Snapshot or Plugin release after every referenced immutable object has been stored.
+
+```mermaid
+flowchart LR
+  Source["Repository content and pinned Git sources"] --> Candidate["Candidate build and release locks"]
+  Candidate --> Review["CI and human review"]
+  Review -->|merge to main| Publisher["Approved Publisher"]
+  Publisher --> Store["Local Store or R2"]
+  Store --> API["Read-only API"]
+  API --> Client["Memoh and protocol clients"]
+```
+
+## Development
+
+Development requires the Bun version pinned in `.bun-version`. Git and upstream network access are also required when validating or publishing a Git-backed Registry.
+
+```bash
+bun install
+bun run registry:publish
+bun run dev
+```
+
+The first publication must publish every enabled Registry so the local Store contains the approved Snapshots needed to resolve Plugin Skill references. Later publications may select one Registry with `bun run registry:publish -- --registry <id>`. The Vite and Nitro development server listens on `http://127.0.0.1:5173` by default and reads `.data/registries`. Set `REGISTRY_DATA_DIR` to use a different local Store.
+
+| Command | Purpose |
+|---------|---------|
+| `bun test` | Run the Bun test suite |
+| `bun run typecheck` | Generate Worker types and check server and Vue projects |
+| `bun run build` | Validate approved releases and build the Cloudflare Worker |
+| `bun run registry:lock -- --registry <id>` | Rebuild one Registry lock and all affected Plugin locks |
+| `bun run registry:lock -- --plugin <id>` | Rebuild one Plugin lock |
+| `bun run registry:validate` | Rebuild every enabled source and verify committed locks |
+| `bun run registry:publish` | Publish approved releases to the local Store |
+| `bun run registry:updates` | Check configured upstream tracking refs |
+| `bun run registry:client -- <command>` | Run the reference discovery and installation client |
+
+### Reference Client
+
+The client defaults to `http://127.0.0.1:5173`. Override it with `--base` or `SUPERMARKET_URL`.
+
+```bash
+bun run registry:client -- list
+bun run registry:client -- search gmail --registry memoh
+bun run registry:client -- inspect memoh gmail gmail
+bun run registry:client -- install memoh gmail gmail \
+  --destination /tmp/supermarket-skills
+```
 
 ## API
 
@@ -41,7 +87,7 @@ Base URL: `https://supermarket.memoh.ai`
 | GET | `/api/plugins/:id/releases/:revision` | Get an immutable Plugin release descriptor |
 | GET | `/api/plugins/:id/download` | Download Plugin package (`plugin.yaml` plus allowed bundle assets) |
 | GET | `/api/artifacts/plugin/:digest` | Download an immutable Plugin package |
-| GET | `/api/skills` | Search enabled Registry Skills. Query: `q`, `registry`, `package`, `category`, `tag`, `os`, `page`, `limit`, `sort` |
+| GET | `/api/skills` | Search enabled Registry Skills. Query: `q`, `registry`, `package`, `category`, `tag`, `page`, `limit`, `sort` |
 | GET | `/api/registries` | List Registries and current counts |
 | GET | `/api/registries/:registryId` | Get the approved Registry definition, source revision, and diagnostics |
 | GET | `/api/registries/:registryId/categories` | List categories in one Registry |
@@ -54,7 +100,7 @@ Base URL: `https://supermarket.memoh.ai`
 Registry Skills use the identity `(registry_id, package_id, skill_id)`. The reference client installs them into `<registry_id>+<package_id>+<skill_id>`.
 Plugin source manifests use those identities as references. A published Plugin release resolves each reference to a fixed Registry Snapshot revision and Skill Artifact digest, so installing the same Plugin release always installs the same Skill content.
 The installation identity is supplied by the client rather than embedded as an archive directory; the archive itself contains the Skill files at its root.
-`runtime_requirements` is published only when the source provides structured compatibility metadata. An `os` filter returns only Skills that explicitly declare support for that OS; missing compatibility metadata is treated as unknown rather than as support for every platform.
+`/api/mcps` and descendant paths intentionally return `404`; standalone MCP Registry discovery is no longer part of Supermarket.
 
 ## Contributing
 
@@ -130,6 +176,7 @@ metadata:
     name: Your Name
     email: you@example.com
   tags: [example]
+  category: productivity
   homepage: https://example.com
 ---
 
@@ -147,7 +194,9 @@ bun run registry:publish -- --registry memoh
 bun run dev
 ```
 
-Commit the Registry `release.lock.json` and any changed `plugins/*/release.lock.json` files with the Skill source. `registry:lock -- --registry <id>` rebuilds Plugin locks because a changed Skill may produce a new Plugin release. Skill archives include regular files under the Skill root, including binary assets; `.git` and `node_modules` directories are ignored. An archive is limited to 1,000 files, 5 MiB of regular-file content, 5 MiB of serialized tar data, and 6 MiB compressed. Artifact descriptors contain the immutable digest and compressed size; the client enforces file and decompression limits while installing. A Plugin release may reference at most 128 Skills with an aggregate compressed size limit of 128 MiB.
+On a new checkout, run the full `bun run registry:publish` once before using partial publication. Commit the Registry `release.lock.json` and any changed `plugins/*/release.lock.json` files with the Skill source. `registry:lock -- --registry <id>` rebuilds Plugin locks because a changed Skill may produce a new Plugin release.
+
+Skill archives include regular files under the Skill root, including binary assets; `.git` and `node_modules` directories are ignored. An archive is limited to 1,000 files, 5 MiB of regular-file content, 5 MiB of serialized TAR data, and 6 MiB compressed. Every Artifact descriptor includes the immutable digest, compressed `size`, regular-file `uncompressed_size`, serialized `archive_size`, and `file_count`; clients must reject descriptors that omit those extraction fields. A Plugin release may reference at most 128 Skills, with aggregate limits of 128 MiB each for compressed bytes, regular-file body bytes, and serialized TAR bytes, plus 10,000 files.
 
 ### Adding a Registry
 
@@ -175,13 +224,17 @@ bun run registry:lock -- --registry example
 bun run registry:validate
 ```
 
-Supported sources are `local` and HTTPS `git`; adapters are `skill_directory`, `skill_package_directory`, and `codex_marketplace_skills`. `skill_package_directory` reads `<package-id>/skills/<skill-id>` from its source root. A local source path is relative to the directory containing its `registry.yaml`. A Git source must pin an exact commit in `revision`; optional `tracking_ref` opts it into upstream update checks. `catalog_path` belongs only to the `codex_marketplace_skills` Adapter and is resolved from that Adapter's source root. Git sources use a filtered shallow fetch and root-anchored sparse checkout for the Adapter paths. Adapter reads enforce Registry-wide limits of 10,000 Skills, 100,000 source files, 512 MiB of source file bodies, 64 MiB of retained review text, and an 8 MiB Snapshot. Registry-producing commands build Registries sequentially, so those per-build bounds do not multiply with Registry count. Every enabled Registry must commit `release.lock.json`, whose `snapshot_revision` must equal the canonical Snapshot rebuilt from the approved source.
+Supported sources are `local` and HTTPS `git`; adapters are `skill_directory`, `skill_package_directory`, and `codex_marketplace_skills`. `skill_package_directory` reads `<package-id>/skills/<skill-id>` from its source root. A local source path is relative to the directory containing its `registry.yaml`. A Git source must pin an exact commit in `revision`; optional `tracking_ref` opts it into upstream update checks.
 
-The scheduled `Check Registry updates` GitHub workflow runs every 12 hours and resolves each configured `tracking_ref`. If every resolved commit already equals its approved `revision`, it makes no change and opens no PR. Each changed Registry gets its own candidate PR, so unrelated upstreams can be reviewed and approved independently. Candidate branches are named from the upstream revision, the base commit, and the complete candidate Git tree. The workflow never rewrites an existing candidate branch, repeated checks verify its exact parent and tree, and changed candidate bytes require a new PR. The PR groups changes by package and Skill, lists metadata and file changes, and includes bounded diffs for changed UTF-8 text files. Binary and larger files remain in the Artifact and are identified in the report by path, digest, size, and mode. It also lists affected Plugin releases and their old/new Registry Snapshot and Skill Artifact descriptors, then commits those Plugin locks in the same PR. The PR body is capped at 60,000 characters at complete Skill boundaries, and every proposal uploads the untruncated report as a 90-day workflow Artifact. The update workflow explicitly dispatches CI against the immutable candidate branch because PRs created with `GITHUB_TOKEN` do not emit another `pull_request` workflow event. CI rebuilds all candidates and requires every revision to match its lock before publication. Merging that PR is the single explicit approval step for the Registry and affected Plugins. The schedule is configured in `.github/workflows/registry-updates.yml`, and a manual run can optionally select one Registry.
+`codex_marketplace_skills` reads `catalog_path` from its source root and supports only Marketplace Packages whose source is a local path in that same checkout. Each Package must contain `.codex-plugin/plugin.json` and declare one or more Skill paths. Packages that declare `apps`, `mcpServers`, or `hooks`, have no Skills, use another Package source type, or fail validation are skipped with explicit Registry diagnostics; Supermarket does not guess how to convert unsupported runtime components. An invalid Package is isolated so other valid Packages in the same Registry can still be published.
+
+Git sources use a filtered shallow fetch and root-anchored sparse checkout for the Adapter paths. Adapter reads enforce Registry-wide limits of 10,000 Skills, 100,000 source files, 512 MiB of source file bodies, 64 MiB of retained review text, and an 8 MiB Snapshot. Registry-producing commands build Registries sequentially, so those per-build bounds do not multiply with Registry count. Every enabled Registry must commit `release.lock.json`, whose `snapshot_revision` must equal the canonical Snapshot rebuilt from the approved source.
+
+The scheduled `Check Registry updates` workflow runs every 12 hours and opens one review PR for each changed Registry. The PR and Actions Summary include concrete errors for skipped Packages. Merging the PR approves the updated Registry and affected Plugin locks. A manual run can optionally select one Registry.
 
 If publisher, Adapter, or archive code intentionally changes the generated Snapshot without changing the pinned upstream commit, regenerate the lock with `bun run registry:lock -- --registry <id>` and review its revision change in the same PR.
 
-After an approved change reaches `main`, the `Publish approved Registries` workflow first requires the checked-out SHA to still be the current `main`, then runs tests, type checking, Registry validation, and the Cloudflare build against that merge SHA. It rechecks `main` immediately before the remote write, so a workflow superseded during validation exits before publishing. Every `main` push triggers this idempotent workflow; this ensures a non-Registry commit that supersedes a queued Registry publication also validates and publishes the latest approved state. Only after those checks pass does the Publisher rebuild the approved revisions once for upload, write digest-addressed Skill archives and icons, then immutable Snapshots and their state pointers. It next uploads Plugin Bundles and immutable release descriptors before switching each Plugin state pointer. The API Worker remains read-only. Historical immutable objects are retained; reference-aware GC is intentionally deferred until Memoh can provide authoritative Artifact references.
+After an approved change reaches `main`, the `Publish approved Registries` workflow validates and publishes the approved Registry and Plugin releases to R2. The API Worker remains read-only.
 
 Test and production bucket names have a single source of truth: the matching environments in `workers/api/wrangler.jsonc`. Before the first deployment, authenticate Wrangler, enable R2, and create those buckets:
 
@@ -193,8 +246,6 @@ bunx wrangler r2 bucket create memoh-supermarket
 
 Bucket creation is a one-time operation; use `bunx wrangler r2 bucket list` to check whether they already exist. Configure GitHub environments named `test` and `production`, each with bucket-scoped `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` secrets, plus `CLOUDFLARE_ACCOUNT_ID`. Protect the `production` environment if publication should require an additional approval.
 
-Repository governance is part of the publication boundary. The workflow alone does not prove that a `main` commit came from an approved PR. Allow GitHub Actions to create pull requests and dispatch workflows, require the CI check and at least one human review on `main`, require branches to be up to date or use a merge queue, dismiss stale approvals when a candidate commit changes, require approval of the latest push, restrict updates to `automation/registry-update/**`, and prohibit bypasses. These controls are required for the Registry PR to be the human approval boundary. Closing an immutable candidate PR records rejection; reopen that PR explicitly to reconsider the same candidate.
-
 Deploy the read-only API Worker with:
 
 ```bash
@@ -205,7 +256,7 @@ bun run registry:api:deploy:test
 bun run registry:api:deploy:production
 ```
 
-Use the `Publish approved Registries` workflow with the `test` environment to test publication without touching production. For a local build, `bun run registry:publish` writes to `.data/registries`. The local backend uses atomic file replacement and streaming reads, but intentionally assumes a single publisher and does not emulate R2 ETag compare-and-swap; use the R2-backed tests or test environment to verify concurrent publication behavior.
+Use the `Publish approved Registries` workflow with the `test` environment to test publication without touching production. For a local build, `bun run registry:publish` writes to `.data/registries`, or to `REGISTRY_DATA_DIR` when configured.
 
 ## License
 
