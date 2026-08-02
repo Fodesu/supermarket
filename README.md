@@ -38,6 +38,7 @@ Base URL: `https://supermarket.memoh.ai`
 |--------|------|-------------|
 | GET | `/api/plugins` | List Plugins. Query: `q`, `tag`, `page`, `limit` |
 | GET | `/api/plugins/:id` | Get Plugin details |
+| GET | `/api/plugins/:id/releases/:revision` | Get an immutable Plugin release descriptor |
 | GET | `/api/plugins/:id/download` | Download Plugin package (`plugin.yaml` plus allowed bundle assets) |
 | GET | `/api/artifacts/plugin/:digest` | Download an immutable Plugin package |
 | GET | `/api/skills` | Search enabled Registry Skills. Query: `q`, `registry`, `package`, `category`, `tag`, `os`, `page`, `limit`, `sort` |
