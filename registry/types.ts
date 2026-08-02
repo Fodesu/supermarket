@@ -187,3 +187,28 @@ export interface SkillCategorySummary {
   count: number
   registries: Array<{ id: string; count: number }>
 }
+
+export interface SkillPackageCategorySummary {
+  id: string
+  name: string
+  skill_count: number
+}
+
+export interface SkillPackageSummary {
+  schema_version: '1'
+  registry_id: string
+  registry_priority: number
+  package_id: string
+  name: string
+  description: string
+  tags: string[]
+  categories: SkillPackageCategorySummary[]
+  skill_count: number
+  icon?: SkillIcon
+}
+
+export interface SkillPackageDescriptor extends Omit<SkillPackageSummary, 'registry_priority'> {
+  revision: string
+  source_revision: string
+  skills: CatalogSkill[]
+}
