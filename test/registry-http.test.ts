@@ -31,9 +31,12 @@ afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recur
 function inMemoryBucket() {
   const objects = new Map<string, Uint8Array>()
   const versions = new Map<string, string>()
+  const gets = new Map<string, number>()
   let version = 0
   return {
+    gets,
     async get(key: string) {
+      gets.set(key, (gets.get(key) ?? 0) + 1)
       const value = objects.get(key)
       return value ? {
         size: value.length, body: new Blob([value.slice().buffer as ArrayBuffer]).stream(),
@@ -233,11 +236,26 @@ describe('Marketplace HTTP protocol', () => {
     expect(immutablePluginDownload.headers.get('x-content-sha256')).toBe(pluginArtifact.digest)
     expect(await sha256(new Uint8Array(await immutablePluginDownload.arrayBuffer())))
       .toBe(pluginArtifact.digest)
+    const pluginArtifactKey = `plugin-artifacts/${pluginArtifact.digest}.tar.gz`
+    const readsBeforeImmutable304 = bucket.gets.get(pluginArtifactKey)
+    const immutableNotModified = await app.fetch(new Request(
+      `http://local/api/artifacts/plugin/${pluginArtifact.digest}`,
+      { headers: { 'if-none-match': `"${pluginArtifact.digest}"` } },
+    ))
+    expect(immutableNotModified.status).toBe(304)
+    expect(bucket.gets.get(pluginArtifactKey)).toBe(readsBeforeImmutable304)
 
     const legacyPluginDownload = await app.fetch(new Request('http://local/api/plugins/demo-plugin/download'))
     expect(legacyPluginDownload.headers.get('cache-control')).toBe('no-cache')
     expect(legacyPluginDownload.headers.get('x-plugin-release')).toBe(pluginRevision)
     const pluginFiles = await parseGzipTarArchive(new Uint8Array(await legacyPluginDownload.arrayBuffer()))
     expect([...pluginFiles.keys()]).toEqual(['demo-plugin/plugin.yaml'])
+    const readsBeforeLegacy304 = bucket.gets.get(pluginArtifactKey)
+    const legacyNotModified = await app.fetch(new Request(
+      'http://local/api/plugins/demo-plugin/download',
+      { headers: { 'if-none-match': `"${pluginArtifact.digest}"` } },
+    ))
+    expect(legacyNotModified.status).toBe(304)
+    expect(bucket.gets.get(pluginArtifactKey)).toBe(readsBeforeLegacy304)
   })
 })
