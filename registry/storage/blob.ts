@@ -13,7 +13,6 @@ import { sha256 } from '../digest'
 import { registrySnapshotRevision, sameBytes, serializeRegistrySnapshot } from '../snapshot'
 import {
   type BlobBackend,
-  conditionalBlobBackend,
   type SkillRegistryStateRead,
   type SkillRegistryStore,
   streamingBlobBackend,
@@ -26,6 +25,7 @@ import {
   verifiedAssetStream,
 } from './validation'
 import { putImmutableObject } from './immutable'
+import { VersionedJSONState } from './versioned-state'
 import { MAX_REGISTRY_SNAPSHOT_BYTES } from '../budget'
 
 const encoder = new TextEncoder()
@@ -70,12 +70,19 @@ async function readJSON<T>(backend: BlobBackend, key: string, maxBytes: number):
 }
 
 export class BlobSkillRegistryStore implements SkillRegistryStore {
-  private readonly conditionalBackend
   private readonly streamingBackend
+  private readonly stateStore
 
   constructor(protected readonly backend: BlobBackend) {
-    this.conditionalBackend = conditionalBlobBackend(backend)
     this.streamingBackend = streamingBlobBackend(backend)
+    this.stateStore = new VersionedJSONState(backend, {
+      label: 'Registry state',
+      maxBytes: MAX_REGISTRY_STATE_BYTES,
+      normalizeID: (id) => assertRegistryID(id, 'registry ID'),
+      stateID: (state: SkillRegistryState) => state.definition.id,
+      key: (id) => `skill-registries/${id}/state.json`,
+      validate: validateState,
+    })
   }
 
   async listRegistryIDs(): Promise<string[]> {
@@ -94,38 +101,11 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
   // concurrent publish read the version here first, then pass it back to
   // putState so a stale write is rejected instead of silently clobbering.
   async getStateWithVersion(registryID: string): Promise<SkillRegistryStateRead> {
-    const id = assertRegistryID(registryID, 'registry ID')
-    const key = `skill-registries/${id}/state.json`
-    if (this.conditionalBackend) {
-      const result = await this.conditionalBackend.getWithVersion(key)
-      if (!result) return { state: null, versioning: 'conditional' as const, version: null }
-      if (result.value.length > MAX_REGISTRY_STATE_BYTES) {
-        throw new Error(`Stored JSON object exceeds ${MAX_REGISTRY_STATE_BYTES} bytes: ${key}`)
-      }
-      const state = JSON.parse(decoder.decode(result.value)) as SkillRegistryState
-      validateState(state, id)
-      return { state, versioning: 'conditional' as const, version: result.version }
-    }
-    const state = await readJSON<SkillRegistryState>(this.backend, key, MAX_REGISTRY_STATE_BYTES)
-    if (state) validateState(state, id)
-    return { state, versioning: 'none' as const }
+    return this.stateStore.get(registryID)
   }
 
   async putState(state: SkillRegistryState, expectedVersion?: string | null) {
-    const id = assertRegistryID(state.definition.id, 'registry ID')
-    validateState(state, id)
-    const bytes = jsonBytes(state)
-    if (bytes.length > MAX_REGISTRY_STATE_BYTES) throw new Error(`Registry state exceeds ${MAX_REGISTRY_STATE_BYTES} bytes: ${id}`)
-    const key = `skill-registries/${id}/state.json`
-    if (expectedVersion !== undefined) {
-      if (!this.conditionalBackend) {
-        throw new Error(`Registry state backend does not support conditional writes: ${id}`)
-      }
-      const version = await this.conditionalBackend.putConditional(key, bytes, expectedVersion)
-      if (!version) throw new Error(`Registry state changed concurrently, refusing to overwrite: ${id}`)
-      return
-    }
-    await this.backend.put(key, bytes)
+    await this.stateStore.put(state, expectedVersion)
   }
 
   async getSnapshot(registryID: string, revision: string) {

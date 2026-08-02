@@ -39,9 +39,11 @@ export function conditionalBlobBackend(backend: BlobBackend) {
   return canReadVersion ? candidate as ConditionalBlobBackend : undefined
 }
 
-export type SkillRegistryStateRead =
-  | { state: SkillRegistryState | null; versioning: 'none' }
-  | { state: SkillRegistryState | null; versioning: 'conditional'; version: string | null }
+export type VersionedStateRead<State> =
+  | { state: State | null; versioning: 'none' }
+  | { state: State | null; versioning: 'conditional'; version: string | null }
+
+export type SkillRegistryStateRead = VersionedStateRead<SkillRegistryState>
 
 export interface SkillRegistryStore {
   listRegistryIDs(): Promise<string[]>

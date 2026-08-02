@@ -1,10 +1,10 @@
 import { sha256 } from '#registry/digest'
 import { assertIdentifier } from '#registry/definition'
 import {
-  conditionalBlobBackend,
   type StreamingBlobBackend,
 } from '#registry/storage/contracts'
 import { putImmutableObject } from '#registry/storage/immutable'
+import { VersionedJSONState } from '#registry/storage/versioned-state'
 import { assertDigest, verifiedAssetStream } from '#registry/storage/validation'
 import { MAX_PLUGIN_ARTIFACT_COMPRESSED_BYTES } from '../bundle'
 import {
@@ -17,14 +17,8 @@ import type {
 } from '../types'
 import type { PluginReleaseStateRead, PluginReleaseStore } from './contracts'
 
-const encoder = new TextEncoder()
-const decoder = new TextDecoder()
 const MAX_PLUGIN_STATE_BYTES = 64 * 1024
 const MAX_PLUGIN_RELEASE_BYTES = 2 * 1024 * 1024
-
-function jsonBytes(value: unknown): Uint8Array {
-  return encoder.encode(`${JSON.stringify(value, null, 2)}\n`)
-}
 
 function validateState(state: PluginReleaseState, pluginID: string) {
   if (!state || state.schema_version !== '1' || state.plugin_id !== pluginID
@@ -52,10 +46,17 @@ function validateArtifact(descriptor: PluginArtifactDescriptor, digest: string) 
 }
 
 export class BlobPluginReleaseStore implements PluginReleaseStore {
-  private readonly conditionalBackend
+  private readonly stateStore
 
   constructor(private readonly backend: StreamingBlobBackend) {
-    this.conditionalBackend = conditionalBlobBackend(backend)
+    this.stateStore = new VersionedJSONState(backend, {
+      label: 'Plugin state',
+      maxBytes: MAX_PLUGIN_STATE_BYTES,
+      normalizeID: (id) => assertIdentifier(id, 'plugin ID'),
+      stateID: (state: PluginReleaseState) => state.plugin_id,
+      key: (id) => `plugin-releases/${id}/state.json`,
+      validate: validateState,
+    })
   }
 
   async listPluginIDs() {
@@ -71,37 +72,11 @@ export class BlobPluginReleaseStore implements PluginReleaseStore {
   }
 
   async getStateWithVersion(pluginID: string): Promise<PluginReleaseStateRead> {
-    const id = assertIdentifier(pluginID, 'plugin ID')
-    const key = `plugin-releases/${id}/state.json`
-    if (this.conditionalBackend) {
-      const result = await this.conditionalBackend.getWithVersion(key)
-      if (!result) return { state: null, versioning: 'conditional' as const, version: null }
-      if (result.value.length > MAX_PLUGIN_STATE_BYTES) throw new Error(`Stored Plugin state exceeds ${MAX_PLUGIN_STATE_BYTES} bytes: ${id}`)
-      const state = JSON.parse(decoder.decode(result.value)) as PluginReleaseState
-      validateState(state, id)
-      return { state, versioning: 'conditional' as const, version: result.version }
-    }
-    const bytes = await this.backend.get(key)
-    if (!bytes) return { state: null, versioning: 'none' as const }
-    if (bytes.length > MAX_PLUGIN_STATE_BYTES) throw new Error(`Stored Plugin state exceeds ${MAX_PLUGIN_STATE_BYTES} bytes: ${id}`)
-    const state = JSON.parse(decoder.decode(bytes)) as PluginReleaseState
-    validateState(state, id)
-    return { state, versioning: 'none' as const }
+    return this.stateStore.get(pluginID)
   }
 
   async putState(state: PluginReleaseState, expectedVersion?: string | null) {
-    const id = assertIdentifier(state.plugin_id, 'plugin ID')
-    validateState(state, id)
-    const bytes = jsonBytes(state)
-    if (bytes.length > MAX_PLUGIN_STATE_BYTES) throw new Error(`Plugin state exceeds ${MAX_PLUGIN_STATE_BYTES} bytes: ${id}`)
-    const key = `plugin-releases/${id}/state.json`
-    if (expectedVersion !== undefined) {
-      if (!this.conditionalBackend) throw new Error(`Plugin state backend does not support conditional writes: ${id}`)
-      const version = await this.conditionalBackend.putConditional(key, bytes, expectedVersion)
-      if (!version) throw new Error(`Plugin state changed concurrently, refusing to overwrite: ${id}`)
-      return
-    }
-    await this.backend.put(key, bytes)
+    await this.stateStore.put(state, expectedVersion)
   }
 
   private async readReleaseBytes(pluginID: string, revision: string) {
