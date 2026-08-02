@@ -18,7 +18,7 @@ interface CurrentPluginRelease {
 
 let localStore: Promise<PluginReleaseStore> | undefined
 const r2Stores = new WeakMap<object, PluginReleaseStore>()
-const releaseCaches = new WeakMap<object, Map<string, Promise<PluginRelease | null>>>()
+const releaseCaches = new WeakMap<object, Map<string, PluginRelease>>()
 const maxCachedReleases = 64
 
 function releaseCache(store: PluginReleaseStore) {
@@ -30,7 +30,7 @@ function releaseCache(store: PluginReleaseStore) {
   return cache
 }
 
-export function cachedRelease(store: PluginReleaseStore, pluginID: string, revision: string) {
+export async function cachedRelease(store: PluginReleaseStore, pluginID: string, revision: string) {
   const cache = releaseCache(store)
   const key = `${pluginID}/${revision}`
   const current = cache.get(key)
@@ -39,13 +39,8 @@ export function cachedRelease(store: PluginReleaseStore, pluginID: string, revis
     cache.set(key, current)
     return current
   }
-  const value = store.getRelease(pluginID, revision).then((release) => {
-    if (!release && cache.get(key) === value) cache.delete(key)
-    return release
-  }, (error) => {
-    if (cache.get(key) === value) cache.delete(key)
-    throw error
-  })
+  const value = await store.getRelease(pluginID, revision)
+  if (!value) return null
   cache.set(key, value)
   while (cache.size > maxCachedReleases) cache.delete(cache.keys().next().value!)
   return value
@@ -152,14 +147,14 @@ export async function getPluginReleaseBytes(
     .then((store) => store.getReleaseBytes(pluginID, revision))
 }
 
-export async function getPluginDownload(event: RuntimeEvent, pluginID: string) {
+export async function getPluginDownloadDescriptor(event: RuntimeEvent, pluginID: string) {
   const store = await getRuntimePluginReleaseStore(event)
   const current = await currentPluginRelease(store, pluginID)
   if (!current) return undefined
-  const digest = current.release.artifact.digest
-  const artifact = await store.getArtifactStream(digest)
-  if (!artifact) throw new Error(`Current Plugin Artifact is missing: ${pluginID}/${digest}`)
-  return { ...artifact, revision: current.state.current_release! }
+  return {
+    descriptor: current.release.artifact,
+    revision: current.state.current_release!,
+  }
 }
 
 export async function getAllPluginTags(event: RuntimeEvent): Promise<string[]> {
