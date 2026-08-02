@@ -12,6 +12,8 @@ import pluginDetail from '../server/api/plugins/[id].get'
 import pluginReleaseHandler from '../server/api/plugins/[id]/releases/[revision].get'
 import plugins from '../server/api/plugins/index.get'
 import registrySkill from '../server/api/registries/[id]/packages/[packageId]/skills/[skillId].get'
+import registryCategories from '../server/api/registries/[id]/categories.get'
+import registrySkills from '../server/api/registries/[id]/skills/index.get'
 import registries from '../server/api/registries/index.get'
 import skills from '../server/api/skills/index.get'
 import type { CatalogSkill, SkillArtifactDescriptor, SkillRegistryDefinition, SkillRegistrySnapshot } from '#registry/types'
@@ -157,6 +159,8 @@ describe('Marketplace HTTP protocol', () => {
     app.use((event) => { (event.req as any).runtime = { cloudflare: { env: { SKILL_REGISTRY_BUCKET: bucket } } } })
     app.get('/api/registries', registries)
     app.get('/api/skills', skills)
+    app.get('/api/registries/:id/categories', registryCategories)
+    app.get('/api/registries/:id/skills', registrySkills)
     app.get('/api/registries/:id/packages/:packageId/skills/:skillId', registrySkill)
     app.get('/api/artifacts/skill/:digest', artifactDownload)
     app.get('/api/artifacts/icon/:digest', skillIcon)
@@ -176,6 +180,23 @@ describe('Marketplace HTTP protocol', () => {
       registry_id: 'example', package_id: 'tools', skill_id: 'demo',
     })
     expect((await app.fetch(new Request('http://local/api/skills?registry=BAD'))).status).toBe(400)
+
+    const stateKey = 'skill-registries/example/state.json'
+    const stateReadsBeforeScopedSkills = bucket.gets.get(stateKey) ?? 0
+    const scopedSkills = await app.fetch(new Request('http://local/api/registries/example/skills?q=demo'))
+    expect(scopedSkills.status).toBe(200)
+    expect((await scopedSkills.json() as any).total).toBe(1)
+    expect(bucket.gets.get(stateKey)).toBe(stateReadsBeforeScopedSkills + 1)
+
+    const stateReadsBeforeCategories = bucket.gets.get(stateKey) ?? 0
+    const categoriesResponse = await app.fetch(new Request('http://local/api/registries/example/categories'))
+    expect(categoriesResponse.status).toBe(200)
+    expect((await categoriesResponse.json() as any).data).toEqual([{
+      id: 'developer-tools', name: 'Developer Tools', count: 1,
+      registries: [{ id: 'example', count: 1 }],
+    }])
+    expect(bucket.gets.get(stateKey)).toBe(stateReadsBeforeCategories + 1)
+    expect((await app.fetch(new Request('http://local/api/registries/missing/skills'))).status).toBe(404)
 
     const detailResponse = await app.fetch(new Request('http://local/api/registries/example/packages/tools/skills/demo'))
     const detail = await detailResponse.json() as any
@@ -255,7 +276,12 @@ describe('Marketplace HTTP protocol', () => {
       { headers: { 'if-none-match': `"${pluginArtifact.digest}"` } },
     ))
     expect(immutableNotModified.status).toBe(304)
-    expect(bucket.gets.get(pluginArtifactKey)).toBe(readsBeforeImmutable304)
+    expect(bucket.gets.get(pluginArtifactKey)).toBe((readsBeforeImmutable304 ?? 0) + 1)
+    const missingDigest = '0'.repeat(64)
+    expect((await app.fetch(new Request(
+      `http://local/api/artifacts/plugin/${missingDigest}`,
+      { headers: { 'if-none-match': `"${missingDigest}"` } },
+    ))).status).toBe(404)
 
     const legacyPluginDownload = await app.fetch(new Request('http://local/api/plugins/demo-plugin/download'))
     expect(legacyPluginDownload.headers.get('cache-control')).toBe('no-cache')
