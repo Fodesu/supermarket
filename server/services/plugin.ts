@@ -6,18 +6,15 @@ import type {
   PluginReleaseState,
   PublishedPluginEntry,
 } from '#plugin/types'
+import { createRuntimeStoreResolver, type RuntimeStoreEvent } from './runtime-store'
 
-interface RuntimeEvent {
-  req: { runtime?: unknown }
-}
+type RuntimeEvent = RuntimeStoreEvent
 
 interface CurrentPluginRelease {
   state: PluginReleaseState
   release: PluginRelease
 }
 
-let localStore: Promise<PluginReleaseStore> | undefined
-const r2Stores = new WeakMap<object, PluginReleaseStore>()
 const releaseCaches = new WeakMap<object, Map<string, PluginRelease>>()
 const maxCachedReleases = 64
 
@@ -46,24 +43,11 @@ export async function cachedRelease(store: PluginReleaseStore, pluginID: string,
   return value
 }
 
-export async function getRuntimePluginReleaseStore(event?: RuntimeEvent): Promise<PluginReleaseStore> {
-  const runtime = event?.req.runtime as { cloudflare?: { env?: Partial<ApiEnv> } } | undefined
-  const cloudflare = runtime?.cloudflare
-  if (cloudflare) {
-    const bucket = cloudflare.env?.SKILL_REGISTRY_BUCKET
-    if (!bucket || typeof bucket !== 'object') {
-      throw new Error('Cloudflare runtime is missing the SKILL_REGISTRY_BUCKET R2 binding')
-    }
-    let store = r2Stores.get(bucket)
-    if (!store) {
-      store = new BlobPluginReleaseStore(new R2BlobBackend(bucket))
-      r2Stores.set(bucket, store)
-    }
-    return store
-  }
-  localStore ??= import('#plugin/storage/local').then(({ LocalPluginReleaseStore }) => new LocalPluginReleaseStore())
-  return localStore
-}
+export const getRuntimePluginReleaseStore = createRuntimeStoreResolver<PluginReleaseStore>({
+  remote: (bucket) => new BlobPluginReleaseStore(new R2BlobBackend(bucket)),
+  local: () => import('#plugin/storage/local')
+    .then(({ LocalPluginReleaseStore }) => new LocalPluginReleaseStore()),
+})
 
 async function currentPluginRelease(
   store: PluginReleaseStore,
