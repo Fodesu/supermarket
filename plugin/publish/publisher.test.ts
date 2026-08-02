@@ -33,7 +33,7 @@ async function candidate(version = '1.0.0'): Promise<PluginReleaseCandidate> {
   const releaseBytes = serializePluginRelease(release)
   return {
     plugin_id: 'example', revision: await pluginReleaseRevision(releaseBytes),
-    release, artifact: { descriptor, bytes },
+    release, artifact_bytes: bytes,
   }
 }
 
@@ -90,10 +90,7 @@ describe('PluginReleasePublisher', () => {
 
     await expect(publisher.publish({
       ...approved,
-      artifact: {
-        ...approved.artifact,
-        bytes: new TextEncoder().encode('different artifact'),
-      },
+      artifact_bytes: new TextEncoder().encode('different artifact'),
     }, lock)).rejects.toThrow('Artifact metadata does not match its content')
     expect(await store.getState('example')).toBeNull()
   })

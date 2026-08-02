@@ -8,7 +8,7 @@ import { sha256 } from '#registry/digest'
 import { assertDigest } from '#registry/storage/validation'
 import { isSkillRuntimeOS, skillInstallID } from '#registry/definition'
 import { sameBytes } from '#registry/snapshot'
-import { packagePlugin, type PackagedPlugin } from './artifact'
+import { packagePlugin } from './artifact'
 import { MAX_PLUGIN_ARTIFACT_COMPRESSED_BYTES } from './bundle'
 import { parsePluginManifest, pluginSkillReferenceIdentity } from './manifest'
 import { loadCommittedPlugins } from './repository'
@@ -35,7 +35,7 @@ export interface PluginReleaseCandidate {
   plugin_id: string
   revision: string
   release: PluginRelease
-  artifact: PackagedPlugin
+  artifact_bytes: Uint8Array
 }
 
 export function serializePluginRelease(release: PluginRelease): Uint8Array {
@@ -186,7 +186,7 @@ export async function buildPluginReleaseCandidates(
         plugin_id: plugin.id,
         revision: await pluginReleaseRevision(releaseBytes),
         release,
-        artifact,
+        artifact_bytes: artifact.bytes,
       })
     } catch (error) {
       failures.push(new Error(`${plugin.id}: ${error instanceof Error ? error.message : String(error)}`, { cause: error }))
