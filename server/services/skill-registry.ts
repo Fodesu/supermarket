@@ -160,12 +160,3 @@ export async function getRegistrySkillCategories(event: RuntimeEvent, registryID
   if (snapshot === undefined) return undefined
   return summarizeSkillCategories(snapshot ? catalogSkillsFromSnapshot(snapshot) : [])
 }
-
-export async function getRegistrySkillTags(event: RuntimeEvent) {
-  const tags = new Set<string>()
-  const store = await getRuntimeSkillRegistryStore(event)
-  for (const skill of (await getEnabledSkillRegistrySnapshots(store)).flatMap(catalogSkillsFromSnapshot)) {
-    for (const tag of skill.tags) tags.add(tag)
-  }
-  return [...tags].sort()
-}

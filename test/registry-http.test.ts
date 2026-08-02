@@ -7,7 +7,6 @@ import { extractSkillArchive, parseGzipTarArchive } from '../client/archive'
 import artifactDownload from '../server/api/artifacts/skill/[digest].get'
 import skillIcon from '../server/api/artifacts/icon/[digest].get'
 import pluginArtifactDownload from '../server/api/artifacts/plugin/[digest].get'
-import pluginDownload from '../server/api/plugins/[id]/download.get'
 import pluginDetail from '../server/api/plugins/[id].get'
 import pluginReleaseHandler from '../server/api/plugins/[id]/releases/[revision].get'
 import plugins from '../server/api/plugins/index.get'
@@ -165,7 +164,6 @@ describe('Marketplace HTTP protocol', () => {
     app.get('/api/artifacts/skill/:digest', artifactDownload)
     app.get('/api/artifacts/icon/:digest', skillIcon)
     app.get('/api/plugins', plugins)
-    app.get('/api/plugins/:id/download', pluginDownload)
     app.get('/api/plugins/:id', pluginDetail)
     app.get('/api/plugins/:id/releases/:revision', pluginReleaseHandler)
     app.get('/api/artifacts/plugin/:digest', pluginArtifactDownload)
@@ -283,17 +281,5 @@ describe('Marketplace HTTP protocol', () => {
       { headers: { 'if-none-match': `"${missingDigest}"` } },
     ))).status).toBe(404)
 
-    const legacyPluginDownload = await app.fetch(new Request('http://local/api/plugins/demo-plugin/download'))
-    expect(legacyPluginDownload.headers.get('cache-control')).toBe('no-cache')
-    expect(legacyPluginDownload.headers.get('x-plugin-release')).toBe(pluginRevision)
-    const pluginFiles = await parseGzipTarArchive(new Uint8Array(await legacyPluginDownload.arrayBuffer()))
-    expect([...pluginFiles.keys()]).toEqual(['demo-plugin/plugin.yaml'])
-    const readsBeforeLegacy304 = bucket.gets.get(pluginArtifactKey)
-    const legacyNotModified = await app.fetch(new Request(
-      'http://local/api/plugins/demo-plugin/download',
-      { headers: { 'if-none-match': `"${pluginArtifact.digest}"` } },
-    ))
-    expect(legacyNotModified.status).toBe(304)
-    expect(bucket.gets.get(pluginArtifactKey)).toBe(readsBeforeLegacy304)
   })
 })

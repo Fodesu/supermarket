@@ -130,21 +130,3 @@ export async function getPluginReleaseBytes(
   return getRuntimePluginReleaseStore(event)
     .then((store) => store.getReleaseBytes(pluginID, revision))
 }
-
-export async function getPluginDownloadDescriptor(event: RuntimeEvent, pluginID: string) {
-  const store = await getRuntimePluginReleaseStore(event)
-  const current = await currentPluginRelease(store, pluginID)
-  if (!current) return undefined
-  return {
-    descriptor: current.release.artifact,
-    revision: current.state.current_release!,
-  }
-}
-
-export async function getAllPluginTags(event: RuntimeEvent): Promise<string[]> {
-  const tags = new Set<string>()
-  for (const current of await allCurrentPlugins(await getRuntimePluginReleaseStore(event))) {
-    for (const tag of current.release.plugin.tags ?? []) tags.add(tag)
-  }
-  return [...tags].sort()
-}
