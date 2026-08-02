@@ -90,7 +90,9 @@ export class SkillRegistryPublisher {
     }
 
     const lock = requireReleaseLock(definition, releaseLock)
-    const candidate = await buildSkillRegistryCandidate(definition, this.projectRoot, this.onProgress)
+    const candidate = await buildSkillRegistryCandidate(definition, this.projectRoot, {
+      onProgress: this.onProgress,
+    })
     assertReleaseCandidate(definition, lock, candidate.revision)
     if (previousState?.current_snapshot === candidate.revision) {
       if (!sameDefinition(previousState.definition, definition)) {

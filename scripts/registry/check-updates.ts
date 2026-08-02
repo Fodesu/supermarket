@@ -196,7 +196,9 @@ async function prepareRegistryUpdate(input: {
   >> = []
   let approved: RegistryReviewCandidate | undefined
   for (const item of definitions.filter((candidate) => candidate.enabled)) {
-    const built = await buildSkillRegistryCandidate(item, input.projectRoot)
+    const built = await buildSkillRegistryCandidate(item, input.projectRoot, {
+      includeReview: item.id === definition.id,
+    })
     approvedCandidates.push({
       definition: built.definition,
       revision: built.revision,
@@ -209,7 +211,9 @@ async function prepareRegistryUpdate(input: {
   }
   if (!approved) throw new Error(`${input.registry}: Registry is disabled`)
   const lock = await loadRegistryReleaseLock(input.projectRoot, definition)
-  const builtCandidate = await buildSkillRegistryCandidate(candidateDefinition, input.projectRoot)
+  const builtCandidate = await buildSkillRegistryCandidate(candidateDefinition, input.projectRoot, {
+    includeReview: true,
+  })
   const candidate = {
     definition: builtCandidate.definition,
     revision: builtCandidate.revision,
