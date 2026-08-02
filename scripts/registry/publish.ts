@@ -120,9 +120,11 @@ export async function publishSkillRegistries(input: {
     publish(
       definition: SkillRegistryDefinition,
       lock?: RegistryReleaseLock,
+      candidate?: SkillRegistryCandidate,
     ): ReturnType<SkillRegistryPublisher['publish']>
   }
   locks?: ReadonlyMap<string, RegistryReleaseLock>
+  candidates?: ReadonlyMap<string, SkillRegistryCandidate>
   knownRegistryIDs?: Iterable<string>
 }) {
   const results = []
@@ -132,6 +134,7 @@ export async function publishSkillRegistries(input: {
       results.push(await input.publisher.publish(
         definition,
         input.locks?.get(definition.id),
+        input.candidates?.get(definition.id),
       ))
     } catch (error) {
       failures.push({ registry: definition.id, error })
@@ -227,12 +230,14 @@ async function preflightPartialPublication(input: {
   store: SkillRegistryStore
 }) {
   const candidates: Array<Pick<SkillRegistryCandidate, 'definition' | 'revision' | 'snapshot'>> = []
+  let selectedCandidate: SkillRegistryCandidate | undefined
   for (const definition of input.definitions.filter((item) => item.enabled)) {
     const [candidate, lock] = await Promise.all([
       buildSkillRegistryCandidate(definition, input.projectRoot),
       loadRegistryReleaseLock(input.projectRoot, definition),
     ])
     assertReleaseCandidate(definition, lock, candidate.revision)
+    if (definition.id === input.selectedRegistry) selectedCandidate = candidate
     candidates.push({
       definition: candidate.definition,
       revision: candidate.revision,
@@ -252,6 +257,7 @@ async function preflightPartialPublication(input: {
     const lock = await loadPluginReleaseLock(input.projectRoot, plugin.plugin_id)
     assertPluginReleaseCandidate(plugin.plugin_id, lock, plugin.revision)
   }))
+  return selectedCandidate
 }
 
 if (import.meta.main) {
@@ -286,8 +292,9 @@ if (import.meta.main) {
     if (!definition.enabled) continue
     locks.set(definition.id, await loadRegistryReleaseLock(projectRoot, definition))
   }
+  let prebuiltCandidate: SkillRegistryCandidate | undefined
   if (registryID && definitions.length) {
-    await preflightPartialPublication({
+    prebuiltCandidate = await preflightPartialPublication({
       projectRoot,
       selectedRegistry: registryID,
       definitions: loaded.definitions,
@@ -299,6 +306,9 @@ if (import.meta.main) {
     store: stores.skills,
     publisher: new SkillRegistryPublisher(stores.skills, projectRoot, createSkillRegistryProgressRenderer()),
     locks,
+    candidates: prebuiltCandidate
+      ? new Map([[prebuiltCandidate.definition.id, prebuiltCandidate]])
+      : undefined,
     knownRegistryIDs: [
       ...loaded.definitions.map((definition) => definition.id),
       ...loaded.failures.map((failure) => failure.registry),

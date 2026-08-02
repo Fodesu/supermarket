@@ -119,6 +119,23 @@ describe('SkillRegistryPublisher', () => {
     expect(await readdir(dataRoot)).toEqual([])
   })
 
+  test('publishes an approved prebuilt candidate without rebuilding its source', async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'registry-prebuilt-project-'))
+    const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'registry-prebuilt-data-'))
+    roots.push(projectRoot, dataRoot)
+    await writeSkill(projectRoot, 'Approved content')
+    const candidate = await buildSkillRegistryCandidate(definition, projectRoot)
+    const lock = { snapshot_revision: candidate.revision }
+    await writeFile(path.join(projectRoot, 'registries/memoh/skills/alpha/SKILL.md'), '# invalid')
+
+    const store = new LocalSkillRegistryStore(dataRoot)
+    const publisher = new SkillRegistryPublisher(store, projectRoot)
+    await expect(publisher.publish(definition, lock, candidate)).resolves.toMatchObject({
+      revision: candidate.revision,
+    })
+    expect((await store.getState('memoh'))?.current_snapshot).toBe(candidate.revision)
+  })
+
   test('requires a release lock before publishing an enabled Registry', async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'registry-git-approval-project-'))
     const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'registry-git-approval-data-'))
