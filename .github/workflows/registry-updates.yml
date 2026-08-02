@@ -75,13 +75,6 @@ jobs:
             --report "$RUNNER_TEMP/registry-update.md" \
             --full-report "$RUNNER_TEMP/registry-update-full.md" \
             --full-report-url "$FULL_REPORT_URL"
-      - name: Upload full review report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: registry-update-${{ matrix.registry }}-${{ matrix.candidate_revision }}
-          path: ${{ runner.temp }}/registry-update-full.md
-          if-no-files-found: error
-          retention-days: 90
       - id: candidate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -107,7 +100,6 @@ jobs:
           base_sha="$(git rev-parse HEAD)"
           candidate_tree="$(git write-tree)"
           branch="automation/registry-update/$REGISTRY/$CANDIDATE_REVISION-${base_sha:0:12}-${candidate_tree:0:12}"
-          title="chore(registry): review $REGISTRY ${CANDIDATE_REVISION:0:12}"
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
 
           if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
@@ -119,16 +111,11 @@ jobs:
               echo "Immutable candidate branch does not match its base and complete tree: $branch" >&2
               exit 1
             fi
-            echo "head_sha=$remote_commit" >> "$GITHUB_OUTPUT"
             existing_number="$(gh pr list --head "$branch" --state all --json number --jq '.[0].number // empty')"
             existing_state="$(gh pr list --head "$branch" --state all --json state --jq '.[0].state // empty')"
             case "$existing_state" in
               "")
-                gh pr create \
-                  --base main \
-                  --head "$branch" \
-                  --title "$title" \
-                  --body-file "$RUNNER_TEMP/registry-update.md"
+                echo "create_pr=true" >> "$GITHUB_OUTPUT"
                 echo "verify=true" >> "$GITHUB_OUTPUT"
                 ;;
               OPEN)
@@ -156,12 +143,28 @@ jobs:
           git switch -c "$branch"
           git commit -m "chore(registry): propose $REGISTRY revision"
           git push origin "$branch"
-          echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "create_pr=true" >> "$GITHUB_OUTPUT"
           echo "verify=true" >> "$GITHUB_OUTPUT"
+      - name: Upload full review report
+        if: steps.candidate.outputs.create_pr == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: registry-update-${{ matrix.registry }}-${{ matrix.candidate_revision }}
+          path: ${{ runner.temp }}/registry-update-full.md
+          if-no-files-found: error
+          retention-days: 90
+      - name: Create candidate PR
+        if: steps.candidate.outputs.create_pr == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.candidate.outputs.branch }}
+          REGISTRY: ${{ matrix.registry }}
+          CANDIDATE_REVISION: ${{ matrix.candidate_revision }}
+        run: |
           gh pr create \
             --base main \
-            --head "$branch" \
-            --title "$title" \
+            --head "$BRANCH" \
+            --title "chore(registry): review $REGISTRY ${CANDIDATE_REVISION:0:12}" \
             --body-file "$RUNNER_TEMP/registry-update.md"
       - name: Verify immutable candidate
         if: steps.candidate.outputs.verify == 'true'
