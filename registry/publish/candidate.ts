@@ -66,6 +66,11 @@ export type SkillRegistryBuildProgress =
   | { type: 'source_ready'; registry: string; revision: string }
   | { type: 'scanned'; registry: string; skills: number; diagnostics: number }
 
+export interface SkillRegistryBuildOptions {
+  includeReview?: boolean
+  onProgress?: (progress: SkillRegistryBuildProgress) => void
+}
+
 function reviewText(bytes: Uint8Array, sourcePath: string, budget: RegistryBuildBudget) {
   if (bytes.length > maxReviewTextBytes) return undefined
   let text: string
@@ -89,8 +94,9 @@ function artifactDiagnosticMessage(error: unknown, sourceRoot: string) {
 export async function buildSkillRegistryCandidate(
   definition: SkillRegistryDefinition,
   projectRoot: string,
-  onProgress: (progress: SkillRegistryBuildProgress) => void = () => {},
+  options: SkillRegistryBuildOptions = {},
 ): Promise<SkillRegistryCandidate> {
+  const onProgress = options.onProgress ?? (() => {})
   const budget = new RegistryBuildBudget()
   onProgress({ type: 'source', registry: definition.id })
   const source = await materializeSkillRegistrySource(
@@ -183,21 +189,23 @@ export async function buildSkillRegistryCandidate(
           artifact: descriptor,
         }
         skills.push(skill)
-        const files: Record<string, CandidateFile> = Object.create(null) as Record<string, CandidateFile>
-        for (const [name, file] of Object.entries(candidate.files)
-          .sort(([left], [right]) => compareCanonicalText(left, right))) {
-          files[name] = {
-            digest: await sha256(file.bytes),
-            size: file.bytes.length,
-            mode: file.mode,
-            text: reviewText(file.bytes, `${candidate.package_id}/${candidate.skill_id}/${name}`, budget),
+        if (options.includeReview) {
+          const files: Record<string, CandidateFile> = Object.create(null) as Record<string, CandidateFile>
+          for (const [name, file] of Object.entries(candidate.files)
+            .sort(([left], [right]) => compareCanonicalText(left, right))) {
+            files[name] = {
+              digest: await sha256(file.bytes),
+              size: file.bytes.length,
+              mode: file.mode,
+              text: reviewText(file.bytes, `${candidate.package_id}/${candidate.skill_id}/${name}`, budget),
+            }
           }
+          review.set(`${candidate.package_id}/${candidate.skill_id}`, {
+            package_id: candidate.package_id,
+            skill_id: candidate.skill_id,
+            files,
+          })
         }
-        review.set(`${candidate.package_id}/${candidate.skill_id}`, {
-          package_id: candidate.package_id,
-          skill_id: candidate.skill_id,
-          files,
-        })
       }
     }
 

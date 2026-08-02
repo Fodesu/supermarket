@@ -31,7 +31,7 @@ describe('Skill Registry candidates', () => {
       adapter: { type: 'skill_package_directory' },
       source: { type: 'local', path: 'packages' },
     }
-    const candidate = await buildSkillRegistryCandidate(definition, projectRoot)
+    const candidate = await buildSkillRegistryCandidate(definition, projectRoot, { includeReview: true })
 
     expect(candidate.skills.map((skill) => `${skill.package_id}/${skill.skill_id}`)).toEqual(['good/demo'])
     expect([...candidate.review.keys()]).toEqual(['good/demo'])
