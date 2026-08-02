@@ -57,7 +57,6 @@ async function fixture() {
     package_id: 'tools', skill_id: 'search', install_id: 'example+tools+search',
     name: 'Search', description: 'Search', author: { name: 'Test', email: '' },
     tags: ['search'], category: 'tools', category_name: 'Tools',
-    runtime_requirements: { os: ['linux'] },
     source: { type: 'local', revision: 'e'.repeat(64), path: 'skills/search' },
     files: ['SKILL.md'], artifact,
   }
@@ -112,7 +111,6 @@ describe('Plugin release candidates', () => {
       artifact: {
         digest: 'a'.repeat(64), uncompressed_size: 456, archive_size: 1_024, file_count: 1,
       },
-      runtime_requirements: { os: ['linux'] },
     })
     const releaseBytes = serializePluginRelease(candidate!.release)
     expect(parsePluginRelease(releaseBytes, 'example')).toEqual(candidate!.release)

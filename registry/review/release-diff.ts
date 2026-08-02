@@ -79,7 +79,6 @@ const metadataFields = [
   'category',
   'category_name',
   'source_category',
-  'runtime_requirements',
   'icon',
   'source',
 ] as const

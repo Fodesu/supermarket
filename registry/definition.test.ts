@@ -4,7 +4,6 @@ import {
   assertRegistryComponentID,
   assertRegistryID,
   parseSkillRegistryDefinition,
-  resolveSkillRuntimeRequirements,
   safeRelativePath,
   skillInstallID,
 } from './definition'
@@ -26,7 +25,7 @@ describe('Skill Registry definitions', () => {
     expect(() => assertRegistryID('user')).toThrow('Reserved registry ID')
   })
 
-  test('parses sources and accepts only structured Skill OS metadata', () => {
+  test('parses sources', () => {
     const definition = parseSkillRegistryDefinition({
       schema_version: '1', id: 'example', name: 'Example',
       adapter: { type: 'codex_marketplace_skills', catalog_path: 'marketplace.json' },
@@ -37,10 +36,6 @@ describe('Skill Registry definitions', () => {
         tracking_ref: 'main',
       },
     })
-    expect(resolveSkillRuntimeRequirements(definition, 'other', 'declared', { os: ['linux'] })).toEqual({ os: ['linux'] })
-    expect(() => resolveSkillRuntimeRequirements(definition, 'other', 'declared', { os: ['linux'], oses: [] }))
-      .toThrow('contains unsupported field oses')
-    expect(resolveSkillRuntimeRequirements(definition, 'other', 'unknown')).toBeUndefined()
     expect(definition.source).toMatchObject({ revision: 'a'.repeat(40), tracking_ref: 'main' })
   })
 

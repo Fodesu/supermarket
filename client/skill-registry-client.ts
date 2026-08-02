@@ -101,7 +101,7 @@ switch (command) {
   case 'search': {
     const query = new URLSearchParams()
     if (positional[0]) query.set('q', positional[0])
-    for (const name of ['registry', 'package', 'category', 'tag', 'os', 'page', 'limit', 'sort']) {
+    for (const name of ['registry', 'package', 'category', 'tag', 'page', 'limit', 'sort']) {
       const value = option(`--${name}`)
       if (value) query.set(name, value)
     }

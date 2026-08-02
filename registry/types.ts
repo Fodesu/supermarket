@@ -15,11 +15,6 @@ export type SkillRegistryAdapter =
   | { type: 'skill_directory' }
   | { type: 'skill_package_directory' }
   | { type: 'codex_marketplace_skills'; catalog_path: string }
-export type SkillRuntimeOS = 'darwin' | 'linux' | 'win32'
-
-export interface SkillRuntimeRequirements {
-  os: SkillRuntimeOS[]
-}
 
 export type SkillRegistrySource =
   | { type: 'local'; path: string }
@@ -89,7 +84,6 @@ export interface CatalogSkill {
   category: string
   category_name: string
   source_category?: string
-  runtime_requirements?: SkillRuntimeRequirements
   source: {
     type: SkillRegistrySource['type']
     revision: string
@@ -117,7 +111,6 @@ export interface SnapshotSkill {
   category: string
   category_name: string
   source_category?: string
-  runtime_requirements?: SkillRuntimeRequirements
   source_path: string
   files: string[]
   icon?: SkillIcon

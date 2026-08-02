@@ -136,7 +136,6 @@ describe('Immutable digest-addressed uploads', () => {
       tags: [],
       category: 'other',
       category_name: 'Other',
-      runtime_requirements: { os: ['linux'] },
       source_path: 'skill',
       files: ['SKILL.md'],
       artifact: {

@@ -1,4 +1,4 @@
-import type { CatalogSkill, SkillCategorySummary, SkillRegistryCurrentSummary, SkillRegistrySnapshot, SkillRuntimeOS } from './types'
+import type { CatalogSkill, SkillCategorySummary, SkillRegistryCurrentSummary, SkillRegistrySnapshot } from './types'
 import { catalogSkillsFromSnapshot } from './snapshot'
 
 function slugify(value: string) {
@@ -44,7 +44,6 @@ export interface SkillCatalogSearchOptions {
   package?: string
   category?: string
   tag?: string
-  os?: SkillRuntimeOS
   page?: number
   limit?: number
   sort?: 'relevance' | 'name' | 'registry' | 'package'
@@ -55,7 +54,6 @@ export function searchCatalogSkills(all: CatalogSkill[], options: SkillCatalogSe
     if (options.registry && skill.registry_id !== options.registry) return false
     if (options.package && skill.package_id !== options.package) return false
     if (options.category && skill.category !== options.category.toLowerCase()) return false
-    if (options.os && !skill.runtime_requirements?.os.includes(options.os)) return false
     if (options.tag && !skill.tags.some((tag) => tag.toLowerCase() === options.tag!.toLowerCase())) return false
     return true
   }).map((skill) => ({ skill, score: options.q ? searchScore(skill, options.q) : 0 }))

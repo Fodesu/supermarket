@@ -110,7 +110,6 @@ describe('Marketplace HTTP protocol', () => {
       package_id: 'tools', skill_id: 'demo', install_id: installID,
       name: 'Demo', description: 'Demo Skill', author: { name: 'Test', email: '' },
       tags: ['demo'], category: 'developer-tools', category_name: 'Developer Tools',
-      runtime_requirements: { os: ['darwin', 'linux', 'win32'] },
       source: { type: 'local', revision: sourceRevision, path: 'skills/demo' },
       files: ['SKILL.md', 'scripts/run.sh'], icon: { card: image, detail: image, brand_color: '#0B7285' }, artifact,
     }
@@ -143,7 +142,7 @@ describe('Marketplace HTTP protocol', () => {
       skills: [{
         registry_id: 'example', package_id: 'tools', skill_id: 'demo',
         registry_revision: snapshotRevision, source_revision: sourceRevision, install_id: installID,
-        runtime_requirements: { os: ['darwin', 'linux', 'win32'] }, artifact,
+        artifact,
       }],
     }
     await pluginStore.putArtifact(pluginArtifact, pluginArchive)
@@ -171,7 +170,7 @@ describe('Marketplace HTTP protocol', () => {
     expect(registryResponse.status).toBe(200)
     expect((await registryResponse.json() as any).data[0]).toMatchObject({ id: 'example', skill_count: 1 })
 
-    const searchResponse = await app.fetch(new Request('http://local/api/skills?q=demo&os=linux'))
+    const searchResponse = await app.fetch(new Request('http://local/api/skills?q=demo'))
     expect(searchResponse.status).toBe(200)
     expect((await searchResponse.json() as any).data[0]).toMatchObject({
       registry_id: 'example', package_id: 'tools', skill_id: 'demo',

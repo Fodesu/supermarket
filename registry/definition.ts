@@ -1,13 +1,7 @@
 import path from 'node:path'
 import * as z from 'zod/mini'
-import type {
-  SkillRegistryDefinition,
-  SkillRuntimeOS,
-  SkillRuntimeRequirements,
-} from './types'
+import type { SkillRegistryDefinition } from './types'
 
-export const supportedSkillRuntimeOS: SkillRuntimeOS[] = ['darwin', 'linux', 'win32']
-const runtimeOS = new Set<string>(supportedSkillRuntimeOS)
 export const MAX_RESOURCE_ID_BYTES = 128
 const safeIDPattern = /^[a-z0-9][a-z0-9_-]*$/
 const registryComponentPattern = /^[a-z0-9][a-z0-9._-]*$/
@@ -67,44 +61,12 @@ export function skillInstallID(registryID: string, packageID: string, skillID: s
   ].join('+')
 }
 
-export function isSkillRuntimeOS(value: string): value is SkillRuntimeOS {
-  return runtimeOS.has(value)
-}
-
 export function safeRelativePath(value: string, label = 'path'): string {
   const normalized = path.posix.normalize(value.replaceAll('\\', '/')).replace(/^\.\//, '').replace(/\/$/, '')
   if (!normalized || normalized === '..' || normalized.startsWith('../') || path.posix.isAbsolute(normalized)) {
     throw new Error(`${label} escapes its source: ${value}`)
   }
   return normalized === '.' ? '' : normalized
-}
-
-function parseRuntimeRequirements(raw: unknown, label: string): SkillRuntimeRequirements | undefined {
-  if (raw == null) return undefined
-  const schema = z.strictObject({
-    os: z.array(z.unknown()).check(z.minLength(1)),
-  }, unsupportedFieldError(label))
-  const result = schema.safeParse(raw)
-  if (!result.success) {
-    const issue = result.error.issues[0]!
-    if (issue.code === 'unrecognized_keys') throw new Error(issue.message)
-    if (issue.code === 'invalid_type' && issue.path.length === 0) throw new Error(`${label} must be an object`)
-    throw new Error(`${label}.os must be a non-empty array`)
-  }
-  const values = result.data.os.map((item) => String(item).toLowerCase().trim())
-  const invalid = values.find((item) => !runtimeOS.has(item))
-  if (invalid) throw new Error(`${label}.os contains unsupported value: ${invalid}`)
-  const selected = new Set(values)
-  return { os: supportedSkillRuntimeOS.filter((item) => selected.has(item)) }
-}
-
-export function resolveSkillRuntimeRequirements(
-  definition: SkillRegistryDefinition,
-  packageID: string,
-  skillID: string,
-  declared?: unknown,
-): SkillRuntimeRequirements | undefined {
-  return parseRuntimeRequirements(declared, `${definition.id}/${packageID}/${skillID}.runtime_requirements`)
 }
 
 function parseAdapter(raw: unknown, id: string): SkillRegistryDefinition['adapter'] {

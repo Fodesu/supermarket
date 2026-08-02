@@ -9,7 +9,6 @@ function skill(overrides: Partial<CatalogSkill> = {}): CatalogSkill {
     package_id: 'documents', skill_id: 'pdf', install_id: 'openai--documents--pdf',
     name: 'PDF Tools', description: 'Create and inspect PDF documents.', author: { name: 'OpenAI', email: '' },
     tags: ['documents'], category: 'productivity', category_name: 'Productivity',
-    runtime_requirements: { os: ['darwin', 'linux', 'win32'] },
     source: { type: 'git', revision: 'abc', path: 'plugins/documents/skills/pdf', repository: 'https://example.test/repo.git' },
     files: ['SKILL.md'],
     artifact: {
@@ -24,16 +23,10 @@ function skill(overrides: Partial<CatalogSkill> = {}): CatalogSkill {
 describe('Skill Catalog search', () => {
   test('searches, filters and keeps namespaced duplicate IDs', () => {
     const sameID = skill({ registry_id: 'memoh', package_id: 'pdf', install_id: 'memoh--pdf--pdf', registry_priority: 100 })
-    const result = searchCatalogSkills([skill(), sameID], { q: 'pdf', os: 'linux' })
+    const result = searchCatalogSkills([skill(), sameID], { q: 'pdf' })
     expect(result.total).toBe(2)
     expect(result.data.map((item) => item.registry_id)).toEqual(['memoh', 'openai'])
     expect(searchCatalogSkills([skill()], { tag: 'DOCUMENTS', category: 'productivity' }).total).toBe(1)
-    expect(searchCatalogSkills([
-      skill({ runtime_requirements: { os: ['linux'] } }),
-    ], { os: 'darwin' }).total).toBe(0)
-    expect(searchCatalogSkills([
-      skill({ runtime_requirements: undefined }),
-    ], { os: 'linux' }).total).toBe(0)
   })
 
   test('sanitizes pagination and sorts by name globally', () => {

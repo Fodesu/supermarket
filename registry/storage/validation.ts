@@ -11,7 +11,7 @@ import {
   MAX_SKILL_ARTIFACT_FILES,
   MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
 } from '../types'
-import { assertRegistryComponentID, isSkillRuntimeOS } from '../definition'
+import { assertRegistryComponentID } from '../definition'
 import {
   MAX_REGISTRY_SKILLS,
   MAX_REGISTRY_SOURCE_BYTES,
@@ -84,13 +84,6 @@ export function validateStoredSnapshot(
       assertSafeArchivePaths(skill.files, 'Snapshot Skill', {
         reservedRootPaths: [MEMOH_DIRECT_OWNER_PATH],
       })
-      if (skill.runtime_requirements && (
-        !Array.isArray(skill.runtime_requirements.os)
-        || skill.runtime_requirements.os.length === 0
-        || skill.runtime_requirements.os.some((os) => !isSkillRuntimeOS(os))
-      )) {
-        throw new Error('Catalog Skill contains invalid runtime requirements')
-      }
       assertDigest(skill.artifact.digest)
       if (!Number.isSafeInteger(skill.artifact.size) || skill.artifact.size < 1
         || skill.artifact.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) {

@@ -1,4 +1,4 @@
-import type { SkillArtifactDescriptor, SkillRuntimeRequirements } from '#registry/types'
+import type { SkillArtifactDescriptor } from '#registry/types'
 
 export const MAX_PLUGIN_RELEASE_SKILLS = 128
 export const MAX_PLUGIN_SKILL_ARTIFACTS_COMPRESSED_BYTES = 128 * 1024 * 1024
@@ -53,7 +53,6 @@ export interface PluginResolvedSkill extends PluginSkillReference {
   registry_revision: string
   source_revision: string
   install_id: string
-  runtime_requirements?: SkillRuntimeRequirements
   artifact: SkillArtifactDescriptor
 }
 
