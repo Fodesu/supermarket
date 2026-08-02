@@ -129,7 +129,7 @@ export interface SnapshotSource {
 export interface RegistryDiagnostic {
   package_id?: string
   skill_id?: string
-  code: 'source_requires_runtime_components' | 'no_skills' | 'package_invalid'
+  code: 'no_skills' | 'package_invalid'
   message: string
 }
 

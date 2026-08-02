@@ -20,30 +20,42 @@ capabilities:
   - components
   - variables
 skills:
-  - registry_id: memoh
+  - registry_id: openai
     package_id: figma
-    skill_id: figma
-  - registry_id: memoh
-    package_id: figma
-    skill_id: figma-code-connect-components
-  - registry_id: memoh
-    package_id: figma
-    skill_id: figma-create-design-system-rules
-  - registry_id: memoh
+    skill_id: figma-code-connect
+  - registry_id: openai
     package_id: figma
     skill_id: figma-create-new-file
-  - registry_id: memoh
+  - registry_id: openai
+    package_id: figma
+    skill_id: figma-design-to-code
+  - registry_id: openai
     package_id: figma
     skill_id: figma-generate-design
-  - registry_id: memoh
+  - registry_id: openai
+    package_id: figma
+    skill_id: figma-generate-diagram
+  - registry_id: openai
     package_id: figma
     skill_id: figma-generate-library
-  - registry_id: memoh
+  - registry_id: openai
     package_id: figma
-    skill_id: figma-implement-design
-  - registry_id: memoh
+    skill_id: figma-implement-motion
+  - registry_id: openai
+    package_id: figma
+    skill_id: figma-swiftui
+  - registry_id: openai
     package_id: figma
     skill_id: figma-use
+  - registry_id: openai
+    package_id: figma
+    skill_id: figma-use-figjam
+  - registry_id: openai
+    package_id: figma
+    skill_id: figma-use-motion
+  - registry_id: openai
+    package_id: figma
+    skill_id: figma-use-slides
 auth_requirements:
   - key: figma_oauth
     type: managed_oauth

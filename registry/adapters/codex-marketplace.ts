@@ -237,15 +237,6 @@ export async function readCodexMarketplace(input: SkillAdapterInput): Promise<Sk
       if (String(manifest.name ?? '') !== item.entry.name) {
         throw new Error('manifest name does not match its Marketplace entry')
       }
-      const unsupported = ['apps', 'mcpServers', 'hooks'].filter((key) => hasComponent(manifest[key]))
-      if (unsupported.length) {
-        diagnostics.push({
-          package_id: item.entry.name,
-          code: 'source_requires_runtime_components',
-          message: `Skipped package because it declares: ${unsupported.join(', ')}`,
-        })
-        continue
-      }
       if (!hasComponent(manifest.skills)) {
         diagnostics.push({ package_id: item.entry.name, code: 'no_skills', message: 'Skipped package because it declares no skills' })
         continue

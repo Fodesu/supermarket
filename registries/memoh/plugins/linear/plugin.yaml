@@ -19,7 +19,7 @@ capabilities:
   - projects
   - teams
 skills:
-  - registry_id: memoh
+  - registry_id: openai
     package_id: linear
     skill_id: linear
 auth_requirements:

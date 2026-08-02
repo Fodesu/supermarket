@@ -89,7 +89,7 @@ describe('Skill Registry adapters', () => {
     })).rejects.toThrow('package contains no skills')
   })
 
-  test('flattens Codex package skills and skips packages with runtime components', async () => {
+  test('flattens Codex package skills independently of other runtime components', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'codex-skills-'))
     roots.push(root)
     await mkdir(path.join(root, 'packages/usable/.codex-plugin'), { recursive: true })
@@ -119,7 +119,7 @@ describe('Skill Registry adapters', () => {
     const result = await buildSkillCandidates({
       definition: definition('codex_marketplace_skills'), sourceRoot: root,
     })
-    expect(result.skills).toHaveLength(1)
+    expect(result.skills).toHaveLength(2)
     expect(result.skills[0]).toMatchObject({
       package_id: 'usable', skill_id: 'demo', category: 'developer-tools',
       author: { name: 'OpenAI', email: '' }, tags: ['test', 'codex'],
@@ -128,10 +128,8 @@ describe('Skill Registry adapters', () => {
       },
     })
     expect(result.skills[0]!.icon_assets).toHaveLength(2)
-    expect(result.diagnostics).toEqual([{
-      package_id: 'blocked', code: 'source_requires_runtime_components',
-      message: 'Skipped package because it declares: apps, mcpServers, hooks',
-    }])
+    expect(result.skills[1]).toMatchObject({ package_id: 'blocked', skill_id: 'blocked' })
+    expect(result.diagnostics).toEqual([])
   })
 
   test('identifies image MIME from bytes and isolates packages with mislabeled images', async () => {
