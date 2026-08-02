@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  parseSkillPackageQuery,
   parseSkillRegistryQuery,
   requireIdentifier,
   requireRegistryComponentID,
@@ -15,6 +16,13 @@ describe('Skill Registry query parsing', () => {
       registry: 'openai', q: undefined, package: 'documents', category: 'developer-tools',
       tag: undefined, page: 2, limit: 50, sort: 'name',
     })
+    expect(parseSkillPackageQuery({
+      registry: 'openai', category: 'Productivity', tag: 'search',
+      page: '3', limit: '25', sort: 'registry',
+    })).toEqual({
+      registry: 'openai', q: undefined, category: 'productivity', tag: 'search',
+      page: 3, limit: 25, sort: 'registry',
+    })
   })
 
   test('rejects malformed IDs, repeated values, unsupported options and pagination', () => {
@@ -24,6 +32,8 @@ describe('Skill Registry query parsing', () => {
     expect(() => parseSkillRegistryQuery({ sort: '' })).toThrow('Unsupported sort')
     expect(() => parseSkillRegistryQuery({ page: 'abc' })).toThrow('positive integer')
     expect(() => parseSkillRegistryQuery({ limit: '101' })).toThrow('out of range')
+    expect(() => parseSkillPackageQuery({ sort: 'package' })).toThrow('Unsupported sort')
+    expect(() => parseSkillPackageQuery({ registry: 'BAD' })).toThrow('Invalid registry ID')
     expect(() => requireIdentifier('../escape', 'plugin ID')).toThrow('Invalid plugin ID')
     expect(requireRegistryComponentID('documents.v2', 'package ID')).toBe('documents.v2')
     expect(() => requireRegistryComponentID('documents..v2', 'package ID')).toThrow('Invalid package ID')

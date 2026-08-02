@@ -10,6 +10,10 @@ import pluginArtifactDownload from '../server/api/artifacts/plugin/[digest].get'
 import pluginDetail from '../server/api/plugins/[id].get'
 import pluginReleaseHandler from '../server/api/plugins/[id]/releases/[revision].get'
 import plugins from '../server/api/plugins/index.get'
+import packages from '../server/api/packages/index.get'
+import registryPackage from '../server/api/registries/[id]/packages/[packageId].get'
+import registryPackageRelease from '../server/api/registries/[id]/packages/[packageId]/releases/[revision].get'
+import registryPackages from '../server/api/registries/[id]/packages/index.get'
 import registrySkill from '../server/api/registries/[id]/packages/[packageId]/skills/[skillId].get'
 import registryCategories from '../server/api/registries/[id]/categories.get'
 import registrySkills from '../server/api/registries/[id]/skills/index.get'
@@ -158,8 +162,12 @@ describe('Marketplace HTTP protocol', () => {
     app.use((event) => { (event.req as any).runtime = { cloudflare: { env: { SKILL_REGISTRY_BUCKET: bucket } } } })
     app.get('/api/registries', registries)
     app.get('/api/skills', skills)
+    app.get('/api/packages', packages)
     app.get('/api/registries/:id/categories', registryCategories)
     app.get('/api/registries/:id/skills', registrySkills)
+    app.get('/api/registries/:id/packages', registryPackages)
+    app.get('/api/registries/:id/packages/:packageId', registryPackage)
+    app.get('/api/registries/:id/packages/:packageId/releases/:revision', registryPackageRelease)
     app.get('/api/registries/:id/packages/:packageId/skills/:skillId', registrySkill)
     app.get('/api/artifacts/skill/:digest', artifactDownload)
     app.get('/api/artifacts/icon/:digest', skillIcon)
@@ -178,6 +186,42 @@ describe('Marketplace HTTP protocol', () => {
       registry_id: 'example', package_id: 'tools', skill_id: 'demo',
     })
     expect((await app.fetch(new Request('http://local/api/skills?registry=BAD'))).status).toBe(400)
+
+    const packagesResponse = await app.fetch(new Request('http://local/api/packages?q=tools'))
+    expect(packagesResponse.status).toBe(200)
+    expect(await packagesResponse.json()).toMatchObject({
+      total: 1,
+      data: [{ registry_id: 'example', package_id: 'tools', name: 'tools', skill_count: 1 }],
+    })
+    const scopedPackages = await app.fetch(new Request('http://local/api/registries/example/packages'))
+    expect(scopedPackages.status).toBe(200)
+    const scopedPackageResult = await scopedPackages.json() as any
+    expect(scopedPackageResult.total).toBe(1)
+    expect((await app.fetch(new Request('http://local/api/registries/missing/packages'))).status).toBe(404)
+
+    const packageResponse = await app.fetch(new Request('http://local/api/registries/example/packages/tools'))
+    expect(packageResponse.status).toBe(200)
+    const packageDescriptor = await packageResponse.json() as any
+    expect(packageDescriptor).toMatchObject({
+      registry_id: 'example', package_id: 'tools', revision: snapshotRevision,
+      source_revision: sourceRevision, skill_count: 1,
+      release_url: `/api/registries/example/packages/tools/releases/${snapshotRevision}`,
+      skills: [{ skill_id: 'demo', artifact: { digest } }],
+    })
+    const packageReleaseURL = `http://local${packageDescriptor.release_url}`
+    const packageRelease = await app.fetch(new Request(packageReleaseURL))
+    expect(packageRelease.headers.get('cache-control')).toContain('immutable')
+    expect(packageRelease.headers.get('etag')).toBe(`"${snapshotRevision}:tools"`)
+    expect(await packageRelease.json()).toMatchObject({
+      revision: snapshotRevision,
+      skills: [{ skill_id: 'demo', artifact: { digest } }],
+    })
+    expect((await app.fetch(new Request(packageReleaseURL, {
+      headers: { 'if-none-match': `"${snapshotRevision}:tools"` },
+    }))).status).toBe(304)
+    expect((await app.fetch(new Request(
+      `http://local/api/registries/example/packages/tools/releases/${'0'.repeat(64)}`,
+    ))).status).toBe(404)
 
     const stateKey = 'skill-registries/example/state.json'
     const stateReadsBeforeScopedSkills = bucket.gets.get(stateKey) ?? 0
@@ -280,6 +324,27 @@ describe('Marketplace HTTP protocol', () => {
       `http://local/api/artifacts/plugin/${missingDigest}`,
       { headers: { 'if-none-match': `"${missingDigest}"` } },
     ))).status).toBe(404)
+
+    const updatedSnapshot: SkillRegistrySnapshot = {
+      ...snapshot,
+      source: { ...snapshot.source, revision: 'f'.repeat(64) },
+      skills: [compactCatalogSkill({ ...skill, description: 'Updated Demo Skill' })],
+    }
+    const updatedRevision = await store.publishSnapshot(serializeRegistrySnapshot(updatedSnapshot), definition, {
+      publishedAt: '2026-01-03T00:00:00.000Z',
+    })
+    expect(updatedRevision).not.toBe(snapshotRevision)
+    const updatedPackage = await app.fetch(new Request('http://local/api/registries/example/packages/tools'))
+    expect(await updatedPackage.json()).toMatchObject({
+      revision: updatedRevision,
+      description: 'Updated Demo Skill',
+    })
+    const historicalPackage = await app.fetch(new Request(packageReleaseURL))
+    expect(await historicalPackage.json()).toMatchObject({
+      revision: snapshotRevision,
+      description: 'Demo Skill',
+      skills: [{ artifact: { digest } }],
+    })
 
   })
 })

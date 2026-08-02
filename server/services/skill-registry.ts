@@ -7,6 +7,8 @@ import type {
 } from '#registry/types'
 import type { SkillCatalogSearchOptions } from '#registry/catalog'
 import { searchCatalogSkills, summarizeSkillCategories } from '#registry/catalog'
+import type { SkillPackageSearchOptions } from '#registry/packages'
+import { packageDescriptorFromSnapshot, searchSkillPackages } from '#registry/packages'
 import { catalogSkillsFromSnapshot } from '#registry/snapshot'
 import { R2BlobBackend } from '#registry/storage/r2'
 import { BlobSkillRegistryStore } from '#registry/storage/blob'
@@ -75,6 +77,21 @@ function publicCatalogSearch(skills: CatalogSkill[], options: SkillCatalogSearch
   return { ...result, data: result.data.map(publicCatalogSkill) }
 }
 
+function publicSkillPackageSummary<T extends { registry_priority: number }>(pkg: T) {
+  const { registry_priority: _priority, ...value } = pkg
+  return value
+}
+
+function publicSkillPackageSearch(skills: CatalogSkill[], options: SkillPackageSearchOptions) {
+  const result = searchSkillPackages(skills, options)
+  return { ...result, data: result.data.map(publicSkillPackageSummary) }
+}
+
+export async function getSkillPackages(event: RuntimeEvent, options: SkillPackageSearchOptions = {}) {
+  const snapshots = await getEnabledSkillRegistrySnapshots(await getRuntimeSkillRegistryStore(event), options.registry)
+  return publicSkillPackageSearch(snapshots.flatMap(catalogSkillsFromSnapshot), options)
+}
+
 async function getScopedRegistrySnapshot(store: SkillRegistryStore, registryID: string) {
   const state = await store.getState(registryID)
   if (!state?.definition.enabled) return undefined
@@ -83,6 +100,54 @@ async function getScopedRegistrySnapshot(store: SkillRegistryStore, registryID: 
   if (!snapshot) throw new Error(`Current Registry snapshot is missing: ${registryID}/${state.current_snapshot}`)
   snapshotCache(store).assertRequestBudget([snapshot])
   return snapshot
+}
+
+export async function getRegistrySkillPackages(
+  event: RuntimeEvent,
+  registryID: string,
+  options: SkillPackageSearchOptions = {},
+) {
+  const snapshot = await getScopedRegistrySnapshot(await getRuntimeSkillRegistryStore(event), registryID)
+  if (snapshot === undefined) return undefined
+  return publicSkillPackageSearch(snapshot ? catalogSkillsFromSnapshot(snapshot) : [], {
+    ...options,
+    registry: registryID,
+  })
+}
+
+function publicPackageDescriptor(descriptor: NonNullable<ReturnType<typeof packageDescriptorFromSnapshot>>) {
+  return { ...descriptor, skills: descriptor.skills.map(publicCatalogSkill) }
+}
+
+export async function getCurrentSkillPackage(
+  event: RuntimeEvent,
+  registryID: string,
+  packageID: string,
+) {
+  const store = await getRuntimeSkillRegistryStore(event)
+  const state = await store.getState(registryID)
+  if (!state?.definition.enabled || !state.current_snapshot) return undefined
+  const snapshot = await cachedSnapshot(store, registryID, state.current_snapshot)
+  if (!snapshot) throw new Error(`Current Registry snapshot is missing: ${registryID}/${state.current_snapshot}`)
+  snapshotCache(store).assertRequestBudget([snapshot])
+  const descriptor = packageDescriptorFromSnapshot(snapshot, state.current_snapshot, packageID)
+  return descriptor ? publicPackageDescriptor(descriptor) : undefined
+}
+
+export async function getSkillPackageRelease(
+  event: RuntimeEvent,
+  registryID: string,
+  packageID: string,
+  revision: string,
+) {
+  const store = await getRuntimeSkillRegistryStore(event)
+  const state = await store.getState(registryID)
+  if (!state?.definition.enabled) return undefined
+  const snapshot = await cachedSnapshot(store, registryID, revision)
+  if (!snapshot) return undefined
+  snapshotCache(store).assertRequestBudget([snapshot])
+  const descriptor = packageDescriptorFromSnapshot(snapshot, revision, packageID)
+  return descriptor ? publicPackageDescriptor(descriptor) : undefined
 }
 
 export async function getRegistryCatalogSkills(

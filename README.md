@@ -86,16 +86,20 @@ Base URL: `https://supermarket.memoh.ai`
 | GET | `/api/plugins/:id` | Get Plugin details |
 | GET | `/api/plugins/:id/releases/:revision` | Get an immutable Plugin release descriptor |
 | GET | `/api/artifacts/plugin/:digest` | Download an immutable Plugin package |
+| GET | `/api/packages` | Search Skill Packages. Query: `q`, `registry`, `category`, `tag`, `page`, `limit`, `sort` |
 | GET | `/api/skills` | Search enabled Registry Skills. Query: `q`, `registry`, `package`, `category`, `tag`, `page`, `limit`, `sort` |
 | GET | `/api/registries` | List Registries and current counts |
 | GET | `/api/registries/:registryId` | Get the approved Registry definition, source revision, and diagnostics |
 | GET | `/api/registries/:registryId/categories` | List categories in one Registry |
+| GET | `/api/registries/:registryId/packages` | Search Packages in one Registry |
+| GET | `/api/registries/:registryId/packages/:packageId` | Get the current Package descriptor |
+| GET | `/api/registries/:registryId/packages/:packageId/releases/:revision` | Get an immutable Package descriptor |
 | GET | `/api/registries/:registryId/skills` | Search Skills in one Registry |
 | GET | `/api/registries/:registryId/packages/:packageId/skills/:skillId` | Get one Registry Skill |
 | GET | `/api/artifacts/skill/:digest` | Download a Skill archive |
 | GET | `/api/artifacts/icon/:digest` | Download a Skill icon |
 
-Registry Skills use the identity `(registry_id, package_id, skill_id)`. The reference client installs them into `<registry_id>+<package_id>+<skill_id>`.
+Packages are derived from one immutable Registry Snapshot and group all Skills with the same `(registry_id, package_id)`. A Package descriptor pins its Snapshot revision and every member Skill Artifact digest; it does not create a combined archive. Registry Skills use the identity `(registry_id, package_id, skill_id)`. The reference client installs them into `<registry_id>+<package_id>+<skill_id>`.
 Plugin source manifests use those identities as references. A published Plugin release resolves each reference to a fixed Registry Snapshot revision and Skill Artifact digest, so installing the same Plugin release always installs the same Skill content.
 The installation identity is supplied by the client rather than embedded as an archive directory; the archive itself contains the Skill files at its root.
 ## Contributing
