@@ -6,11 +6,11 @@ import {
   setResponseStatus,
 } from 'h3'
 import { assertDigest } from '#registry/storage/validation'
-import { requireSkillRegistryID } from '#server/services/skill-registry-query'
+import { requireIdentifier } from '#server/services/skill-registry-query'
 import { getPluginReleaseBytes } from '#server/services/plugin'
 
 export default defineHandler(async (event) => {
-  const id = requireSkillRegistryID(getRouterParam(event, 'id')!, 'plugin ID')
+  const id = requireIdentifier(getRouterParam(event, 'id')!, 'plugin ID')
   let revision: string
   try {
     revision = assertDigest(getRouterParam(event, 'revision')!)

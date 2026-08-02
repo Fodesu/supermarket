@@ -72,8 +72,6 @@ export interface PluginManifest {
   skills?: PluginSkillReference[]
 }
 
-export type PluginEntry = PluginManifest
-
 export interface PluginArtifactDescriptor {
   format: 'memoh_plugin_v1'
   digest: string

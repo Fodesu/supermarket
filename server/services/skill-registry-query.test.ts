@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import {
   parseSkillRegistryQuery,
+  requireIdentifier,
   requireRegistryComponentID,
   requireRegistryID,
-  requireSkillRegistryID,
 } from './skill-registry-query'
 
 describe('Skill Registry query parsing', () => {
@@ -25,7 +25,7 @@ describe('Skill Registry query parsing', () => {
     expect(() => parseSkillRegistryQuery({ sort: '' })).toThrow('Unsupported sort')
     expect(() => parseSkillRegistryQuery({ page: 'abc' })).toThrow('positive integer')
     expect(() => parseSkillRegistryQuery({ limit: '101' })).toThrow('out of range')
-    expect(() => requireSkillRegistryID('../escape', 'registry ID')).toThrow('Invalid registry ID')
+    expect(() => requireIdentifier('../escape', 'plugin ID')).toThrow('Invalid plugin ID')
     expect(requireRegistryComponentID('documents.v2', 'package ID')).toBe('documents.v2')
     expect(() => requireRegistryComponentID('documents..v2', 'package ID')).toThrow('Invalid package ID')
     expect(() => requireRegistryID('user')).toThrow('Invalid registry ID')

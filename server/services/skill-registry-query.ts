@@ -8,7 +8,7 @@ function badRequest(message: string): never {
   throw new HTTPError(message, { statusCode: 400 })
 }
 
-export function requireSkillRegistryID(value: string, label: string) {
+export function requireIdentifier(value: string, label: string) {
   try {
     return assertIdentifier(value, label)
   } catch {
@@ -46,7 +46,7 @@ export function parseSkillRegistryQuery(query: Record<string, unknown>, registry
     registry: registryValue != null ? requireRegistryID(registryValue) : undefined,
     q: scalarQuery(query, 'q'),
     package: packageValue != null ? requireRegistryComponentID(packageValue, 'package ID') : undefined,
-    category: category != null ? requireSkillRegistryID(category.toLowerCase(), 'category ID') : undefined,
+    category: category != null ? requireIdentifier(category.toLowerCase(), 'category ID') : undefined,
     tag: scalarQuery(query, 'tag'),
     os: normalizedOS,
     page: positiveIntegerQuery(scalarQuery(query, 'page'), 'page'),
