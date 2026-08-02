@@ -33,6 +33,7 @@ async function publishedDependency() {
       source_path: 'tools/search', files: ['SKILL.md'],
       artifact: {
         digest: 'b'.repeat(64), size: 1,
+        uncompressed_size: 1, archive_size: 1, file_count: 1,
       },
     }],
     diagnostics: [],

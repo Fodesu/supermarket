@@ -2,7 +2,12 @@ import path from 'node:path'
 import * as z from 'zod/mini'
 import { sha256 } from '#registry/digest'
 import { skillInstallID } from '#registry/definition'
-import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '#registry/types'
+import {
+  MAX_SKILL_ARTIFACT_ARCHIVE_BYTES,
+  MAX_SKILL_ARTIFACT_COMPRESSED_BYTES,
+  MAX_SKILL_ARTIFACT_FILES,
+  MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
+} from '#registry/types'
 import { extractSkillArchive, parseGzipTarArchive } from './archive'
 import {
   MAX_REGISTRY_JSON_BYTES,
@@ -35,6 +40,9 @@ interface InstallableSkillResponse {
     format: 'memoh_skill_v1'
     digest: string
     size: number
+    uncompressed_size: number
+    archive_size: number
+    file_count: number
     download_url: string
   }
 }
@@ -48,6 +56,9 @@ const installableSkillSchema = z.object({
     format: z.literal('memoh_skill_v1'),
     digest: z.string().check(z.regex(/^[a-f0-9]{64}$/)),
     size: z.number().check(z.int(), z.minimum(1), z.maximum(MAX_SKILL_ARTIFACT_COMPRESSED_BYTES)),
+    uncompressed_size: z.number().check(z.int(), z.minimum(1), z.maximum(MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES)),
+    archive_size: z.number().check(z.int(), z.minimum(1), z.maximum(MAX_SKILL_ARTIFACT_ARCHIVE_BYTES)),
+    file_count: z.number().check(z.int(), z.minimum(1), z.maximum(MAX_SKILL_ARTIFACT_FILES)),
     download_url: z.string(),
   }),
 })
@@ -62,6 +73,9 @@ function installableSkillResponse(value: unknown): InstallableSkillResponse {
       format: artifact.format,
       digest: artifact.digest,
       size: artifact.size,
+      uncompressed_size: artifact.uncompressed_size,
+      archive_size: artifact.archive_size,
+      file_count: artifact.file_count,
       download_url: artifact.download_url,
     },
   }
