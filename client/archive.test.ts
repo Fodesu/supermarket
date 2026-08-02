@@ -104,10 +104,6 @@ describe('Skill Registry client archives', () => {
     }, '')).rejects.toThrow('Duplicate tar path')
     await expect(createTar({ 'file': new Uint8Array(), 'file/child': new Uint8Array() }, ''))
       .rejects.toThrow('Conflicting tar path')
-    await expect(packageSkill({
-      'SKILL.md': { bytes: new Uint8Array(), mode: 0o644 },
-      '.MEMOH-DIRECT-OWNER.JSON/child': { bytes: new Uint8Array(), mode: 0o644 },
-    })).rejects.toThrow('Reserved tar path')
     const traversal = await packTar([{
       header: { name: '../private', size: 1, type: 'file' },
       body: new Uint8Array([1]),

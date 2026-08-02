@@ -2,7 +2,6 @@ import { createGzipEncoder, packTar, type TarEntry } from 'modern-tar'
 import { compareCanonicalText } from './order'
 
 export const MAX_TAR_UNCOMPRESSED_BYTES = 5 * 1024 * 1024
-export const MEMOH_DIRECT_OWNER_PATH = '.memoh-direct-owner.json'
 const gzipHeaderLength = 10
 const gzipMinimumLength = gzipHeaderLength + 8
 
@@ -12,7 +11,6 @@ export interface TarFileInput {
 }
 
 export interface ArchivePathOptions {
-  reservedRootPaths?: readonly string[]
   maxContentBytes?: number
   maxArchiveBytes?: number
 }
@@ -37,19 +35,11 @@ export function assertSafeArchivePath(name: string, label = 'tar') {
 export function assertSafeArchivePaths(
   names: Iterable<string>,
   label = 'tar',
-  options: ArchivePathOptions = {},
 ) {
-  const reserved = (options.reservedRootPaths ?? []).map((name) => {
-    assertSafeArchivePath(name, 'reserved archive')
-    return canonicalArchivePath(name)
-  })
   const seen = new Map<string, string>()
   for (const name of names) {
     assertSafeArchivePath(name, label)
     const canonical = canonicalArchivePath(name)
-    if (reserved.some((root) => canonical === root || canonical.startsWith(`${root}/`))) {
-      throw new Error(`Reserved ${label} path: ${name}`)
-    }
     const previous = seen.get(canonical)
     if (previous) throw new Error(`Duplicate ${label} path: ${name} conflicts with ${previous}`)
     seen.set(canonical, name)
@@ -76,7 +66,7 @@ export async function createTar(
     throw new Error('Invalid tar archive size limit')
   }
   const fileEntries = Object.entries(files)
-  assertSafeArchivePaths(fileEntries.map(([name]) => name), 'tar', options)
+  assertSafeArchivePaths(fileEntries.map(([name]) => name), 'tar')
   if (prefix) assertSafeArchivePaths(fileEntries.map(([name]) => `${prefix}/${name}`))
   let contentBytes = 0
   const entries: TarEntry[] = fileEntries

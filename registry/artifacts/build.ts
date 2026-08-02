@@ -1,16 +1,14 @@
 import {
   MAX_SKILL_ARTIFACT_COMPRESSED_BYTES,
 } from '../types'
-import { createTar, gzip, MEMOH_DIRECT_OWNER_PATH } from '#lib/archive'
+import { createTar, gzip } from '#lib/archive'
 import { sha256 } from '../digest'
 import type { SkillSourceFile } from '../filesystem'
 
 export async function packageSkill(files: Record<string, SkillSourceFile>) {
   // Artifact bytes describe only the Skill content. The Catalog's install_id
   // selects the destination namespace and must not influence the content hash.
-  const archive = await createTar(files, '', {
-    reservedRootPaths: [MEMOH_DIRECT_OWNER_PATH],
-  })
+  const archive = await createTar(files, '')
   const bytes = await gzip(archive)
   if (bytes.length > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) {
     throw new Error(`Compressed Skill Artifact exceeds ${MAX_SKILL_ARTIFACT_COMPRESSED_BYTES} bytes`)

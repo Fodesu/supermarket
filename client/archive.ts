@@ -4,7 +4,6 @@ import { createGzipDecoder, createTarDecoder, type ParsedTarEntry } from 'modern
 import {
   assertSafeArchivePath,
   assertSafeArchivePaths,
-  MEMOH_DIRECT_OWNER_PATH,
 } from '#lib/archive'
 import {
   MAX_SKILL_ARTIFACT_FILES,
@@ -105,9 +104,7 @@ export function parseGzipTarArchive(bytes: Uint8Array, limit = MAX_SKILL_ARTIFAC
 }
 
 export function validateSkillArchive(files: Map<string, ArchiveFile>) {
-  assertSafeArchivePaths(files.keys(), 'Skill archive', {
-    reservedRootPaths: [MEMOH_DIRECT_OWNER_PATH],
-  })
+  assertSafeArchivePaths(files.keys(), 'Skill archive')
   if (!files.has('SKILL.md')) throw new Error('Skill archive does not contain SKILL.md at its root')
 }
 

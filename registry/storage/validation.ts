@@ -17,7 +17,7 @@ import {
   MAX_REGISTRY_SOURCE_BYTES,
   MAX_REGISTRY_SOURCE_FILES,
 } from '../budget'
-import { assertSafeArchivePaths, MEMOH_DIRECT_OWNER_PATH } from '#lib/archive'
+import { assertSafeArchivePaths } from '#lib/archive'
 import { assertDigest } from '#lib/digest'
 
 export { assertDigest } from '#lib/digest'
@@ -79,9 +79,7 @@ export function validateStoredSnapshot(
     try {
       assertRegistryComponentID(skill.package_id, 'package ID')
       assertRegistryComponentID(skill.skill_id, 'skill ID')
-      assertSafeArchivePaths(skill.files, 'Snapshot Skill', {
-        reservedRootPaths: [MEMOH_DIRECT_OWNER_PATH],
-      })
+      assertSafeArchivePaths(skill.files, 'Snapshot Skill')
       assertDigest(skill.artifact.digest)
       if (!Number.isSafeInteger(skill.artifact.size) || skill.artifact.size < 1
         || skill.artifact.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES) {
