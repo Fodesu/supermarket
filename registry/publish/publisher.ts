@@ -73,6 +73,7 @@ export class SkillRegistryPublisher {
   async publish(
     definition: SkillRegistryDefinition,
     releaseLock?: RegistryReleaseLock,
+    prebuiltCandidate?: SkillRegistryCandidate,
   ): Promise<SkillRegistryPublishResult> {
     const stateRead = await this.store.getStateWithVersion(definition.id)
     const previousState = stateRead.state
@@ -90,9 +91,14 @@ export class SkillRegistryPublisher {
     }
 
     const lock = requireReleaseLock(definition, releaseLock)
-    const candidate = await buildSkillRegistryCandidate(definition, this.projectRoot, {
-      onProgress: this.onProgress,
-    })
+    if (prebuiltCandidate && !sameDefinition(prebuiltCandidate.definition, definition)) {
+      throw new Error(`${definition.id}: prebuilt candidate uses a different Registry definition`)
+    }
+    const candidate = prebuiltCandidate ?? await buildSkillRegistryCandidate(
+      definition,
+      this.projectRoot,
+      { onProgress: this.onProgress },
+    )
     assertReleaseCandidate(definition, lock, candidate.revision)
     if (previousState?.current_snapshot === candidate.revision) {
       if (!sameDefinition(previousState.definition, definition)) {
