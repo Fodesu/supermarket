@@ -70,7 +70,7 @@ describe('partial Registry publication', () => {
     const missing = await publishedDependency()
     await expect(assertPartialRegistryDependencies({
       selectedRegistry: 'selected', candidates: [missing.candidate], store: missing.store,
-    })).rejects.toThrow('approved Registry Artifact is missing')
+    })).rejects.toThrow('repair immutable storage before partial publication')
 
     const ready = await publishedDependency({ publishArtifact: true })
     await expect(assertPartialRegistryDependencies({
