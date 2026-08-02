@@ -224,15 +224,21 @@ bun run registry:lock -- --registry example
 bun run registry:validate
 ```
 
+#### Sources and Adapters
+
 Supported sources are `local` and HTTPS `git`; adapters are `skill_directory`, `skill_package_directory`, and `codex_marketplace_skills`. `skill_package_directory` reads `<package-id>/skills/<skill-id>` from its source root. A local source path is relative to the directory containing its `registry.yaml`. A Git source must pin an exact commit in `revision`; optional `tracking_ref` opts it into upstream update checks.
 
 `codex_marketplace_skills` reads `catalog_path` from its source root and supports only Marketplace Packages whose source is a local path in that same checkout. Each Package must contain `.codex-plugin/plugin.json` and declare one or more Skill paths. Packages that declare `apps`, `mcpServers`, or `hooks`, have no Skills, use another Package source type, or fail validation are skipped with explicit Registry diagnostics; Supermarket does not guess how to convert unsupported runtime components. An invalid Package is isolated so other valid Packages in the same Registry can still be published.
 
 Git sources use a filtered shallow fetch and root-anchored sparse checkout for the Adapter paths. Adapter reads enforce Registry-wide limits of 10,000 Skills, 100,000 source files, 512 MiB of source file bodies, 64 MiB of retained review text, and an 8 MiB Snapshot. Registry-producing commands build Registries sequentially, so those per-build bounds do not multiply with Registry count. Every enabled Registry must commit `release.lock.json`, whose `snapshot_revision` must equal the canonical Snapshot rebuilt from the approved source.
 
+## Registry Updates
+
 The scheduled `Check Registry updates` workflow runs every 12 hours and opens one review PR for each changed Registry. The PR and Actions Summary include concrete errors for skipped Packages. Merging the PR approves the updated Registry and affected Plugin locks. A manual run can optionally select one Registry.
 
 If publisher, Adapter, or archive code intentionally changes the generated Snapshot without changing the pinned upstream commit, regenerate the lock with `bun run registry:lock -- --registry <id>` and review its revision change in the same PR.
+
+## Deployment
 
 After an approved change reaches `main`, the `Publish approved Registries` workflow validates and publishes the approved Registry and Plugin releases to R2. The API Worker remains read-only.
 
