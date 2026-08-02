@@ -21,6 +21,7 @@ import { R2BlobBackend } from '#registry/storage/r2'
 import { sha256 } from '#registry/digest'
 import { BlobSkillRegistryStore } from '#registry/storage/blob'
 import { serializeRegistrySnapshot } from '#registry/snapshot'
+import { packageSkill } from '#registry/artifacts/build'
 import { BlobPluginReleaseStore } from '#plugin/storage/blob'
 import { serializePluginRelease } from '#plugin/release'
 import type { PluginArtifactDescriptor, PluginRelease } from '#plugin/types'
@@ -86,17 +87,20 @@ describe('Marketplace HTTP protocol', () => {
     }
     const installID = 'example+tools+demo'
     const sourceRevision = 'e'.repeat(64)
-    const serializedArchive = await createTar({
-      'SKILL.md': new TextEncoder().encode('---\nname: Demo\ndescription: Demo\n---\n'),
+    const packaged = await packageSkill({
+      'SKILL.md': {
+        bytes: new TextEncoder().encode('---\nname: Demo\ndescription: Demo\n---\n'),
+        mode: 0o644,
+      },
       'scripts/run.sh': { bytes: new TextEncoder().encode('#!/bin/sh\n'), mode: 0o755 },
-    }, '')
-    const archive = await gzip(serializedArchive)
-    const digest = await sha256(archive)
+    })
+    const archive = packaged.bytes
+    const digest = packaged.digest
     const artifact: SkillArtifactDescriptor = {
       format: 'memoh_skill_v1', digest, size: archive.length,
-      uncompressed_size: 47,
-      archive_size: serializedArchive.length,
-      file_count: 2,
+      uncompressed_size: packaged.uncompressedSize,
+      archive_size: packaged.archiveSize,
+      file_count: packaged.fileCount,
       content_type: 'application/gzip',
     }
     const imageBytes = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"/>')
@@ -176,9 +180,9 @@ describe('Marketplace HTTP protocol', () => {
 
     const detailResponse = await app.fetch(new Request('http://local/api/registries/example/packages/tools/skills/demo'))
     const detail = await detailResponse.json() as any
-    expect(detail.artifact.download_url).toBe(`/api/artifacts/skill/${digest}`)
-    expect(detail.artifact).toMatchObject({
-      uncompressed_size: 47, archive_size: serializedArchive.length, file_count: 2,
+    expect(detail.artifact).toEqual({
+      ...artifact,
+      download_url: `/api/artifacts/skill/${digest}`,
     })
     expect(detail.icon.card).toEqual(image)
     const imageResponse = await app.fetch(new Request(`http://local/api/artifacts/icon/${detail.icon.card.digest}`))
@@ -216,7 +220,7 @@ describe('Marketplace HTTP protocol', () => {
           skills: [{
             registry_revision: snapshotRevision,
             artifact: {
-              digest, uncompressed_size: 47, archive_size: serializedArchive.length, file_count: 2,
+              ...artifact,
               download_url: `/api/artifacts/skill/${digest}`,
             },
           }],

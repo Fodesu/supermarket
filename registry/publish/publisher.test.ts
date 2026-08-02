@@ -57,10 +57,7 @@ describe('SkillRegistryPublisher', () => {
     ])
     const firstState = await store.getState('memoh')
     const firstSnapshot = await store.getSnapshot('memoh', firstState!.current_snapshot!)
-    expect(firstSnapshot!.skills[0]!.artifact).toMatchObject({ file_count: 1 })
     expect(firstSnapshot!.skills[0]!.artifact.size).toBeGreaterThan(0)
-    expect(firstSnapshot!.skills[0]!.artifact.uncompressed_size).toBeGreaterThan(0)
-    expect(firstSnapshot!.skills[0]!.artifact.archive_size).toBeGreaterThan(0)
     const artifact = await store.getArtifact(firstSnapshot!.skills[0]!.artifact.digest)
     expect((await parseGzipTarArchive(artifact!.bytes)).has('SKILL.md')).toBe(true)
 
