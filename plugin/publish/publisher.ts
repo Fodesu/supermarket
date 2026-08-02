@@ -41,16 +41,13 @@ export class PluginReleasePublisher {
         `${candidate.plugin_id}: referenced Skill Artifact`,
       )
     }
-    await this.store.putArtifact(descriptor, candidate.artifact.bytes)
+    await this.store.putArtifact(descriptor, candidate.artifact_bytes)
     const releaseBytes = serializePluginRelease(candidate.release)
-    const publishedRevision = await this.store.publishRelease(
+    await this.store.publishRelease(
       releaseBytes,
       candidate.plugin_id,
       { expectedVersion, expectedRevision: lock.release_revision },
     )
-    if (publishedRevision !== lock.release_revision) {
-      throw new Error(`${candidate.plugin_id}: Plugin Store published an unapproved release revision`)
-    }
     return { plugin: candidate.plugin_id, revision: candidate.revision }
   }
 

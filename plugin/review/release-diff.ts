@@ -75,8 +75,8 @@ export function diffPluginReleaseCandidates(
       plugin: pluginID,
       release_before: oldPlugin.revision,
       release_after: newPlugin.revision,
-      bundle_before: oldPlugin.artifact.descriptor.digest,
-      bundle_after: newPlugin.artifact.descriptor.digest,
+      bundle_before: oldPlugin.release.artifact.digest,
+      bundle_after: newPlugin.release.artifact.digest,
       skills: changedSkillLocks(oldPlugin, newPlugin),
     }]
   })

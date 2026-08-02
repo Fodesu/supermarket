@@ -103,7 +103,7 @@ describe('Plugin release candidates', () => {
     expect(parsePluginRelease(releaseBytes, 'example')).toEqual(candidate!.release)
     await expect(assertPluginReleaseRevision(releaseBytes, candidate!.revision)).resolves.toBeUndefined()
 
-    const files = await parseGzipTarArchive(candidate!.artifact.bytes)
+    const files = await parseGzipTarArchive(candidate!.artifact_bytes)
     expect([...files.keys()].sort()).toEqual(['example/plugin.yaml', 'example/scripts/run.sh'])
     expect(files.get('example/scripts/run.sh')?.mode).toBe(0o755)
     expect([...files.keys()].some((name) => name.includes('release.lock'))).toBeFalse()
@@ -115,7 +115,7 @@ describe('Plugin release candidates', () => {
     snapshot.skills[0]!.artifact.digest = 'c'.repeat(64)
     const [after] = await buildPluginReleaseCandidates(root, [{ revision: 'd'.repeat(64), snapshot }])
     expect(after!.revision).not.toBe(before!.revision)
-    expect(after!.artifact.descriptor.digest).toBe(before!.artifact.descriptor.digest)
+    expect(after!.release.artifact.digest).toBe(before!.release.artifact.digest)
   })
 
   test('rejects a missing referenced Skill', async () => {
