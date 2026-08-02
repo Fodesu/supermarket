@@ -234,7 +234,7 @@ Git sources use a filtered shallow fetch and root-anchored sparse checkout for t
 
 ## Registry Updates
 
-The scheduled `Check Registry updates` workflow runs every 12 hours and opens one review PR for each changed Registry. The PR and Actions Summary include concrete errors for skipped Packages. Merging the PR approves the updated Registry and affected Plugin locks. A manual run can optionally select one Registry.
+The scheduled `Check Registry updates` workflow runs every 12 hours and keeps at most one open review PR for each changed Registry. If the upstream revision or `main` base changes before merge, the workflow rebuilds the candidate, updates that PR with `--force-with-lease`, replaces its report, and reruns CI. Branch protection must dismiss stale approvals when new commits are pushed. A closed PR is not recreated for the same upstream revision. The PR and Actions Summary include concrete errors for skipped Packages. Merging the PR approves the updated Registry and affected Plugin locks. A manual run can optionally select one Registry.
 
 If publisher, Adapter, or archive code intentionally changes the generated Snapshot without changing the pinned upstream commit, regenerate the lock with `bun run registry:lock -- --registry <id>` and review its revision change in the same PR.
 

@@ -77,6 +77,7 @@ jobs:
             --full-report-url "$FULL_REPORT_URL"
           cat "$RUNNER_TEMP/registry-update.md" >> "$GITHUB_STEP_SUMMARY"
       - id: candidate
+        name: Create or update candidate branch
         env:
           GH_TOKEN: ${{ github.token }}
           REGISTRY: ${{ matrix.registry }}
@@ -100,26 +101,51 @@ jobs:
           fi
           base_sha="$(git rev-parse HEAD)"
           candidate_tree="$(git write-tree)"
-          branch="automation/registry-update/$REGISTRY/$CANDIDATE_REVISION-${base_sha:0:12}-${candidate_tree:0:12}"
-          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          branch_prefix="automation/registry-update/$REGISTRY/"
+          candidate_title="chore(registry): review $REGISTRY ${CANDIDATE_REVISION:0:12}"
 
+          mapfile -t open_candidates < <(
+            gh pr list --base main --state open --limit 100 --json number,headRefName |
+              jq -r --arg prefix "$branch_prefix" \
+                '.[] | select(.headRefName | startswith($prefix)) | "\(.number)\t\(.headRefName)"'
+          )
+          if (( ${#open_candidates[@]} > 1 )); then
+            echo "Multiple open candidate PRs exist for $REGISTRY; close all but one before retrying" >&2
+            printf '%s\n' "${open_candidates[@]}" >&2
+            exit 1
+          fi
+
+          existing_number=""
+          if (( ${#open_candidates[@]} == 1 )); then
+            IFS=$'\t' read -r existing_number branch <<< "${open_candidates[0]}"
+          else
+            previous_number="$(
+              gh pr list --base main --state all --limit 100 --json number,state,title,headRefName |
+                jq -r --arg prefix "$branch_prefix" --arg title "$candidate_title" \
+                  '[.[] | select(.state != "OPEN" and .title == $title and (.headRefName | startswith($prefix)))][0].number // empty'
+            )"
+            if [[ -n "$previous_number" ]]; then
+              echo "pr_action=none" >> "$GITHUB_OUTPUT"
+              echo "upload_report=false" >> "$GITHUB_OUTPUT"
+              echo "verify=false" >> "$GITHUB_OUTPUT"
+              echo "$REGISTRY revision was already reviewed in PR #$previous_number; reopen it explicitly to reconsider."
+              exit 0
+            fi
+            branch="${branch_prefix}${CANDIDATE_REVISION}"
+          fi
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$existing_number" >> "$GITHUB_OUTPUT"
+
+          remote_commit=""
           if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
             git fetch origin "$branch:refs/remotes/origin/$branch"
             remote_commit="$(git rev-parse "refs/remotes/origin/$branch")"
             remote_tree="$(git show -s --format=%T "$remote_commit")"
             remote_parents="$(git show -s --format=%P "$remote_commit")"
-            if [[ "$remote_tree" != "$candidate_tree" || "$remote_parents" != "$base_sha" ]]; then
-              echo "Immutable candidate branch does not match its base and complete tree: $branch" >&2
-              exit 1
-            fi
-            existing_number="$(gh pr list --head "$branch" --state all --json number --jq '.[0].number // empty')"
-            existing_state="$(gh pr list --head "$branch" --state all --json state --jq '.[0].state // empty')"
-            case "$existing_state" in
-              "")
-                echo "create_pr=true" >> "$GITHUB_OUTPUT"
-                echo "verify=true" >> "$GITHUB_OUTPUT"
-                ;;
-              OPEN)
+            if [[ "$remote_tree" == "$candidate_tree" && "$remote_parents" == "$base_sha" ]]; then
+              echo "pr_action=$([[ -n "$existing_number" ]] && echo none || echo create)" >> "$GITHUB_OUTPUT"
+              echo "upload_report=$([[ -n "$existing_number" ]] && echo false || echo true)" >> "$GITHUB_OUTPUT"
+              if [[ -n "$existing_number" ]]; then
                 successful_checks="$(gh api "repos/$GITHUB_REPOSITORY/commits/$remote_commit/check-runs" \
                   --jq '[.check_runs[] | select(.name == "verify" and .conclusion == "success")] | length')"
                 if [[ "$successful_checks" == "0" ]]; then
@@ -128,46 +154,56 @@ jobs:
                   echo "verify=false" >> "$GITHUB_OUTPUT"
                 fi
                 echo "$REGISTRY candidate is already open as PR #$existing_number; left its commit and review unchanged."
-                ;;
-              CLOSED)
-                echo "verify=false" >> "$GITHUB_OUTPUT"
-                echo "$REGISTRY candidate was rejected in PR #$existing_number; reopen it explicitly to reconsider."
-                ;;
-              MERGED)
-                echo "verify=false" >> "$GITHUB_OUTPUT"
-                echo "$REGISTRY candidate was already merged in PR #$existing_number."
-                ;;
-            esac
-            exit 0
+              else
+                echo "verify=true" >> "$GITHUB_OUTPUT"
+              fi
+              exit 0
+            fi
           fi
 
           git switch -c "$branch"
-          git commit -m "chore(registry): propose $REGISTRY revision"
-          git push origin "$branch"
-          echo "create_pr=true" >> "$GITHUB_OUTPUT"
+          git commit -m "chore(registry): propose $REGISTRY ${CANDIDATE_REVISION:0:12}"
+          if [[ -n "$remote_commit" ]]; then
+            git push \
+              --force-with-lease="refs/heads/$branch:$remote_commit" \
+              origin "HEAD:refs/heads/$branch"
+          else
+            git push origin "HEAD:refs/heads/$branch"
+          fi
+          echo "pr_action=$([[ -n "$existing_number" ]] && echo update || echo create)" >> "$GITHUB_OUTPUT"
+          echo "upload_report=true" >> "$GITHUB_OUTPUT"
           echo "verify=true" >> "$GITHUB_OUTPUT"
       - name: Upload full review report
-        if: steps.candidate.outputs.create_pr == 'true'
+        if: steps.candidate.outputs.upload_report == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: registry-update-${{ matrix.registry }}-${{ matrix.candidate_revision }}
           path: ${{ runner.temp }}/registry-update-full.md
           if-no-files-found: error
           retention-days: 90
-      - name: Create candidate PR
-        if: steps.candidate.outputs.create_pr == 'true'
+      - name: Create or update candidate PR
+        if: steps.candidate.outputs.pr_action == 'create' || steps.candidate.outputs.pr_action == 'update'
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ steps.candidate.outputs.branch }}
+          PR_ACTION: ${{ steps.candidate.outputs.pr_action }}
+          PR_NUMBER: ${{ steps.candidate.outputs.pr_number }}
           REGISTRY: ${{ matrix.registry }}
           CANDIDATE_REVISION: ${{ matrix.candidate_revision }}
         run: |
-          gh pr create \
-            --base main \
-            --head "$BRANCH" \
-            --title "chore(registry): review $REGISTRY ${CANDIDATE_REVISION:0:12}" \
-            --body-file "$RUNNER_TEMP/registry-update.md"
-      - name: Verify immutable candidate
+          title="chore(registry): review $REGISTRY ${CANDIDATE_REVISION:0:12}"
+          if [[ "$PR_ACTION" == "create" ]]; then
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "$title" \
+              --body-file "$RUNNER_TEMP/registry-update.md"
+          else
+            gh pr edit "$PR_NUMBER" \
+              --title "$title" \
+              --body-file "$RUNNER_TEMP/registry-update.md"
+          fi
+      - name: Verify candidate
         if: steps.candidate.outputs.verify == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
