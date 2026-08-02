@@ -156,9 +156,7 @@ export async function getPluginDownload(event: RuntimeEvent, pluginID: string) {
   const current = await currentPluginRelease(store, pluginID)
   if (!current) return undefined
   const digest = current.release.artifact.digest
-  const artifact = store.getArtifactStream
-    ? await store.getArtifactStream(digest)
-    : await store.getArtifact(digest).then((value) => value && ({ descriptor: value.descriptor, body: value.bytes }))
+  const artifact = await store.getArtifactStream(digest)
   if (!artifact) throw new Error(`Current Plugin Artifact is missing: ${pluginID}/${digest}`)
   return { ...artifact, revision: current.state.current_release! }
 }

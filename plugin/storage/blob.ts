@@ -2,8 +2,7 @@ import { sha256 } from '#registry/digest'
 import { assertIdentifier } from '#registry/definition'
 import {
   conditionalBlobBackend,
-  streamingBlobBackend,
-  type BlobBackend,
+  type StreamingBlobBackend,
 } from '#registry/storage/contracts'
 import { putImmutableObject } from '#registry/storage/immutable'
 import { assertDigest, verifiedAssetStream } from '#registry/storage/validation'
@@ -52,11 +51,9 @@ function validateArtifact(descriptor: PluginArtifactDescriptor, digest: string) 
 
 export class BlobPluginReleaseStore implements PluginReleaseStore {
   private readonly conditionalBackend
-  private readonly streamingBackend
 
-  constructor(private readonly backend: BlobBackend) {
+  constructor(private readonly backend: StreamingBlobBackend) {
     this.conditionalBackend = conditionalBlobBackend(backend)
-    this.streamingBackend = streamingBlobBackend(backend)
   }
 
   async listPluginIDs() {
@@ -170,31 +167,15 @@ export class BlobPluginReleaseStore implements PluginReleaseStore {
     }
   }
 
-  async getArtifact(digest: string) {
-    const value = assertDigest(digest)
-    const bytes = await this.backend.get(`plugin-artifacts/${value}.tar.gz`)
-    if (!bytes) return null
-    const descriptor: PluginArtifactDescriptor = {
-      format: 'memoh_plugin_v1', digest: value, size: bytes.length, content_type: 'application/gzip',
-    }
-    validateArtifact(descriptor, value)
-    if (await sha256(bytes) !== value) throw new Error(`Stored Plugin Artifact is corrupt: ${value}`)
-    return { descriptor, bytes }
-  }
-
   async getArtifactStream(digest: string) {
     const value = assertDigest(digest)
-    if (this.streamingBackend) {
-      const streamed = await this.streamingBackend.getStream(`plugin-artifacts/${value}.tar.gz`)
-      if (!streamed) return null
-      if (streamed.size == null) throw new Error(`Stored Plugin Artifact size is unavailable: ${value}`)
-      const descriptor: PluginArtifactDescriptor = {
-        format: 'memoh_plugin_v1', digest: value, size: streamed.size, content_type: 'application/gzip',
-      }
-      validateArtifact(descriptor, value)
-      return { descriptor, body: verifiedAssetStream(streamed.body, descriptor, 'Plugin Artifact') }
+    const streamed = await this.backend.getStream(`plugin-artifacts/${value}.tar.gz`)
+    if (!streamed) return null
+    if (streamed.size == null) throw new Error(`Stored Plugin Artifact size is unavailable: ${value}`)
+    const descriptor: PluginArtifactDescriptor = {
+      format: 'memoh_plugin_v1', digest: value, size: streamed.size, content_type: 'application/gzip',
     }
-    const artifact = await this.getArtifact(value)
-    return artifact ? { descriptor: artifact.descriptor, body: artifact.bytes } : null
+    validateArtifact(descriptor, value)
+    return { descriptor, body: verifiedAssetStream(streamed.body, descriptor, 'Plugin Artifact') }
   }
 }
