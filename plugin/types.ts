@@ -87,13 +87,20 @@ export interface PluginRelease {
   skills: PluginResolvedSkill[]
 }
 
+export interface PluginReleaseCurrentSummary {
+  revision: string
+  published_at: string
+  name: string
+  version: string
+}
+
 /** The only mutable object for one Plugin. */
 export interface PluginReleaseState {
   schema_version: '1'
   plugin_id: string
   enabled: boolean
   current_release?: string
-  published_at?: string
+  current_summary?: PluginReleaseCurrentSummary
 }
 
 export type PublicPluginArtifactDescriptor = PluginArtifactDescriptor & { download_url: string }

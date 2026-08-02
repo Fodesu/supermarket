@@ -32,12 +32,14 @@ function validateState(state: PluginReleaseState, pluginID: string) {
     throw new Error(`Invalid Plugin release state: ${pluginID}`)
   }
   if (!state.current_release) {
-    if (state.published_at) throw new Error(`Plugin state has a publication time without a release: ${pluginID}`)
+    if (state.current_summary) throw new Error(`Plugin state has a summary without a release: ${pluginID}`)
     return
   }
   assertDigest(state.current_release)
-  if (!state.published_at || !Number.isFinite(Date.parse(state.published_at))) {
-    throw new Error(`Plugin state has an invalid publication time: ${pluginID}`)
+  const summary = state.current_summary
+  if (!summary || summary.revision !== state.current_release || !summary.name || !summary.version
+    || !Number.isFinite(Date.parse(summary.published_at))) {
+    throw new Error(`Plugin state has an invalid current summary: ${pluginID}`)
   }
 }
 
@@ -129,7 +131,7 @@ export class BlobPluginReleaseStore implements PluginReleaseStore {
   ) {
     const id = assertIdentifier(pluginID, 'plugin ID')
     if (bytes.length > MAX_PLUGIN_RELEASE_BYTES) throw new Error(`Plugin release exceeds ${MAX_PLUGIN_RELEASE_BYTES} bytes: ${id}`)
-    parsePluginRelease(bytes, id)
+    const release = parsePluginRelease(bytes, id)
     const revision = await sha256(bytes)
     if (options.expectedRevision && revision !== assertDigest(options.expectedRevision)) {
       throw new Error(`${id}: Plugin release does not match approved revision ${options.expectedRevision}`)
@@ -147,7 +149,12 @@ export class BlobPluginReleaseStore implements PluginReleaseStore {
       plugin_id: id,
       enabled: true,
       current_release: revision,
-      published_at: publishedAt,
+      current_summary: {
+        revision,
+        published_at: publishedAt,
+        name: release.plugin.name,
+        version: release.plugin.version,
+      },
     }, options.expectedVersion)
     return revision
   }

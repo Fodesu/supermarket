@@ -75,7 +75,7 @@ async function currentPluginRelease(
   pluginID: string,
 ): Promise<CurrentPluginRelease | null> {
   const state = await store.getState(pluginID)
-  if (!state?.enabled || !state.current_release || !state.published_at) return null
+  if (!state?.enabled || !state.current_release || !state.current_summary) return null
   const release = await cachedRelease(store, pluginID, state.current_release)
   if (!release) throw new Error(`Current Plugin release is missing: ${pluginID}/${state.current_release}`)
   return { state, release }
@@ -87,11 +87,12 @@ function publicArtifact<T extends { digest: string }>(artifact: T, kind: 'plugin
 
 function publicPlugin(current: CurrentPluginRelease): PublishedPluginEntry {
   const revision = current.state.current_release!
+  const publishedAt = current.state.current_summary!.published_at
   return {
     ...current.release.plugin,
     release: {
       revision,
-      published_at: current.state.published_at!,
+      published_at: publishedAt,
       artifact: publicArtifact(current.release.artifact, 'plugin'),
       skills: current.release.skills.map((skill) => ({
         ...skill,
