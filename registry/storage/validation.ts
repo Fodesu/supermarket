@@ -18,11 +18,9 @@ import {
   MAX_REGISTRY_SOURCE_FILES,
 } from '../budget'
 import { assertSafeArchivePaths, MEMOH_DIRECT_OWNER_PATH } from '#lib/archive'
+import { assertDigest } from '#lib/digest'
 
-export function assertDigest(value: string): string {
-  if (!/^[a-f0-9]{64}$/.test(value)) throw new Error(`Invalid artifact digest: ${value}`)
-  return value
-}
+export { assertDigest } from '#lib/digest'
 
 const artifactBlobSchema = z.object({
   format: z.literal('memoh_skill_v1'),
