@@ -10,7 +10,6 @@ import { BlobSkillRegistryStore } from '#registry/storage/blob'
 import type { SkillRegistryStore } from '#registry/storage/contracts'
 import { LocalSkillRegistryStore } from '#registry/storage/local'
 import { S3BlobBackend } from '#registry/storage/s3'
-import { assertSkillArtifactsAvailable } from '#registry/storage/availability'
 import { buildPluginReleaseCandidates } from '#plugin/release'
 import { PluginReleasePublisher } from '#plugin/publish/publisher'
 import {
@@ -182,12 +181,11 @@ export async function publishPluginReleases(input: {
   return { results, failures }
 }
 
-export async function assertPartialRegistryDependencies(input: {
+export async function assertPartialRegistrySnapshotsPublished(input: {
   selectedRegistry: string
   candidates: Array<Pick<SkillRegistryCandidate, 'definition' | 'revision'>>
   store: SkillRegistryStore
 }) {
-  const artifacts: Array<{ digest: string; size: number }> = []
   for (const candidate of input.candidates) {
     if (candidate.definition.id === input.selectedRegistry) continue
     const state = await input.store.getState(candidate.definition.id)
@@ -204,22 +202,6 @@ export async function assertPartialRegistryDependencies(input: {
         + `${candidate.definition.id}/${candidate.revision}; repair immutable storage before partial publication`,
       )
     }
-    for (const skill of snapshot.skills) {
-      artifacts.push(skill.artifact)
-    }
-  }
-  try {
-    await assertSkillArtifactsAvailable(
-      input.store,
-      artifacts,
-      `${input.selectedRegistry}: approved Registry Artifact`,
-    )
-  } catch (error) {
-    throw new Error(
-      `${error instanceof Error ? error.message : String(error)}; `
-      + 'repair immutable storage before partial publication',
-      { cause: error },
-    )
   }
 }
 
@@ -244,7 +226,7 @@ async function preflightPartialPublication(input: {
       snapshot: candidate.snapshot,
     })
   }
-  await assertPartialRegistryDependencies({
+  await assertPartialRegistrySnapshotsPublished({
     selectedRegistry: input.selectedRegistry,
     candidates,
     store: input.store,
