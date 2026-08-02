@@ -15,6 +15,7 @@ describe('Registry update report', () => {
       source_after: '2'.repeat(40),
       snapshot_before: 'a'.repeat(64),
       snapshot_after: 'b'.repeat(64),
+      skipped_packages: [],
       packages: [{
         package_id: 'tools',
         status: 'changed',
@@ -27,6 +28,7 @@ describe('Registry update report', () => {
         })),
       }],
       summary: {
+        packages_skipped: 0,
         packages_changed: 1,
         skills_added: 0,
         skills_removed: 0,
@@ -64,7 +66,7 @@ describe('Registry update report', () => {
     )
     const fullReport = renderFullRegistryUpdateReport(registryDiff, undefined, pluginDiffs)
     expect(report.length).toBeLessThanOrEqual(MAX_REGISTRY_UPDATE_REPORT_LENGTH)
-    expect(report).toContain('Report truncated at a complete Skill boundary')
+    expect(report).toContain('Report truncated at a complete review item boundary')
     expect(report).toContain('Plugin release details truncated at a complete Skill boundary')
     expect(report).toContain(fullReportURL)
     expect(fullReport).toContain('plugin-99')

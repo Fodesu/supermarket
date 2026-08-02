@@ -75,6 +75,7 @@ jobs:
             --report "$RUNNER_TEMP/registry-update.md" \
             --full-report "$RUNNER_TEMP/registry-update-full.md" \
             --full-report-url "$FULL_REPORT_URL"
+          cat "$RUNNER_TEMP/registry-update.md" >> "$GITHUB_STEP_SUMMARY"
       - id: candidate
         env:
           GH_TOKEN: ${{ github.token }}

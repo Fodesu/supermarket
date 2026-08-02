@@ -119,6 +119,7 @@ function reviewCandidate(candidate: SkillRegistryCandidate): RegistryReviewCandi
     source_revision: candidate.source_revision,
     revision: candidate.revision,
     skills: candidate.skills,
+    diagnostics: candidate.diagnostics,
     review: candidate.review,
   }
 }
