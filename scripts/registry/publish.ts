@@ -198,7 +198,7 @@ export async function assertPartialRegistryDependencies(input: {
     if (!snapshot) {
       throw new Error(
         `${input.selectedRegistry}: approved Registry Snapshot is missing: `
-        + `${candidate.definition.id}/${candidate.revision}; run a full Registry publication first`,
+        + `${candidate.definition.id}/${candidate.revision}; repair immutable storage before partial publication`,
       )
     }
     for (const skill of snapshot.skills) {
@@ -213,7 +213,8 @@ export async function assertPartialRegistryDependencies(input: {
     )
   } catch (error) {
     throw new Error(
-      `${error instanceof Error ? error.message : String(error)}; repair it with a full Registry publication`,
+      `${error instanceof Error ? error.message : String(error)}; `
+      + 'repair immutable storage before partial publication',
       { cause: error },
     )
   }
