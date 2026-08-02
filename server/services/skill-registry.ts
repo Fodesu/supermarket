@@ -12,14 +12,11 @@ import { R2BlobBackend } from '#registry/storage/r2'
 import { BlobSkillRegistryStore } from '#registry/storage/blob'
 import type { SkillRegistryStore } from '#registry/storage/contracts'
 import { RegistrySnapshotCache } from './registry-snapshot-cache'
+import { createRuntimeStoreResolver, type RuntimeStoreEvent } from './runtime-store'
 
-let localStore: Promise<SkillRegistryStore> | undefined
-const r2Stores = new WeakMap<object, SkillRegistryStore>()
 const snapshotCaches = new WeakMap<object, RegistrySnapshotCache>()
 
-interface RuntimeEvent {
-  req: { runtime?: unknown }
-}
+type RuntimeEvent = RuntimeStoreEvent
 
 function snapshotCache(store: SkillRegistryStore) {
   let cache = snapshotCaches.get(store)
@@ -34,24 +31,11 @@ function cachedSnapshot(store: SkillRegistryStore, registryID: string, revision:
   return snapshotCache(store).get(store, registryID, revision)
 }
 
-export async function getRuntimeSkillRegistryStore(event?: RuntimeEvent): Promise<SkillRegistryStore> {
-  const runtime = event?.req.runtime as { cloudflare?: { env?: Partial<ApiEnv> } } | undefined
-  const cloudflare = runtime?.cloudflare
-  if (cloudflare) {
-    const bucket = cloudflare.env?.SKILL_REGISTRY_BUCKET
-    if (!bucket || typeof bucket !== 'object') {
-      throw new Error('Cloudflare runtime is missing the SKILL_REGISTRY_BUCKET R2 binding')
-    }
-    let store = r2Stores.get(bucket)
-    if (!store) {
-      store = new BlobSkillRegistryStore(new R2BlobBackend(bucket))
-      r2Stores.set(bucket, store)
-    }
-    return store
-  }
-  localStore ??= import('#registry/storage/local').then(({ LocalSkillRegistryStore }) => new LocalSkillRegistryStore())
-  return localStore
-}
+export const getRuntimeSkillRegistryStore = createRuntimeStoreResolver<SkillRegistryStore>({
+  remote: (bucket) => new BlobSkillRegistryStore(new R2BlobBackend(bucket)),
+  local: () => import('#registry/storage/local')
+    .then(({ LocalSkillRegistryStore }) => new LocalSkillRegistryStore()),
+})
 
 export async function getEnabledSkillRegistrySnapshots(
   store: SkillRegistryStore,
