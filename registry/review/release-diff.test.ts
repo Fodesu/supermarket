@@ -92,6 +92,7 @@ describe('Registry release review', () => {
       source_after: '2'.repeat(40),
       snapshot_before: 'a'.repeat(64),
       snapshot_after: 'b'.repeat(64),
+      skipped_packages: [],
       packages: [
         {
           package_id: 'added-package',
@@ -132,6 +133,7 @@ describe('Registry release review', () => {
         },
       ],
       summary: {
+        packages_skipped: 0,
         packages_changed: 3,
         skills_added: 1,
         skills_removed: 1,
@@ -147,6 +149,7 @@ Snapshot: \`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\` â
 
 ### Summary
 
+- Packages skipped: 0
 - Packages changed: 3
 - Skills added: 1
 - Skills removed: 1
@@ -215,6 +218,7 @@ Merging this PR approves the pinned source and release.lock.json. R2 publication
     const report = renderRegistryReleaseDiff(diff)
 
     expect(diff.summary).toEqual({
+      packages_skipped: 0,
       packages_changed: 1,
       skills_added: 0,
       skills_removed: 0,
@@ -252,6 +256,28 @@ Merging this PR approves the pinned source and release.lock.json. R2 publication
     })
   })
 
+  test('includes the concrete error for every skipped Package', () => {
+    const previous = candidate('1'.repeat(40), 'a'.repeat(64), 'Same', '# Same\n')
+    const next = candidate('2'.repeat(40), 'a'.repeat(64), 'Same', '# Same\n')
+    next.diagnostics.push({
+      package_id: 'broken-package',
+      code: 'package_invalid',
+      message: 'Skipped package: Unsafe tar path:\n scripts/../secret',
+    })
+
+    const diff = diffRegistryCandidates(previous, next)
+    const report = renderRegistryReleaseDiff(diff)
+
+    expect(diff.summary.packages_skipped).toBe(1)
+    expect(diff.skipped_packages).toEqual([{
+      package_id: 'broken-package',
+      message: 'Skipped package: Unsafe tar path:\n scripts/../secret',
+    }])
+    expect(report).toContain('- Packages skipped: 1')
+    expect(report).toContain('broken-package')
+    expect(report).toContain('Skipped package: Unsafe tar path: scripts/../secret')
+  })
+
   test('includes bounded UTF-8 diffs for changed files beyond SKILL.md', () => {
     const previous = candidate('1'.repeat(40), 'a'.repeat(64), 'Same', '# Same\n')
     const next = candidate('2'.repeat(40), 'a'.repeat(64), 'Same', '# Same\n')
@@ -278,6 +304,7 @@ Merging this PR approves the pinned source and release.lock.json. R2 publication
       source_after: '2'.repeat(40),
       snapshot_before: 'a'.repeat(64),
       snapshot_after: 'b'.repeat(64),
+      skipped_packages: [],
       packages: [{
         package_id: 'tools',
         status: 'changed',
@@ -293,6 +320,7 @@ Merging this PR approves the pinned source and release.lock.json. R2 publication
         })),
       }],
       summary: {
+        packages_skipped: 0,
         packages_changed: 1,
         skills_added: 0,
         skills_removed: 0,
@@ -302,7 +330,7 @@ Merging this PR approves the pinned source and release.lock.json. R2 publication
     const report = renderRegistryReleaseDiff(diff)
 
     expect(report.length).toBeLessThanOrEqual(60_000)
-    expect(report).toContain('Report truncated at a complete Skill boundary')
+    expect(report).toContain('Report truncated at a complete review item boundary')
     expect(report.match(/<details>/g)?.length).toBe(report.match(/<\/details>/g)?.length)
     expect(report.match(/```+diff/g)?.length).toBe(report.match(/\n```+\n/g)?.length)
   })

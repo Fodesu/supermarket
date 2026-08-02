@@ -14,7 +14,7 @@ import type {
 
 export type RegistryReviewCandidate = Pick<
   SkillRegistryCandidate,
-  'definition' | 'source_revision' | 'revision' | 'skills' | 'review'
+  'definition' | 'source_revision' | 'revision' | 'skills' | 'diagnostics' | 'review'
 >
 
 type ChangeStatus = 'added' | 'removed' | 'changed'
@@ -59,8 +59,10 @@ export interface RegistryReleaseDiff {
   source_after: string
   snapshot_before: string
   snapshot_after: string
+  skipped_packages: Array<{ package_id: string; message: string }>
   packages: PackageReleaseDiff[]
   summary: {
+    packages_skipped: number
     packages_changed: number
     skills_added: number
     skills_removed: number
@@ -223,14 +225,20 @@ export function diffRegistryCandidates(
   }
 
   const changedSkills = packages.flatMap((item) => item.skills)
+  const skippedPackages = candidate.diagnostics.flatMap((diagnostic) =>
+    diagnostic.code === 'package_invalid' && diagnostic.package_id
+      ? [{ package_id: diagnostic.package_id, message: diagnostic.message }]
+      : [])
   return {
     registry: previous.definition.id,
     source_before: previous.source_revision,
     source_after: candidate.source_revision,
     snapshot_before: previous.revision,
     snapshot_after: candidate.revision,
+    skipped_packages: skippedPackages,
     packages,
     summary: {
+      packages_skipped: skippedPackages.length,
       packages_changed: packages.length,
       skills_added: changedSkills.filter((skill) => skill.status === 'added').length,
       skills_removed: changedSkills.filter((skill) => skill.status === 'removed').length,
@@ -260,6 +268,11 @@ function shortDigest(value?: string) {
 function fileRevisionLabel(file?: FileRevision) {
   if (!file) return '—'
   return `${inlineCode(file.digest)} (${file.size} B, ${file.mode.toString(8).padStart(4, '0')})`
+}
+
+function diagnosticMessage(value: string, maximum: number) {
+  const compact = value.replace(/\s+/g, ' ').trim()
+  return compact.length <= maximum ? compact : `${compact.slice(0, maximum - 3)}...`
 }
 
 function renderSkill(skill: SkillReleaseDiff) {
@@ -293,10 +306,10 @@ export function renderRegistryReleaseDiff(
   fullReportURL?: string,
 ) {
   const truncationNotice = fullReportURL
-    ? `_Report truncated at a complete Skill boundary; [download the full workflow report](${fullReportURL}) while it is retained, then use the pinned source revision for the remaining changes._`
+    ? `_Report truncated at a complete review item boundary; [download the full workflow report](${fullReportURL}) while it is retained, then use the pinned source revision for the remaining changes._`
     : compareURL
-      ? '_Report truncated at a complete Skill boundary; use the upstream comparison link for the remaining source changes._'
-      : '_Report truncated at a complete Skill boundary; inspect the pinned source revision for the remaining changes._'
+      ? '_Report truncated at a complete review item boundary; use the upstream comparison link for the remaining source changes._'
+      : '_Report truncated at a complete review item boundary; inspect the pinned source revision for the remaining changes._'
   const approvalNotice = 'Merging this PR approves the pinned source and release.lock.json. R2 publication rebuilds the Snapshot and requires its revision to match that lock.'
   const output = markdownLines([
     `## ${diff.registry} Registry update`,
@@ -309,6 +322,7 @@ export function renderRegistryReleaseDiff(
     '',
     '### Summary',
     '',
+    `- Packages skipped: ${diff.summary.packages_skipped}`,
     `- Packages changed: ${diff.summary.packages_changed}`,
     `- Skills added: ${diff.summary.skills_added}`,
     `- Skills removed: ${diff.summary.skills_removed}`,
@@ -319,7 +333,30 @@ export function renderRegistryReleaseDiff(
   const reservedFooter = approvalNotice.length >= truncationNotice.length
     ? approvalNotice
     : truncationNotice
-  for (const packageDiff of diff.packages) {
+  if (diff.skipped_packages.length) {
+    const heading = markdownLines(['### Skipped Packages', ''])
+    if (combinedMarkdownLength(output, heading, markdownLines(['', reservedFooter, ''])) > maximum) {
+      truncated = true
+    } else {
+      appendMarkdownLines(output, heading)
+      for (const diagnostic of diff.skipped_packages) {
+        const message = diagnosticMessage(
+          diagnostic.message,
+          Number.isFinite(maximum) ? 2_000 : Number.POSITIVE_INFINITY,
+        )
+        const line = markdownLines([
+          `- ${inlineCode(diagnostic.package_id)}: ${inlineCode(message)}`,
+        ])
+        if (combinedMarkdownLength(output, line, markdownLines(['', reservedFooter, ''])) > maximum) {
+          truncated = true
+          break
+        }
+        appendMarkdownLines(output, line)
+      }
+      appendMarkdownLines(output, markdownLines(['']))
+    }
+  }
+  for (const packageDiff of truncated ? [] : diff.packages) {
     const packageBlock = markdownLines([
       '<details>',
       `<summary><code>${packageDiff.package_id}</code> — ${packageDiff.status}, ${packageDiff.skills.length} Skill(s)</summary>`,
