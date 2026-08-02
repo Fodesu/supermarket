@@ -94,6 +94,9 @@ describe('Marketplace HTTP protocol', () => {
     const digest = await sha256(archive)
     const artifact: SkillArtifactDescriptor = {
       format: 'memoh_skill_v1', digest, size: archive.length,
+      uncompressed_size: 47,
+      archive_size: serializedArchive.length,
+      file_count: 2,
       content_type: 'application/gzip',
     }
     const imageBytes = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"/>')
@@ -174,6 +177,9 @@ describe('Marketplace HTTP protocol', () => {
     const detailResponse = await app.fetch(new Request('http://local/api/registries/example/packages/tools/skills/demo'))
     const detail = await detailResponse.json() as any
     expect(detail.artifact.download_url).toBe(`/api/artifacts/skill/${digest}`)
+    expect(detail.artifact).toMatchObject({
+      uncompressed_size: 47, archive_size: serializedArchive.length, file_count: 2,
+    })
     expect(detail.icon.card).toEqual(image)
     const imageResponse = await app.fetch(new Request(`http://local/api/artifacts/icon/${detail.icon.card.digest}`))
     expect(imageResponse.headers.get('content-type')).toBe('image/svg+xml')
@@ -209,7 +215,10 @@ describe('Marketplace HTTP protocol', () => {
           },
           skills: [{
             registry_revision: snapshotRevision,
-            artifact: { digest, download_url: `/api/artifacts/skill/${digest}` },
+            artifact: {
+              digest, uncompressed_size: 47, archive_size: serializedArchive.length, file_count: 2,
+              download_url: `/api/artifacts/skill/${digest}`,
+            },
           }],
         },
       }],

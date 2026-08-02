@@ -4,7 +4,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { parseGzipTarArchive } from '#client/archive'
 import type { CatalogSkill, SkillRegistrySnapshot } from '#registry/types'
-import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '#registry/types'
+import {
+  MAX_SKILL_ARTIFACT_ARCHIVE_BYTES,
+  MAX_SKILL_ARTIFACT_COMPRESSED_BYTES,
+  MAX_SKILL_ARTIFACT_FILES,
+  MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
+} from '#registry/types'
 import { compactCatalogSkill } from '#registry/snapshot'
 import {
   assertPluginReleaseRevision,
@@ -13,7 +18,10 @@ import {
   serializePluginRelease,
 } from './release'
 import {
+  MAX_PLUGIN_SKILL_ARTIFACTS_ARCHIVE_BYTES,
   MAX_PLUGIN_SKILL_ARTIFACTS_COMPRESSED_BYTES,
+  MAX_PLUGIN_SKILL_ARTIFACTS_FILES,
+  MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES,
   type PluginRelease,
 } from './types'
 
@@ -39,6 +47,9 @@ async function fixture() {
     format: 'memoh_skill_v1' as const,
     digest: 'a'.repeat(64),
     size: 123,
+    uncompressed_size: 456,
+    archive_size: 1_024,
+    file_count: 1,
     content_type: 'application/gzip' as const,
   }
   const skill: CatalogSkill = {
@@ -79,6 +90,7 @@ function releaseWithSkills(count: number, artifactOverrides: Partial<PluginRelea
       install_id: `${reference.registry_id}+${reference.package_id}+${reference.skill_id}`,
       artifact: {
         format: 'memoh_skill_v1', digest: 'c'.repeat(64), size: 1,
+        uncompressed_size: 1, archive_size: 1, file_count: 1,
         content_type: 'application/gzip',
         ...artifactOverrides,
       },
@@ -98,6 +110,9 @@ describe('Plugin release candidates', () => {
       registry_revision: 'b'.repeat(64), source_revision: 'e'.repeat(64),
       install_id: 'example+tools+search', artifact: { digest: 'a'.repeat(64) },
       runtime_requirements: { os: ['linux'] },
+    })
+    expect(candidate!.release.skills[0]!.artifact).toMatchObject({
+      uncompressed_size: 456, archive_size: 1_024, file_count: 1,
     })
     const releaseBytes = serializePluginRelease(candidate!.release)
     expect(parsePluginRelease(releaseBytes, 'example')).toEqual(candidate!.release)
@@ -125,16 +140,35 @@ describe('Plugin release candidates', () => {
       .rejects.toThrow('references missing Registry Skill')
   })
 
-  test('rejects releases whose Skill Artifacts exceed the compressed install budget', () => {
+  test('rejects releases whose Skill Artifacts exceed the Memoh install budgets', () => {
+    expect(() => parsePluginRelease(serializePluginRelease(releaseWithSkills(26, {
+      uncompressed_size: MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
+    })), 'example'))
+      .toThrow(`${MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES} byte uncompressed limit`)
     expect(() => parsePluginRelease(serializePluginRelease(releaseWithSkills(22, {
       size: MAX_SKILL_ARTIFACT_COMPRESSED_BYTES,
     })), 'example'))
       .toThrow(`${MAX_PLUGIN_SKILL_ARTIFACTS_COMPRESSED_BYTES} byte compressed limit`)
+    expect(() => parsePluginRelease(serializePluginRelease(releaseWithSkills(26, {
+      archive_size: MAX_SKILL_ARTIFACT_ARCHIVE_BYTES,
+    })), 'example'))
+      .toThrow(`${MAX_PLUGIN_SKILL_ARTIFACTS_ARCHIVE_BYTES} byte archive limit`)
+    expect(() => parsePluginRelease(serializePluginRelease(releaseWithSkills(11, {
+      file_count: MAX_SKILL_ARTIFACT_FILES,
+    })), 'example'))
+      .toThrow(`${MAX_PLUGIN_SKILL_ARTIFACTS_FILES} file limit`)
+  })
+
+  test('rejects Skill Artifact descriptors without extraction metadata', () => {
+    const release = releaseWithSkills(1)
+    delete (release.skills[0]!.artifact as Partial<typeof release.skills[0]['artifact']>).archive_size
+    expect(() => parsePluginRelease(serializePluginRelease(release), 'example'))
+      .toThrow('invalid Skill Artifact')
   })
 
   test('rejects different descriptors for the same Skill Artifact digest', () => {
     const release = releaseWithSkills(2)
-    release.skills[1]!.artifact.size = 2
+    release.skills[1]!.artifact.uncompressed_size = 2
     expect(() => parsePluginRelease(serializePluginRelease(release), 'example'))
       .toThrow('contains inconsistent descriptors for Skill Artifact')
   })

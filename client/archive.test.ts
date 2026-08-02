@@ -16,6 +16,22 @@ const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
 
 describe('Skill Registry client archives', () => {
+  test('packages the extraction metadata required by Memoh', async () => {
+    const files = {
+      'SKILL.md': { bytes: new TextEncoder().encode('---\nname: metadata\n---\n'), mode: 0o644 as const },
+      'scripts/run.sh': { bytes: new TextEncoder().encode('#!/bin/sh\n'), mode: 0o755 as const },
+    }
+    const archive = await createTar(files, '')
+    const packaged = await packageSkill(files)
+
+    expect(packaged.uncompressedSize).toBe(
+      files['SKILL.md'].bytes.length + files['scripts/run.sh'].bytes.length,
+    )
+    expect(packaged.archiveSize).toBe(archive.length)
+    expect(packaged.fileCount).toBe(2)
+    expect(packaged.bytes).toEqual(await gzip(archive))
+  })
+
   test('creates archives with a canonical gzip header', async () => {
     const files = {
       'SKILL.md': new TextEncoder().encode('---\nname: deterministic\n---\n'),

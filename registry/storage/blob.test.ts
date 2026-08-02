@@ -31,6 +31,8 @@ async function skillArtifact(content: string) {
   })
   const descriptor: SkillArtifactDescriptor = {
     format: 'memoh_skill_v1', digest: packaged.digest, size: packaged.bytes.length,
+    uncompressed_size: packaged.uncompressedSize, archive_size: packaged.archiveSize,
+    file_count: packaged.fileCount,
     content_type: 'application/gzip',
   }
   return { descriptor, bytes: packaged.bytes }
@@ -140,6 +142,9 @@ describe('Immutable digest-addressed uploads', () => {
       artifact: {
         digest: 'b'.repeat(64),
         size: -1,
+        uncompressed_size: 1,
+        archive_size: 1,
+        file_count: 1,
       },
     })
     expect(() => validateStoredSnapshot(
@@ -147,6 +152,20 @@ describe('Immutable digest-addressed uploads', () => {
       'example',
       'registries/example/snapshot.json',
     )).toThrow('Snapshot Artifact reference')
+  })
+
+  test('rejects Snapshot Artifact descriptors without extraction metadata', () => {
+    const stored = snapshot()
+    stored.skills.push({
+      package_id: 'package', skill_id: 'skill', name: 'Skill', description: '',
+      author: { name: '' }, tags: [], category: 'other', category_name: 'Other',
+      source_path: 'skill', files: ['SKILL.md'],
+      artifact: {
+        digest: 'b'.repeat(64), size: 1, uncompressed_size: 1,
+      } as SkillRegistrySnapshot['skills'][number]['artifact'],
+    })
+    expect(() => validateStoredSnapshot(stored, 'example', 'legacy-snapshot'))
+      .toThrow('Snapshot Artifact reference')
   })
 
   test('rejects stored Snapshot bytes that do not match their revision', async () => {

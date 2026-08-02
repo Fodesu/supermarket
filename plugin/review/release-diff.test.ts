@@ -22,6 +22,7 @@ function candidate(revision: string, registryRevision: string, skillDigest: stri
       install_id: 'memoh+tools+search',
       artifact: {
         format: 'memoh_skill_v1', digest: skillDigest, size: 20,
+        uncompressed_size: 20, archive_size: 1_024, file_count: 1,
         content_type: 'application/gzip',
       },
     }],
