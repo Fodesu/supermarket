@@ -6,9 +6,7 @@ export default defineHandler(async (event) => {
   const digest = getRouterParam(event, 'digest')!
   if (!/^[a-f0-9]{64}$/.test(digest)) throw new HTTPError('Invalid artifact digest', { statusCode: 400 })
   const store = await getRuntimePluginReleaseStore(event)
-  const artifact = store.getArtifactStream
-    ? await store.getArtifactStream(digest)
-    : await store.getArtifact(digest).then((value) => value && ({ descriptor: value.descriptor, body: value.bytes }))
+  const artifact = await store.getArtifactStream(digest)
   if (!artifact) throw new HTTPError(`Plugin Artifact "${digest}" not found`, { statusCode: 404 })
   const etag = `"${digest}"`
   setResponseHeader(event, 'content-type', artifact.descriptor.content_type)

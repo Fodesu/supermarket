@@ -49,7 +49,9 @@ describe('PluginReleaseStore contract', () => {
     })
     expect(await store.getReleaseBytes('example', revision)).toEqual(releaseBytes)
     expect(await store.getRelease('example', revision)).toEqual(release)
-    expect((await store.getArtifact(artifact.digest))?.bytes).toEqual(bytes)
+    const storedArtifact = await store.getArtifactStream(artifact.digest)
+    expect(storedArtifact?.descriptor).toEqual(artifact)
+    expect(new Uint8Array(await new Response(storedArtifact!.body).arrayBuffer())).toEqual(bytes)
   })
 
   test('rejects Artifact metadata that does not match bytes', async () => {
