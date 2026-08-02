@@ -3,10 +3,9 @@ import type {
   PluginRelease,
   PluginReleaseState,
 } from '../types'
+import type { VersionedStateRead } from '#registry/storage/contracts'
 
-export type PluginReleaseStateRead =
-  | { state: PluginReleaseState | null; versioning: 'none' }
-  | { state: PluginReleaseState | null; versioning: 'conditional'; version: string | null }
+export type PluginReleaseStateRead = VersionedStateRead<PluginReleaseState>
 
 export interface PluginReleaseStore {
   listPluginIDs(): Promise<string[]>
