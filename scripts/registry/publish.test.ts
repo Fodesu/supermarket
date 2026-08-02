@@ -5,8 +5,7 @@ import path from 'node:path'
 import { serializeRegistrySnapshot } from '#registry/snapshot'
 import { LocalSkillRegistryStore } from '#registry/storage/local'
 import type { SkillRegistryDefinition, SkillRegistrySnapshot } from '#registry/types'
-import { packageSkill } from '#registry/artifacts/build'
-import { assertPartialRegistryDependencies } from './publish'
+import { assertPartialRegistrySnapshotsPublished } from './publish'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
@@ -21,14 +20,10 @@ const definition = (id: string): SkillRegistryDefinition => ({
   source: { type: 'local', path: `registries/${id}/skills` },
 })
 
-async function publishedDependency(input: { publishArtifact?: boolean; snapshotSizeOffset?: number } = {}) {
+async function publishedDependency() {
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'partial-registry-data-'))
   roots.push(dataRoot)
   const store = new LocalSkillRegistryStore(dataRoot)
-  const artifact = await packageSkill({
-    'SKILL.md': { bytes: new TextEncoder().encode('artifact'), mode: 0o644 },
-  })
-  const { bytes, digest } = artifact
   const snapshot: SkillRegistrySnapshot = {
     schema_version: '1', registry_id: 'other', registry_priority: 10,
     source: { type: 'local', revision: 'source-revision' },
@@ -37,19 +32,13 @@ async function publishedDependency(input: { publishArtifact?: boolean; snapshotS
       author: { name: 'Test' }, tags: [], category: 'tools', category_name: 'Tools',
       source_path: 'tools/search', files: ['SKILL.md'],
       artifact: {
-        digest, size: bytes.length + (input.snapshotSizeOffset ?? 0),
+        digest: 'b'.repeat(64), size: 1,
       },
     }],
     diagnostics: [],
   }
   const revision = await store.publishSnapshot(serializeRegistrySnapshot(snapshot), definition('other'))
-  if (input.publishArtifact) {
-    await store.putArtifact({
-      format: 'memoh_skill_v1', digest, size: bytes.length,
-      content_type: 'application/gzip',
-    }, bytes)
-  }
-  return { store, candidate: { definition: definition('other'), revision }, dataRoot, digest, bytes }
+  return { store, candidate: { definition: definition('other'), revision }, dataRoot }
 }
 
 describe('partial Registry publication', () => {
@@ -59,30 +48,28 @@ describe('partial Registry publication', () => {
     const other = definition('other')
     const candidate = { definition: other, revision: 'a'.repeat(64) }
 
-    await expect(assertPartialRegistryDependencies({
+    await expect(assertPartialRegistrySnapshotsPublished({
       selectedRegistry: 'selected',
       candidates: [candidate],
       store: new LocalSkillRegistryStore(dataRoot),
     })).rejects.toThrow('run a full Registry publication first')
   })
 
-  test('requires every Artifact referenced by an unchanged Registry Snapshot', async () => {
-    const missing = await publishedDependency()
-    await expect(assertPartialRegistryDependencies({
-      selectedRegistry: 'selected', candidates: [missing.candidate], store: missing.store,
-    })).rejects.toThrow('repair immutable storage before partial publication')
+  test('requires the approved Snapshot for every unchanged Registry', async () => {
+    const dependency = await publishedDependency()
+    await rm(path.join(
+      dependency.dataRoot,
+      `skill-registries/other/snapshots/${dependency.candidate.revision}.json`,
+    ))
+    await expect(assertPartialRegistrySnapshotsPublished({
+      selectedRegistry: 'selected', candidates: [dependency.candidate], store: dependency.store,
+    })).rejects.toThrow('approved Registry Snapshot is missing')
+  })
 
-    const ready = await publishedDependency({ publishArtifact: true })
-    await expect(assertPartialRegistryDependencies({
-      selectedRegistry: 'selected', candidates: [ready.candidate], store: ready.store,
+  test('does not scan every Artifact in an unchanged Registry', async () => {
+    const dependency = await publishedDependency()
+    await expect(assertPartialRegistrySnapshotsPublished({
+      selectedRegistry: 'selected', candidates: [dependency.candidate], store: dependency.store,
     })).resolves.toBeUndefined()
   })
-
-  test('rejects an Artifact whose size does not match the approved Snapshot', async () => {
-    const dependency = await publishedDependency({ publishArtifact: true, snapshotSizeOffset: 1 })
-    await expect(assertPartialRegistryDependencies({
-      selectedRegistry: 'selected', candidates: [dependency.candidate], store: dependency.store,
-    })).rejects.toThrow('does not match its descriptor')
-  })
-
 })
