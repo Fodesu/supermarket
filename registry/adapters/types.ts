@@ -4,7 +4,6 @@ import type {
   SkillIcon,
   SkillImageAsset,
   SkillRegistryDefinition,
-  SkillRuntimeRequirements,
 } from '../types'
 import type { SkillSourceFile } from '../filesystem'
 import type { RegistryBuildBudget } from '../budget'
@@ -21,7 +20,6 @@ export interface SkillCandidate {
   category: string
   category_name: string
   source_category?: string
-  runtime_requirements?: SkillRuntimeRequirements
   source_path: string
   files: Record<string, SkillSourceFile>
   icon?: SkillIcon

@@ -9,7 +9,7 @@ import {
 import { catalogSkillsFromSnapshot } from '#registry/snapshot'
 import { sha256 } from '#registry/digest'
 import { assertDigest } from '#registry/storage/validation'
-import { isSkillRuntimeOS, skillInstallID } from '#registry/definition'
+import { skillInstallID } from '#registry/definition'
 import { sameBytes } from '#registry/snapshot'
 import { packagePlugin } from './artifact'
 import { MAX_PLUGIN_ARTIFACT_COMPRESSED_BYTES } from './bundle'
@@ -87,11 +87,6 @@ function validateResolvedSkill(skill: PluginResolvedSkill, label: string) {
     || skill.artifact.file_count > MAX_SKILL_ARTIFACT_FILES) {
     throw new Error(`${label} contains an invalid Skill Artifact: ${identity}`)
   }
-  if (skill.runtime_requirements && (
-    !Array.isArray(skill.runtime_requirements.os)
-    || !skill.runtime_requirements.os.length
-    || skill.runtime_requirements.os.some((os) => !isSkillRuntimeOS(os))
-  )) throw new Error(`${label} contains invalid Skill runtime requirements: ${identity}`)
   return skill.artifact
 }
 
@@ -204,7 +199,6 @@ export async function buildPluginReleaseCandidates(
           registry_revision: current.registryRevision,
           source_revision: current.skill.source.revision,
           install_id: current.skill.install_id,
-          runtime_requirements: current.skill.runtime_requirements,
           artifact: current.skill.artifact,
         }
       })

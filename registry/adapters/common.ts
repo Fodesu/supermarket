@@ -6,7 +6,7 @@ import type {
   SkillRegistryDefinition,
 } from '../types'
 import { normalizeSkillCategory } from '../catalog'
-import { resolveSkillRuntimeRequirements, skillInstallID } from '../definition'
+import { skillInstallID } from '../definition'
 import { readDirectoryFiles, type SkillSourceFile } from '../filesystem'
 import type { SkillCandidate } from './types'
 import type { RegistryBuildBudget } from '../budget'
@@ -91,10 +91,6 @@ export async function buildSkillCandidate(input: {
     category: category.id,
     category_name: category.name,
     source_category: category.sourceName,
-    runtime_requirements: resolveSkillRuntimeRequirements(
-      definition, packageID, skillID,
-      metadata.runtime_requirements ?? data.runtime_requirements ?? packageManifest.runtime_requirements,
-    ),
     source_path: sourcePath,
     files,
     icon,

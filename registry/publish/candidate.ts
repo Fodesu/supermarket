@@ -180,7 +180,6 @@ export async function buildSkillRegistryCandidate(
           category: candidate.category,
           category_name: candidate.category_name,
           source_category: candidate.source_category,
-          runtime_requirements: candidate.runtime_requirements,
           source: {
             type: definition.source.type,
             revision: source.revision,

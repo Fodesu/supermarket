@@ -42,7 +42,7 @@ function changedSkillLocks(
     const oldSkill = before.get(identity)
     const newSkill = after.get(identity)
     if (!oldSkill || !newSkill) throw new Error(`${candidate.plugin_id}: Plugin Skill references changed while reviewing a Registry update`)
-    const metadata = (['source_revision', 'install_id', 'runtime_requirements'] as const)
+    const metadata = (['source_revision', 'install_id'] as const)
       .filter((field) => JSON.stringify(oldSkill[field]) !== JSON.stringify(newSkill[field]))
     if (oldSkill.registry_revision === newSkill.registry_revision
       && JSON.stringify(oldSkill.artifact) === JSON.stringify(newSkill.artifact)

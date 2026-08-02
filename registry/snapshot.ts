@@ -33,7 +33,6 @@ export function compactCatalogSkill(skill: CatalogSkill): SnapshotSkill {
     category: skill.category,
     category_name: skill.category_name,
     ...(skill.source_category ? { source_category: skill.source_category } : {}),
-    ...(skill.runtime_requirements?.os.length ? { runtime_requirements: skill.runtime_requirements } : {}),
     source_path: skill.source.path,
     files: skill.files,
     ...(skill.icon ? { icon: skill.icon } : {}),
@@ -63,7 +62,6 @@ export function catalogSkillsFromSnapshot(snapshot: SkillRegistrySnapshot): Cata
     category: skill.category,
     category_name: skill.category_name,
     source_category: skill.source_category,
-    runtime_requirements: skill.runtime_requirements,
     source: {
       type: snapshot.source.type,
       revision: snapshot.source.revision,

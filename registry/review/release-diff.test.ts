@@ -32,7 +32,6 @@ function skill(digest: string, description: string): CatalogSkill {
     tags: [],
     category: 'other',
     category_name: 'Other',
-    runtime_requirements: { os: [] },
     source: { type: 'local', revision: digest, path: 'skills/demo' },
     files: ['SKILL.md'],
     artifact: {
