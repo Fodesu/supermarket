@@ -20,7 +20,7 @@ import registrySkills from '../server/api/registries/[id]/skills/index.get'
 import registries from '../server/api/registries/index.get'
 import skills from '../server/api/skills/index.get'
 import type { CatalogSkill, SkillArtifactDescriptor, SkillRegistryDefinition, SkillRegistrySnapshot } from '#registry/types'
-import { compactCatalogSkill } from '#registry/snapshot'
+import { compactCatalogPackages } from '#registry/snapshot'
 import { createTar, gzip } from '#lib/archive'
 import { R2BlobBackend } from '#registry/storage/r2'
 import { sha256 } from '#registry/digest'
@@ -120,7 +120,7 @@ describe('Marketplace HTTP protocol', () => {
     }
     const snapshot: SkillRegistrySnapshot = {
       schema_version: '1', registry_id: 'example', registry_priority: 10,
-      source: { type: 'local', revision: sourceRevision }, skills: [compactCatalogSkill(skill)], diagnostics: [],
+      source: { type: 'local', revision: sourceRevision }, packages: compactCatalogPackages([skill]), diagnostics: [],
     }
     await store.putArtifact(artifact, archive)
     await store.putImage(image, imageBytes)
@@ -328,7 +328,7 @@ describe('Marketplace HTTP protocol', () => {
     const updatedSnapshot: SkillRegistrySnapshot = {
       ...snapshot,
       source: { ...snapshot.source, revision: 'f'.repeat(64) },
-      skills: [compactCatalogSkill({ ...skill, description: 'Updated Demo Skill' })],
+      packages: compactCatalogPackages([{ ...skill, description: 'Updated Demo Skill' }]),
     }
     const updatedRevision = await store.publishSnapshot(serializeRegistrySnapshot(updatedSnapshot), definition, {
       publishedAt: '2026-01-03T00:00:00.000Z',

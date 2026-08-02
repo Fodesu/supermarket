@@ -26,6 +26,12 @@ interface MarketplaceEntry {
   source: unknown
 }
 
+const nonSkillComponents = ['apps', 'mcpServers', 'hooks', 'commands', 'agents', 'lspServers'] as const
+
+function hasNonSkillComponents(manifest: Record<string, unknown>) {
+  return nonSkillComponents.some((component) => hasComponent(manifest[component]))
+}
+
 function packageDiagnosticMessage(error: unknown, sourceRoot: string) {
   const message = error instanceof Error ? error.message : String(error)
   const roots = new Set([
@@ -120,8 +126,12 @@ async function readImageAsset(
   relativePath: string,
   budget: RegistryBuildBudget,
 ) {
+  const target = await resolveRealInside(packageRoot, relativePath)
+  const metadata = await stat(target)
+  if (!metadata.isFile()) throw new Error(`Skill image ${relativePath} must be a regular file`)
+  if (metadata.size > MAX_SKILL_IMAGE_BYTES) throw new OversizedSkillImageError(relativePath)
   const bytes = await readFileBounded(
-    await resolveRealInside(packageRoot, relativePath),
+    target,
     MAX_SKILL_IMAGE_BYTES,
     budget,
   )
@@ -140,6 +150,8 @@ async function readImageAsset(
   }
   return { descriptor, bytes }
 }
+
+class OversizedSkillImageError extends Error {}
 
 async function packageIcon(
   packageRoot: string,
@@ -162,7 +174,13 @@ async function packageIcon(
   const assets: Array<{ descriptor: SkillImageAsset; bytes: Uint8Array }> = []
   for (const [kind, imagePath] of Object.entries(paths) as Array<[keyof typeof paths, string | undefined]>) {
     if (!imagePath) continue
-    const asset = await readImageAsset(packageRoot, imagePath, budget)
+    let asset
+    try {
+      asset = await readImageAsset(packageRoot, imagePath, budget)
+    } catch (error) {
+      if (error instanceof OversizedSkillImageError) continue
+      throw error
+    }
     icon[kind] = asset.descriptor
     if (!assets.some((item) => item.descriptor.digest === asset.descriptor.digest)) assets.push(asset)
   }
@@ -237,8 +255,7 @@ export async function readCodexMarketplace(input: SkillAdapterInput): Promise<Sk
       if (String(manifest.name ?? '') !== item.entry.name) {
         throw new Error('manifest name does not match its Marketplace entry')
       }
-      if (!hasComponent(manifest.skills)) {
-        diagnostics.push({ package_id: item.entry.name, code: 'no_skills', message: 'Skipped package because it declares no skills' })
+      if (!hasComponent(manifest.skills) || hasNonSkillComponents(manifest)) {
         continue
       }
       const skillPaths = codexSkillPaths(manifest.skills)

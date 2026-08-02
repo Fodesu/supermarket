@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import type { SkillRegistryAdapter, SkillRegistryDefinition } from '../types'
+import { MAX_SKILL_IMAGE_BYTES, type SkillRegistryAdapter, type SkillRegistryDefinition } from '../types'
 import { readDirectoryFiles, readFileBounded } from '../filesystem'
 import { buildSkillCandidates } from './index'
 import { detectSkillImageContentType } from './codex-marketplace'
@@ -89,7 +89,7 @@ describe('Skill Registry adapters', () => {
     })).rejects.toThrow('package contains no skills')
   })
 
-  test('flattens Codex package skills independently of other runtime components', async () => {
+  test('imports only pure Skill Packages from a Codex Marketplace', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'codex-skills-'))
     roots.push(root)
     await mkdir(path.join(root, 'packages/usable/.codex-plugin'), { recursive: true })
@@ -119,7 +119,7 @@ describe('Skill Registry adapters', () => {
     const result = await buildSkillCandidates({
       definition: definition('codex_marketplace_skills'), sourceRoot: root,
     })
-    expect(result.skills).toHaveLength(2)
+    expect(result.skills).toHaveLength(1)
     expect(result.skills[0]).toMatchObject({
       package_id: 'usable', skill_id: 'demo', category: 'developer-tools',
       author: { name: 'OpenAI', email: '' }, tags: ['test', 'codex'],
@@ -128,7 +128,6 @@ describe('Skill Registry adapters', () => {
       },
     })
     expect(result.skills[0]!.icon_assets).toHaveLength(2)
-    expect(result.skills[1]).toMatchObject({ package_id: 'blocked', skill_id: 'blocked' })
     expect(result.diagnostics).toEqual([])
   })
 
@@ -159,6 +158,34 @@ describe('Skill Registry adapters', () => {
     expect(result.diagnostics).toHaveLength(1)
     expect(result.diagnostics[0]).toMatchObject({ package_id: 'demo', code: 'package_invalid' })
     expect(result.diagnostics[0]!.message).toContain('content does not match its file extension')
+  })
+
+  test('keeps Skill Packages when optional images exceed the image budget', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'codex-oversized-image-'))
+    roots.push(root)
+    await mkdir(path.join(root, 'packages/demo/.codex-plugin'), { recursive: true })
+    await mkdir(path.join(root, 'packages/demo/assets'), { recursive: true })
+    await writeFile(path.join(root, 'marketplace.json'), JSON.stringify({ plugins: [
+      { name: 'demo', source: 'packages/demo' },
+      { name: 'app-only', source: 'packages/app-only' },
+    ] }))
+    await writeFile(path.join(root, 'packages/demo/.codex-plugin/plugin.json'), JSON.stringify({
+      name: 'demo', skills: './skills', interface: { logo: './assets/logo.png' },
+    }))
+    await writeFile(path.join(root, 'packages/demo/assets/logo.png'), new Uint8Array(MAX_SKILL_IMAGE_BYTES + 1))
+    await writeSkill(root, 'packages/demo/skills/demo', 'Demo')
+    await mkdir(path.join(root, 'packages/app-only/.codex-plugin'), { recursive: true })
+    await writeFile(path.join(root, 'packages/app-only/.codex-plugin/plugin.json'), JSON.stringify({
+      name: 'app-only', apps: ['./app'],
+    }))
+
+    const result = await buildSkillCandidates({
+      definition: definition('codex_marketplace_skills'), sourceRoot: root,
+    })
+    expect(result.skills).toHaveLength(1)
+    expect(result.skills[0]).toMatchObject({ package_id: 'demo', skill_id: 'demo' })
+    expect(result.skills[0]!.icon).toBeUndefined()
+    expect(result.diagnostics).toEqual([])
   })
 
   test('rejects duplicate Marketplace package identities', async () => {

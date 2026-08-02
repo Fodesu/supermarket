@@ -1,11 +1,11 @@
 schema_version: "1"
 id: openai
-name: OpenAi
+name: OpenAI
 enabled: true
 priority: 100
 adapter:
   type: codex_marketplace_skills
-  catalog_path: .agents/plugins/api_marketplace.json
+  catalog_path: .agents/plugins/marketplace.json
 source:
   type: git
   url: https://github.com/openai/plugins.git

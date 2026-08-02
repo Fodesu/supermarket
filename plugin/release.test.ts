@@ -10,7 +10,7 @@ import {
   MAX_SKILL_ARTIFACT_FILES,
   MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
 } from '#registry/types'
-import { compactCatalogSkill } from '#registry/snapshot'
+import { compactCatalogPackages } from '#registry/snapshot'
 import {
   assertPluginReleaseRevision,
   buildPluginReleaseCandidates,
@@ -63,7 +63,7 @@ async function fixture() {
   const snapshot: SkillRegistrySnapshot = {
     schema_version: '1', registry_id: 'example', registry_priority: 1,
     source: { type: 'local', revision: 'e'.repeat(64) },
-    skills: [compactCatalogSkill(skill)], diagnostics: [],
+    packages: compactCatalogPackages([skill]), diagnostics: [],
   }
   return { root, snapshot }
 }
@@ -125,7 +125,7 @@ describe('Plugin release candidates', () => {
   test('changes release revision when a pinned Skill digest changes', async () => {
     const { root, snapshot } = await fixture()
     const [before] = await buildPluginReleaseCandidates(root, [{ revision: 'b'.repeat(64), snapshot }])
-    snapshot.skills[0]!.artifact.digest = 'c'.repeat(64)
+    snapshot.packages[0]!.skills[0]!.artifact.digest = 'c'.repeat(64)
     const [after] = await buildPluginReleaseCandidates(root, [{ revision: 'd'.repeat(64), snapshot }])
     expect(after!.revision).not.toBe(before!.revision)
     expect(after!.release.artifact.digest).toBe(before!.release.artifact.digest)
@@ -133,7 +133,7 @@ describe('Plugin release candidates', () => {
 
   test('rejects a missing referenced Skill', async () => {
     const { root, snapshot } = await fixture()
-    snapshot.skills = []
+    snapshot.packages = []
     await expect(buildPluginReleaseCandidates(root, [{ revision: 'b'.repeat(64), snapshot }]))
       .rejects.toThrow('references missing Registry Skill')
   })

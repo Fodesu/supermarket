@@ -18,10 +18,6 @@ capabilities:
   - issues
   - projects
   - teams
-skills:
-  - registry_id: openai
-    package_id: linear
-    skill_id: linear
 auth_requirements:
   - key: linear_oauth
     type: managed_oauth

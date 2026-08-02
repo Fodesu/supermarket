@@ -46,7 +46,7 @@ function snapshot(
     registry_id: definition.id,
     registry_priority: definition.priority,
     source: { type: 'local', revision: sourceRevision },
-    skills: [],
+    packages: [],
     diagnostics: [],
   }
 }
@@ -127,24 +127,26 @@ function memoryBackend() {
 describe('Immutable digest-addressed uploads', () => {
   test('rejects invalid or incomplete Snapshot Artifact metadata', () => {
     const stored = snapshot()
-    stored.skills.push({
-      package_id: 'package',
-      skill_id: 'skill',
-      name: 'Skill',
-      description: '',
-      author: { name: '' },
-      tags: [],
-      category: 'other',
-      category_name: 'Other',
-      source_path: 'skill',
-      files: ['SKILL.md'],
-      artifact: {
-        digest: 'b'.repeat(64),
-        size: -1,
-        uncompressed_size: 1,
-        archive_size: 1,
-        file_count: 1,
-      },
+    stored.packages.push({
+      package_id: 'package', name: 'package', description: '', tags: [],
+      skills: [{
+        skill_id: 'skill',
+        name: 'Skill',
+        description: '',
+        author: { name: '' },
+        tags: [],
+        category: 'other',
+        category_name: 'Other',
+        source_path: 'skill',
+        files: ['SKILL.md'],
+        artifact: {
+          digest: 'b'.repeat(64),
+          size: -1,
+          uncompressed_size: 1,
+          archive_size: 1,
+          file_count: 1,
+        },
+      }],
     })
     expect(() => validateStoredSnapshot(
       stored,
@@ -152,10 +154,34 @@ describe('Immutable digest-addressed uploads', () => {
       'registries/example/snapshot.json',
     )).toThrow('Snapshot Artifact reference')
 
-    stored.skills[0]!.artifact = {
+    stored.packages[0]!.skills[0]!.artifact = {
       digest: 'b'.repeat(64), size: 1, uncompressed_size: 1,
-    } as SkillRegistrySnapshot['skills'][number]['artifact']
+    } as SkillRegistrySnapshot['packages'][number]['skills'][number]['artifact']
     expect(() => validateStoredSnapshot(stored, 'example', 'incomplete-snapshot'))
+      .toThrow('Snapshot Artifact reference')
+  })
+
+  test('rejects duplicate Package and nested Skill identities', () => {
+    const skill = {
+      skill_id: 'skill', name: 'Skill', description: '', author: { name: '' },
+      tags: [], category: 'other', category_name: 'Other', source_path: 'skill',
+      files: ['SKILL.md'],
+      artifact: {
+        digest: 'b'.repeat(64), size: 1, uncompressed_size: 1, archive_size: 1, file_count: 1,
+      },
+    }
+    const stored = snapshot()
+    stored.packages = [{
+      package_id: 'package', name: 'package', description: '', tags: [],
+      skills: [structuredClone(skill), structuredClone(skill)],
+    }]
+    expect(() => validateStoredSnapshot(stored, 'example', 'duplicate-skills'))
+      .toThrow('Snapshot Artifact reference')
+
+    stored.packages = [stored.packages[0]!, structuredClone(stored.packages[0]!)]
+    stored.packages[0]!.skills = [skill]
+    stored.packages[1]!.skills = [{ ...skill, skill_id: 'other' }]
+    expect(() => validateStoredSnapshot(stored, 'example', 'duplicate-packages'))
       .toThrow('Snapshot Artifact reference')
   })
 

@@ -8,7 +8,7 @@ import type {
 import type { SkillCatalogSearchOptions } from '#registry/catalog'
 import { searchCatalogSkills, summarizeSkillCategories } from '#registry/catalog'
 import type { SkillPackageSearchOptions } from '#registry/packages'
-import { packageDescriptorFromSnapshot, searchSkillPackages } from '#registry/packages'
+import { catalogPackagesFromSnapshot, packageDescriptorFromSnapshot, searchSkillPackages } from '#registry/packages'
 import { catalogSkillsFromSnapshot } from '#registry/snapshot'
 import { R2BlobBackend } from '#registry/storage/r2'
 import { BlobSkillRegistryStore } from '#registry/storage/blob'
@@ -82,14 +82,14 @@ function publicSkillPackageSummary<T extends { registry_priority: number }>(pkg:
   return value
 }
 
-function publicSkillPackageSearch(skills: CatalogSkill[], options: SkillPackageSearchOptions) {
-  const result = searchSkillPackages(skills, options)
+function publicSkillPackageSearch(packages: ReturnType<typeof catalogPackagesFromSnapshot>, options: SkillPackageSearchOptions) {
+  const result = searchSkillPackages(packages, options)
   return { ...result, data: result.data.map(publicSkillPackageSummary) }
 }
 
 export async function getSkillPackages(event: RuntimeEvent, options: SkillPackageSearchOptions = {}) {
   const snapshots = await getEnabledSkillRegistrySnapshots(await getRuntimeSkillRegistryStore(event), options.registry)
-  return publicSkillPackageSearch(snapshots.flatMap(catalogSkillsFromSnapshot), options)
+  return publicSkillPackageSearch(snapshots.flatMap(catalogPackagesFromSnapshot), options)
 }
 
 async function getScopedRegistrySnapshot(store: SkillRegistryStore, registryID: string) {
@@ -109,7 +109,7 @@ export async function getRegistrySkillPackages(
 ) {
   const snapshot = await getScopedRegistrySnapshot(await getRuntimeSkillRegistryStore(event), registryID)
   if (snapshot === undefined) return undefined
-  return publicSkillPackageSearch(snapshot ? catalogSkillsFromSnapshot(snapshot) : [], {
+  return publicSkillPackageSearch(snapshot ? catalogPackagesFromSnapshot(snapshot) : [], {
     ...options,
     registry: registryID,
   })

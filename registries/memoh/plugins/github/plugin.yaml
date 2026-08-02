@@ -19,19 +19,6 @@ capabilities:
   - issues
   - pull-requests
   - code-search
-skills:
-  - registry_id: openai
-    package_id: github
-    skill_id: gh-address-comments
-  - registry_id: openai
-    package_id: github
-    skill_id: gh-fix-ci
-  - registry_id: openai
-    package_id: github
-    skill_id: github
-  - registry_id: openai
-    package_id: github
-    skill_id: yeet
 auth_requirements:
   - key: github_oauth
     type: managed_oauth

@@ -28,7 +28,7 @@ function snapshot(registryID = 'example', sourceRevision = 'source'): SkillRegis
     registry_id: registryID,
     registry_priority: 10,
     source: { type: 'local', revision: sourceRevision },
-    skills: [],
+    packages: [],
     diagnostics: [],
   }
 }
