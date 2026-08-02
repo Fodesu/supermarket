@@ -109,8 +109,8 @@ export function summarizeCurrentSnapshot(
     revision,
     source_revision: snapshot.source.revision,
     published_at: publishedAt,
-    skill_count: snapshot.skills.length,
-    package_count: new Set(snapshot.skills.map((skill) => skill.package_id)).size,
+    skill_count: snapshot.packages.reduce((total, pkg) => total + pkg.skills.length, 0),
+    package_count: snapshot.packages.length,
     category_count: summarizeSkillCategories(catalogSkillsFromSnapshot(snapshot)).length,
     skipped_package_count: new Set(snapshot.diagnostics.map((item) => item.package_id).filter(Boolean)).size,
   }

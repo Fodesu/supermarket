@@ -101,7 +101,6 @@ export interface CatalogSkill {
  * itself; API readers hydrate this back into CatalogSkill at their boundary.
  */
 export interface SnapshotSkill {
-  package_id: string
   skill_id: string
   name: string
   description: string
@@ -118,6 +117,15 @@ export interface SnapshotSkill {
     SkillArtifactDescriptor,
     'digest' | 'size' | 'uncompressed_size' | 'archive_size' | 'file_count'
   >
+}
+
+export interface SnapshotPackage {
+  package_id: string
+  name: string
+  description: string
+  tags: string[]
+  icon?: SkillIcon
+  skills: SnapshotSkill[]
 }
 
 export interface SnapshotSource {
@@ -138,7 +146,7 @@ export interface SkillRegistrySnapshot {
   registry_id: string
   registry_priority: number
   source: SnapshotSource
-  skills: SnapshotSkill[]
+  packages: SnapshotPackage[]
   diagnostics: RegistryDiagnostic[]
 }
 

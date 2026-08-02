@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { CatalogSkill, SkillRegistryDefinition } from '../types'
 import type { SkillRegistryCandidate } from '../publish/candidate'
-import { compactCatalogSkill } from '../snapshot'
+import { compactCatalogPackages } from '../snapshot'
 import {
   diffRegistryCandidates,
   renderRegistryReleaseDiff,
@@ -58,7 +58,7 @@ function candidate(
     registry_id: definition.id,
     registry_priority: definition.priority,
     source: { type: 'local' as const, revision: sourceRevision },
-    skills: skills.map(compactCatalogSkill),
+    packages: compactCatalogPackages(skills),
     diagnostics: [],
   }
   return {
@@ -243,7 +243,7 @@ Merging this PR approves the pinned source and release.lock.json. R2 publication
   test('includes a SKILL.md patch when a Skill is added', () => {
     const previous = candidate('1'.repeat(40), 'a'.repeat(64), 'Before', '# Before\n')
     previous.skills = []
-    previous.snapshot.skills = []
+    previous.snapshot.packages = []
     previous.review.clear()
     const next = candidate('2'.repeat(40), 'b'.repeat(64), 'Added', '# Added\n')
 

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { CatalogSkill, SkillRegistrySnapshot } from './types'
-import { compactCatalogSkill } from './snapshot'
-import { packageDescriptorFromSnapshot, packagesFromSkills, searchSkillPackages } from './packages'
+import { compactCatalogPackages } from './snapshot'
+import { catalogPackagesFromSnapshot, packageDescriptorFromSnapshot, searchSkillPackages } from './packages'
 
 function skill(overrides: Partial<CatalogSkill> = {}): CatalogSkill {
   return {
@@ -20,13 +20,26 @@ function skill(overrides: Partial<CatalogSkill> = {}): CatalogSkill {
   }
 }
 
+function snapshot(skills: CatalogSkill[], registryID = 'openai', priority = 10): SkillRegistrySnapshot {
+  return {
+    schema_version: '1', registry_id: registryID, registry_priority: priority,
+    source: { type: 'git', revision: 'a'.repeat(40) },
+    packages: compactCatalogPackages(skills),
+    diagnostics: [],
+  }
+}
+
 describe('Skill Packages', () => {
-  test('groups Skills by Registry and Package without merging same-name Packages', () => {
-    const packages = packagesFromSkills([
+  test('reads stored Packages without merging the same ID across Registries', () => {
+    const openai = snapshot([
       skill(),
       skill({ skill_id: 'write', install_id: 'openai+notion+write', name: 'Write Notion', tags: ['write'] }),
-      skill({ registry_id: 'memoh', install_id: 'memoh+notion+search', registry_priority: 100 }),
     ])
+    const memohSkill = skill({ registry_id: 'memoh', install_id: 'memoh+notion+search', registry_priority: 100 })
+    const packages = [
+      ...catalogPackagesFromSnapshot(openai),
+      ...catalogPackagesFromSnapshot(snapshot([memohSkill], 'memoh', 100)),
+    ]
     expect(packages).toHaveLength(2)
     expect(packages.find((pkg) => pkg.registry_id === 'openai')).toMatchObject({
       package_id: 'notion', name: 'notion', skill_count: 2,
@@ -37,32 +50,27 @@ describe('Skill Packages', () => {
   })
 
   test('searches and filters at Package granularity', () => {
-    const skills = [
+    const packages = catalogPackagesFromSnapshot(snapshot([
       skill(),
       skill({
         package_id: 'figma', skill_id: 'design', install_id: 'openai+figma+design',
         name: 'Design in Figma', description: 'Create interface designs', tags: ['design'],
       }),
-    ]
-    expect(searchSkillPackages(skills, { q: 'workspace' }).data.map((pkg) => pkg.package_id)).toEqual(['notion'])
-    expect(searchSkillPackages(skills, { tag: 'design' }).data.map((pkg) => pkg.package_id)).toEqual(['figma'])
-    expect(searchSkillPackages(skills, { category: 'productivity' }).total).toBe(2)
+    ]))
+    expect(searchSkillPackages(packages, { q: 'workspace' }).data.map((pkg) => pkg.package_id)).toEqual(['notion'])
+    expect(searchSkillPackages(packages, { tag: 'design' }).data.map((pkg) => pkg.package_id)).toEqual(['figma'])
+    expect(searchSkillPackages(packages, { category: 'productivity' }).total).toBe(2)
   })
 
   test('derives a pinned descriptor from one Snapshot revision', () => {
-    const snapshot: SkillRegistrySnapshot = {
-      schema_version: '1', registry_id: 'openai', registry_priority: 10,
-      source: { type: 'git', revision: 'a'.repeat(40) },
-      skills: [
-        compactCatalogSkill(skill()),
-        compactCatalogSkill(skill({
-          skill_id: 'write', install_id: 'openai+notion+write', name: 'Write Notion',
-          artifact: { ...skill().artifact, digest: 'c'.repeat(64) },
-        })),
-      ],
-      diagnostics: [],
-    }
-    const descriptor = packageDescriptorFromSnapshot(snapshot, 'd'.repeat(64), 'notion')
+    const value = snapshot([
+      skill(),
+      skill({
+        skill_id: 'write', install_id: 'openai+notion+write', name: 'Write Notion',
+        artifact: { ...skill().artifact, digest: 'c'.repeat(64) },
+      }),
+    ])
+    const descriptor = packageDescriptorFromSnapshot(value, 'd'.repeat(64), 'notion')
     expect(descriptor).toMatchObject({
       registry_id: 'openai', package_id: 'notion', revision: 'd'.repeat(64),
       source_revision: 'a'.repeat(40), skill_count: 2,
@@ -71,6 +79,6 @@ describe('Skill Packages', () => {
       ['search', 'b'.repeat(64)],
       ['write', 'c'.repeat(64)],
     ])
-    expect(packageDescriptorFromSnapshot(snapshot, 'd'.repeat(64), 'missing')).toBeUndefined()
+    expect(packageDescriptorFromSnapshot(value, 'd'.repeat(64), 'missing')).toBeUndefined()
   })
 })

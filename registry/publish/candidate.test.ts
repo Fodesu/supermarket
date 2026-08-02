@@ -34,6 +34,11 @@ describe('Skill Registry candidates', () => {
     const candidate = await buildSkillRegistryCandidate(definition, projectRoot, { includeReview: true })
 
     expect(candidate.skills.map((skill) => `${skill.package_id}/${skill.skill_id}`)).toEqual(['good/demo'])
+    expect(candidate.snapshot.packages).toHaveLength(1)
+    expect(candidate.snapshot.packages[0]).toMatchObject({
+      package_id: 'good', name: 'good', skills: [{ skill_id: 'demo' }],
+    })
+    expect(candidate.snapshot.packages[0]!.skills[0]).not.toHaveProperty('package_id')
     expect([...candidate.review.keys()]).toEqual(['good/demo'])
     expect(candidate.diagnostics).toHaveLength(1)
     expect(candidate.diagnostics[0]).toMatchObject({ package_id: 'bad', code: 'package_invalid' })

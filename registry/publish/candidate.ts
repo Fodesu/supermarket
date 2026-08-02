@@ -12,7 +12,7 @@ import { packageSkill } from '../artifacts/build'
 import { sha256 } from '../digest'
 import { materializeSkillRegistrySource } from '../sources/index'
 import {
-  compactCatalogSkill,
+  compactCatalogPackages,
   registrySnapshotRevision,
   serializeRegistrySnapshot,
 } from '../snapshot'
@@ -228,7 +228,7 @@ export async function buildSkillRegistryCandidate(
         revision: source.revision,
         ...(definition.source.type === 'git' ? { repository: definition.source.url } : {}),
       },
-      skills: skills.map(compactCatalogSkill),
+      packages: compactCatalogPackages(skills),
       diagnostics,
     }
     const snapshotBytes = serializeRegistrySnapshot(snapshot)

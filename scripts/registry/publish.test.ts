@@ -27,14 +27,17 @@ async function publishedDependency() {
   const snapshot: SkillRegistrySnapshot = {
     schema_version: '1', registry_id: 'other', registry_priority: 10,
     source: { type: 'local', revision: 'source-revision' },
-    skills: [{
-      package_id: 'tools', skill_id: 'search', name: 'Search', description: 'Search',
-      author: { name: 'Test' }, tags: [], category: 'tools', category_name: 'Tools',
-      source_path: 'tools/search', files: ['SKILL.md'],
-      artifact: {
-        digest: 'b'.repeat(64), size: 1,
-        uncompressed_size: 1, archive_size: 1, file_count: 1,
-      },
+    packages: [{
+      package_id: 'tools', name: 'tools', description: 'Search', tags: [],
+      skills: [{
+        skill_id: 'search', name: 'Search', description: 'Search',
+        author: { name: 'Test' }, tags: [], category: 'tools', category_name: 'Tools',
+        source_path: 'tools/search', files: ['SKILL.md'],
+        artifact: {
+          digest: 'b'.repeat(64), size: 1,
+          uncompressed_size: 1, archive_size: 1, file_count: 1,
+        },
+      }],
     }],
     diagnostics: [],
   }
