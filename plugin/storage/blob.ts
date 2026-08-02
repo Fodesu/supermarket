@@ -105,7 +105,7 @@ export class BlobPluginReleaseStore implements PluginReleaseStore {
     await this.backend.put(key, bytes)
   }
 
-  private async readRelease(pluginID: string, revision: string) {
+  private async readReleaseBytes(pluginID: string, revision: string) {
     const id = assertIdentifier(pluginID, 'plugin ID')
     const digest = assertDigest(revision)
     const key = `plugin-releases/${id}/releases/${digest}.json`
@@ -113,15 +113,16 @@ export class BlobPluginReleaseStore implements PluginReleaseStore {
     if (!bytes) return null
     if (bytes.length > MAX_PLUGIN_RELEASE_BYTES) throw new Error(`Stored Plugin release exceeds ${MAX_PLUGIN_RELEASE_BYTES} bytes: ${key}`)
     await assertPluginReleaseRevision(bytes, digest)
-    return { bytes, release: parsePluginRelease(bytes, id) }
+    return bytes
   }
 
   async getReleaseBytes(pluginID: string, revision: string) {
-    return (await this.readRelease(pluginID, revision))?.bytes ?? null
+    return this.readReleaseBytes(pluginID, revision)
   }
 
   async getRelease(pluginID: string, revision: string) {
-    return (await this.readRelease(pluginID, revision))?.release ?? null
+    const bytes = await this.readReleaseBytes(pluginID, revision)
+    return bytes ? parsePluginRelease(bytes, pluginID) : null
   }
 
   async publishRelease(
