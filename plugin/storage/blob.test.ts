@@ -45,7 +45,7 @@ describe('PluginReleaseStore contract', () => {
     expect(await store.listPluginIDs()).toEqual(['example'])
     expect(await store.getState('example')).toMatchObject({
       enabled: true, current_release: revision,
-      current_summary: { revision, published_at: '2026-08-01T00:00:00.000Z' },
+      published_at: '2026-08-01T00:00:00.000Z',
     })
     expect(await store.getRelease('example', revision)).toEqual(release)
     expect((await store.getArtifact(artifact.digest))?.bytes).toEqual(bytes)
