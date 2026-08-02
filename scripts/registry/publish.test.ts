@@ -56,8 +56,12 @@ describe('partial Registry publication', () => {
     })).rejects.toThrow('run a full Registry publication first')
   })
 
-  test('requires the approved Snapshot for every unchanged Registry', async () => {
+  test('requires only the approved Snapshot for every unchanged Registry', async () => {
     const dependency = await publishedDependency()
+    await expect(assertPartialRegistrySnapshotsPublished({
+      selectedRegistry: 'selected', candidates: [dependency.candidate], store: dependency.store,
+    })).resolves.toBeUndefined()
+
     await rm(path.join(
       dependency.dataRoot,
       `skill-registries/other/snapshots/${dependency.candidate.revision}.json`,
@@ -65,12 +69,5 @@ describe('partial Registry publication', () => {
     await expect(assertPartialRegistrySnapshotsPublished({
       selectedRegistry: 'selected', candidates: [dependency.candidate], store: dependency.store,
     })).rejects.toThrow('approved Registry Snapshot is missing')
-  })
-
-  test('does not scan every Artifact in an unchanged Registry', async () => {
-    const dependency = await publishedDependency()
-    await expect(assertPartialRegistrySnapshotsPublished({
-      selectedRegistry: 'selected', candidates: [dependency.candidate], store: dependency.store,
-    })).resolves.toBeUndefined()
   })
 })

@@ -125,7 +125,7 @@ function memoryBackend() {
 }
 
 describe('Immutable digest-addressed uploads', () => {
-  test('rejects Snapshot Skills with invalid Artifact metadata', () => {
+  test('rejects invalid or incomplete Snapshot Artifact metadata', () => {
     const stored = snapshot()
     stored.skills.push({
       package_id: 'package',
@@ -152,19 +152,11 @@ describe('Immutable digest-addressed uploads', () => {
       'example',
       'registries/example/snapshot.json',
     )).toThrow('Snapshot Artifact reference')
-  })
 
-  test('rejects Snapshot Artifact descriptors without extraction metadata', () => {
-    const stored = snapshot()
-    stored.skills.push({
-      package_id: 'package', skill_id: 'skill', name: 'Skill', description: '',
-      author: { name: '' }, tags: [], category: 'other', category_name: 'Other',
-      source_path: 'skill', files: ['SKILL.md'],
-      artifact: {
-        digest: 'b'.repeat(64), size: 1, uncompressed_size: 1,
-      } as SkillRegistrySnapshot['skills'][number]['artifact'],
-    })
-    expect(() => validateStoredSnapshot(stored, 'example', 'legacy-snapshot'))
+    stored.skills[0]!.artifact = {
+      digest: 'b'.repeat(64), size: 1, uncompressed_size: 1,
+    } as SkillRegistrySnapshot['skills'][number]['artifact']
+    expect(() => validateStoredSnapshot(stored, 'example', 'incomplete-snapshot'))
       .toThrow('Snapshot Artifact reference')
   })
 

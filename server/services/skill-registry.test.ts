@@ -49,7 +49,7 @@ describe('Skill Registry loader', () => {
       .rejects.toThrow('SKILL_REGISTRY_BUCKET')
   })
 
-  test('stops serving a previous Snapshot when its Registry is disabled', async () => {
+  test('does not expose a disabled Registry through snapshots, summaries, or details', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'skill-registry-loader-'))
     roots.push(root)
     const store = new LocalSkillRegistryStore(root)
@@ -67,23 +67,6 @@ describe('Skill Registry loader', () => {
     })
     expect(await getEnabledSkillRegistrySnapshots(store)).toEqual([])
     expect(await getEnabledSkillRegistrySnapshots(store, definition.id)).toEqual([])
-  })
-
-  test('does not expose disabled Registries through summaries or details', async () => {
-    const disabled = { ...definition, enabled: false }
-    const current = snapshotState(snapshot())
-    const store = {
-      async listRegistryIDs() { return ['example'] },
-      async getState() {
-        return {
-          schema_version: '1' as const,
-          definition: disabled,
-          current_snapshot: current.revision,
-          current_summary: current.summary,
-        }
-      },
-    } as unknown as SkillRegistryStore
-
     await expect(getSkillRegistrySummariesForStore(store)).resolves.toEqual([])
     await expect(getSkillRegistryDetailsForStore(store, 'example')).resolves.toBeUndefined()
   })

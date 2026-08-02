@@ -108,11 +108,11 @@ describe('Plugin release candidates', () => {
     expect(candidate!.release.skills[0]).toMatchObject({
       registry_id: 'example', package_id: 'tools', skill_id: 'search',
       registry_revision: 'b'.repeat(64), source_revision: 'e'.repeat(64),
-      install_id: 'example+tools+search', artifact: { digest: 'a'.repeat(64) },
+      install_id: 'example+tools+search',
+      artifact: {
+        digest: 'a'.repeat(64), uncompressed_size: 456, archive_size: 1_024, file_count: 1,
+      },
       runtime_requirements: { os: ['linux'] },
-    })
-    expect(candidate!.release.skills[0]!.artifact).toMatchObject({
-      uncompressed_size: 456, archive_size: 1_024, file_count: 1,
     })
     const releaseBytes = serializePluginRelease(candidate!.release)
     expect(parsePluginRelease(releaseBytes, 'example')).toEqual(candidate!.release)
