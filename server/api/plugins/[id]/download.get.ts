@@ -1,10 +1,10 @@
 import { defineHandler, HTTPError } from 'nitro'
 import { getHeader, getRouterParam, setResponseHeader, setResponseStatus } from 'h3'
-import { requireSkillRegistryID } from '#server/services/skill-registry-query'
+import { requireIdentifier } from '#server/services/skill-registry-query'
 import { getPluginDownload } from '#server/services/plugin'
 
 export default defineHandler(async (event) => {
-  const id = requireSkillRegistryID(getRouterParam(event, 'id')!, 'plugin ID')
+  const id = requireIdentifier(getRouterParam(event, 'id')!, 'plugin ID')
   const artifact = await getPluginDownload(event, id)
   if (!artifact) throw new HTTPError(`Plugin "${id}" not found`, { statusCode: 404 })
 
