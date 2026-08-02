@@ -20,16 +20,16 @@ capabilities:
   - search
   - comments
 skills:
-  - registry_id: memoh
+  - registry_id: openai
     package_id: notion
     skill_id: notion-knowledge-capture
-  - registry_id: memoh
+  - registry_id: openai
     package_id: notion
     skill_id: notion-meeting-intelligence
-  - registry_id: memoh
+  - registry_id: openai
     package_id: notion
     skill_id: notion-research-documentation
-  - registry_id: memoh
+  - registry_id: openai
     package_id: notion
     skill_id: notion-spec-to-implementation
 auth_requirements:
