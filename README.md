@@ -30,7 +30,7 @@ supermarket/
 
 Registry Skills and Plugins are published into `.data/registries` locally or R2 when deployed; neither Registry Snapshots nor installable content is bundled into the API Worker. A Registry Snapshot stores the complete immutable Package set for one Registry, with each Package containing its Skill descriptors. The API exposes Packages directly and expands their members into the searchable Skill Catalog view. Each Plugin has an immutable release descriptor that binds its Bundle digest and the exact revision of every referenced Package. Each immutable Package release in turn binds its member Skill Artifact descriptors. Git commits `release.lock.json` files as approval records. Runtime `state.json` objects are the only mutable pointers and select the current approved Snapshot or Plugin release after every referenced immutable object has been stored.
 
-The Codex Marketplace adapter imports only Packages that declare Skills without Apps, MCP servers, hooks, commands, agents, or LSP servers.
+The Codex Marketplace adapter imports the Skills declared by each Package. Other Package components, including Apps, MCP servers, hooks, commands, agents, and LSP servers, are ignored.
 
 ```mermaid
 flowchart LR
@@ -229,7 +229,7 @@ bun run registry:validate
 
 Supported sources are `local` and HTTPS `git`; adapters are `skill_directory`, `skill_package_directory`, and `codex_marketplace_skills`. `skill_package_directory` reads `<package-id>/skills/<skill-id>` from its source root. A local source path is relative to the directory containing its `registry.yaml`. A Git source must pin an exact commit in `revision`; optional `tracking_ref` opts it into upstream update checks.
 
-`codex_marketplace_skills` reads `catalog_path` from its source root and supports only Marketplace Packages whose source is a local path in that same checkout. Each Package must contain `.codex-plugin/plugin.json` and declare one or more Skill paths. Packages that also declare `apps`, `mcpServers`, `hooks`, commands, agents, or LSP servers are excluded as a whole rather than partially imported. Packages with no Skills, another source type, or invalid Skill content are skipped with explicit Registry diagnostics. An invalid Package is isolated so other valid Packages in the same Registry can still be published.
+`codex_marketplace_skills` reads `catalog_path` from its source root and supports only Marketplace Packages whose source is a local path in that same checkout. Each Package must contain `.codex-plugin/plugin.json` and declare one or more Skill paths. Only those Skill paths are imported; Apps, MCP servers, hooks, commands, agents, and LSP servers declared by the same Package are ignored. Packages with no Skills or another source type are skipped. Invalid Skill content produces an explicit Registry diagnostic, isolated so other valid Packages in the same Registry can still be published.
 
 Git sources use a filtered shallow fetch and root-anchored sparse checkout for the Adapter paths. Adapter reads enforce Registry-wide limits of 10,000 Skills, 100,000 source files, 512 MiB of source file bodies, 64 MiB of retained review text, and an 8 MiB Snapshot. Registry-producing commands build Registries sequentially, so those per-build bounds do not multiply with Registry count. Every enabled Registry must commit `release.lock.json`, whose `snapshot_revision` must equal the canonical Snapshot rebuilt from the approved source.
 

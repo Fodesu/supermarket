@@ -19,6 +19,9 @@ capabilities:
   - issues
   - pull-requests
   - code-search
+packages:
+  - registry_id: openai
+    package_id: github
 auth_requirements:
   - key: github_oauth
     type: managed_oauth

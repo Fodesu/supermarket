@@ -19,6 +19,9 @@ capabilities:
   - files
   - components
   - variables
+packages:
+  - registry_id: openai
+    package_id: figma
 auth_requirements:
   - key: figma_oauth
     type: managed_oauth

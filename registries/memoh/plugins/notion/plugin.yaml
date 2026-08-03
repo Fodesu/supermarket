@@ -19,6 +19,9 @@ capabilities:
   - databases
   - search
   - comments
+packages:
+  - registry_id: openai
+    package_id: notion
 auth_requirements:
   - key: notion_oauth
     type: managed_oauth

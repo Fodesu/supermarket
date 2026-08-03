@@ -18,6 +18,9 @@ capabilities:
   - issues
   - projects
   - teams
+packages:
+  - registry_id: openai
+    package_id: linear
 auth_requirements:
   - key: linear_oauth
     type: managed_oauth

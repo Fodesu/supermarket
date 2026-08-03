@@ -26,12 +26,6 @@ interface MarketplaceEntry {
   source: unknown
 }
 
-const nonSkillComponents = ['apps', 'mcpServers', 'hooks', 'commands', 'agents', 'lspServers'] as const
-
-function hasNonSkillComponents(manifest: Record<string, unknown>) {
-  return nonSkillComponents.some((component) => hasComponent(manifest[component]))
-}
-
 function packageDiagnosticMessage(error: unknown, sourceRoot: string) {
   const message = error instanceof Error ? error.message : String(error)
   const roots = new Set([
@@ -255,7 +249,7 @@ export async function readCodexMarketplace(input: SkillAdapterInput): Promise<Sk
       if (String(manifest.name ?? '') !== item.entry.name) {
         throw new Error('manifest name does not match its Marketplace entry')
       }
-      if (!hasComponent(manifest.skills) || hasNonSkillComponents(manifest)) {
+      if (!hasComponent(manifest.skills)) {
         continue
       }
       const skillPaths = codexSkillPaths(manifest.skills)
