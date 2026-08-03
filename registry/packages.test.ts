@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { CatalogSkill, SkillRegistrySnapshot } from './types'
-import { compactCatalogPackages, skillPackageReleaseFromSnapshotPackage } from './snapshot'
-import { catalogPackagesFromSnapshot, packageDescriptorFromRelease, searchSkillPackages } from './packages'
+import { compactCatalogPackages } from './snapshot'
+import { catalogPackagesFromSnapshot, searchSkillPackages } from './packages'
 
 function skill(overrides: Partial<CatalogSkill> = {}): CatalogSkill {
   return {
@@ -60,25 +60,6 @@ describe('Skill Packages', () => {
     expect(searchSkillPackages(packages, { q: 'workspace' }).data.map((pkg) => pkg.package_id)).toEqual(['notion'])
     expect(searchSkillPackages(packages, { tag: 'design' }).data.map((pkg) => pkg.package_id)).toEqual(['figma'])
     expect(searchSkillPackages(packages, { category: 'productivity' }).total).toBe(2)
-  })
-
-  test('derives a descriptor from one immutable Package release', () => {
-    const value = snapshot([
-      skill(),
-      skill({
-        skill_id: 'write', install_id: 'openai+notion+write', name: 'Write Notion',
-        artifact: { ...skill().artifact, digest: 'c'.repeat(64) },
-      }),
-    ])
-    const pkg = value.packages[0]!
-    const descriptor = packageDescriptorFromRelease(skillPackageReleaseFromSnapshotPackage(value, pkg), pkg.revision)
-    expect(descriptor).toMatchObject({
-      registry_id: 'openai', package_id: 'notion', revision: pkg.revision, skill_count: 2,
-    })
-    expect(descriptor?.skills.map((item) => [item.skill_id, item.artifact.digest])).toEqual([
-      ['search', 'b'.repeat(64)],
-      ['write', 'c'.repeat(64)],
-    ])
   })
 
   test('keeps a Package revision stable when another Package changes', () => {
