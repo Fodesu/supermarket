@@ -1,7 +1,6 @@
 import type { PluginReleaseCandidate } from '../release'
-import { pluginSkillReferenceIdentity } from '../manifest'
-import type { PluginResolvedSkill } from '../types'
-import type { SkillArtifactDescriptor } from '#registry/types'
+import { pluginPackageReferenceIdentity } from '../manifest'
+import type { PluginResolvedPackage } from '../types'
 import {
   appendMarkdownLines,
   combinedMarkdownLength,
@@ -9,13 +8,10 @@ import {
   renderMarkdownLines,
 } from '#lib/markdown-lines'
 
-export interface PluginSkillLockChange {
+export interface PluginPackageLockChange {
   identity: string
-  registry_revision_before: string
-  registry_revision_after: string
-  artifact_before: SkillArtifactDescriptor
-  artifact_after: SkillArtifactDescriptor
-  metadata: string[]
+  revision_before: string
+  revision_after: string
 }
 
 export interface PluginReleaseDiff {
@@ -24,36 +20,29 @@ export interface PluginReleaseDiff {
   release_after: string
   bundle_before: string
   bundle_after: string
-  skills: PluginSkillLockChange[]
+  packages: PluginPackageLockChange[]
 }
 
-function skillIndex(skills: PluginResolvedSkill[]) {
-  return new Map(skills.map((skill) => [pluginSkillReferenceIdentity(skill), skill]))
+function packageIndex(packages: PluginResolvedPackage[]) {
+  return new Map(packages.map((pkg) => [pluginPackageReferenceIdentity(pkg), pkg]))
 }
 
-function changedSkillLocks(
+function changedPackageLocks(
   previous: PluginReleaseCandidate,
   candidate: PluginReleaseCandidate,
 ) {
-  const before = skillIndex(previous.release.skills)
-  const after = skillIndex(candidate.release.skills)
+  const before = packageIndex(previous.release.packages)
+  const after = packageIndex(candidate.release.packages)
   const identities = new Set([...before.keys(), ...after.keys()])
-  return [...identities].sort().flatMap((identity): PluginSkillLockChange[] => {
-    const oldSkill = before.get(identity)
-    const newSkill = after.get(identity)
-    if (!oldSkill || !newSkill) throw new Error(`${candidate.plugin_id}: Plugin Skill references changed while reviewing a Registry update`)
-    const metadata = (['source_revision', 'install_id'] as const)
-      .filter((field) => JSON.stringify(oldSkill[field]) !== JSON.stringify(newSkill[field]))
-    if (oldSkill.registry_revision === newSkill.registry_revision
-      && JSON.stringify(oldSkill.artifact) === JSON.stringify(newSkill.artifact)
-      && !metadata.length) return []
+  return [...identities].sort().flatMap((identity): PluginPackageLockChange[] => {
+    const oldPackage = before.get(identity)
+    const newPackage = after.get(identity)
+    if (!oldPackage || !newPackage) throw new Error(`${candidate.plugin_id}: Plugin Package references changed while reviewing a Registry update`)
+    if (oldPackage.revision === newPackage.revision) return []
     return [{
       identity,
-      registry_revision_before: oldSkill.registry_revision,
-      registry_revision_after: newSkill.registry_revision,
-      artifact_before: oldSkill.artifact,
-      artifact_after: newSkill.artifact,
-      metadata: [...metadata],
+      revision_before: oldPackage.revision,
+      revision_after: newPackage.revision,
     }]
   })
 }
@@ -77,7 +66,7 @@ export function diffPluginReleaseCandidates(
       release_after: newPlugin.revision,
       bundle_before: oldPlugin.release.artifact.digest,
       bundle_after: newPlugin.release.artifact.digest,
-      skills: changedSkillLocks(oldPlugin, newPlugin),
+      packages: changedPackageLocks(oldPlugin, newPlugin),
     }]
   })
 }
@@ -86,20 +75,11 @@ function shortDigest(value: string) {
   return `\`${value.slice(0, 12)}\``
 }
 
-function artifactLabel(artifact: SkillArtifactDescriptor) {
-  return `${shortDigest(artifact.digest)} (${artifact.format}, ${artifact.size} B)`
-}
-
-function skillLines(skill: PluginSkillLockChange) {
-  const lines = [
-    `- \`${skill.identity}\``,
-    `  - Registry Snapshot: ${shortDigest(skill.registry_revision_before)} → ${shortDigest(skill.registry_revision_after)}`,
-    `  - Skill Artifact: ${artifactLabel(skill.artifact_before)} → ${artifactLabel(skill.artifact_after)}`,
+function packageLines(pkg: PluginPackageLockChange) {
+  return [
+    `- \`${pkg.identity}\``,
+    `  - Package release: ${shortDigest(pkg.revision_before)} → ${shortDigest(pkg.revision_after)}`,
   ]
-  if (skill.metadata.length) {
-    lines.push(`  - Metadata: ${skill.metadata.map((field) => `\`${field}\``).join(', ')}`)
-  }
-  return lines
 }
 
 export function renderPluginReleaseDiffs(
@@ -112,14 +92,14 @@ export function renderPluginReleaseDiffs(
   const artifactNotice = fullReportURL
     ? ` [Download the full workflow report](${fullReportURL}) while it is retained.`
     : ''
-  const truncationNotice = `_Plugin release details truncated at a complete Skill boundary.${artifactNotice}_`
+  const truncationNotice = `_Plugin release details truncated at a complete Package boundary.${artifactNotice}_`
   const reservedFooter = approvalNotice.length >= truncationNotice.length
     ? approvalNotice
     : truncationNotice
   const output = markdownLines([
     '## Affected Plugin releases',
     '',
-    'These Plugin releases keep the same Plugin source and lock the approved Registry Skill Artifacts below.',
+    'These Plugin releases keep the same Plugin source and lock the approved Package releases below.',
     '',
   ])
   let truncated = false
@@ -138,8 +118,8 @@ export function renderPluginReleaseDiffs(
       truncated = true
       break
     }
-    for (const skill of diff.skills) {
-      const skillBlock = markdownLines(skillLines(skill))
+    for (const pkg of diff.packages) {
+      const skillBlock = markdownLines(packageLines(pkg))
       if (combinedMarkdownLength(
         output,
         pluginBlock,

@@ -35,28 +35,16 @@ describe('Registry update report', () => {
         skills_changed: 100,
       },
     }
-    const artifact = {
-      format: 'memoh_skill_v1' as const,
-      digest: 'c'.repeat(64),
-      size: 1,
-      uncompressed_size: 1,
-      archive_size: 1,
-      file_count: 1,
-      content_type: 'application/gzip' as const,
-    }
     const pluginDiffs: PluginReleaseDiff[] = Array.from({ length: 100 }, (_, index) => ({
       plugin: `plugin-${index}`,
       release_before: 'd'.repeat(64),
       release_after: 'e'.repeat(64),
       bundle_before: 'f'.repeat(64),
       bundle_after: '0'.repeat(64),
-      skills: Array.from({ length: 10 }, (_, skillIndex) => ({
-        identity: `example/tools/skill-${skillIndex}`,
-        registry_revision_before: '1'.repeat(64),
-        registry_revision_after: '2'.repeat(64),
-        artifact_before: artifact,
-        artifact_after: { ...artifact, digest: '3'.repeat(64) },
-        metadata: [],
+      packages: Array.from({ length: 10 }, (_, packageIndex) => ({
+        identity: `example/tools-${packageIndex}`,
+        revision_before: '1'.repeat(64),
+        revision_after: '2'.repeat(64),
       })),
     }))
 
@@ -70,10 +58,10 @@ describe('Registry update report', () => {
     const fullReport = renderFullRegistryUpdateReport(registryDiff, undefined, pluginDiffs)
     expect(report.length).toBeLessThanOrEqual(MAX_REGISTRY_UPDATE_REPORT_LENGTH)
     expect(report).toContain('Report truncated at a complete review item boundary')
-    expect(report).toContain('Plugin release details truncated at a complete Skill boundary')
+    expect(report).toContain('Plugin release details truncated at a complete Package boundary')
     expect(report).toContain(fullReportURL)
     expect(fullReport).toContain('plugin-99')
-    expect(fullReport).toContain('example/tools/skill-9')
-    expect(fullReport).not.toContain('truncated at a complete Skill boundary')
+    expect(fullReport).toContain('example/tools-9')
+    expect(fullReport).not.toContain('truncated at a complete Package boundary')
   })
 })

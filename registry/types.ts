@@ -120,12 +120,26 @@ export interface SnapshotSkill {
 }
 
 export interface SnapshotPackage {
+  revision: string
   package_id: string
   name: string
   description: string
   tags: string[]
   icon?: SkillIcon
   skills: SnapshotSkill[]
+}
+
+export type SkillPackageReleaseSkill = Omit<CatalogSkill, 'registry_priority' | 'source'>
+
+export interface SkillPackageRelease {
+  schema_version: '1'
+  registry_id: string
+  package_id: string
+  name: string
+  description: string
+  tags: string[]
+  icon?: SkillIcon
+  skills: SkillPackageReleaseSkill[]
 }
 
 export interface SnapshotSource {
@@ -215,8 +229,8 @@ export interface SkillPackageSummary {
   icon?: SkillIcon
 }
 
-export interface SkillPackageDescriptor extends Omit<SkillPackageSummary, 'registry_priority'> {
+export interface SkillPackageDescriptor extends SkillPackageRelease {
   revision: string
-  source_revision: string
-  skills: CatalogSkill[]
+  categories: SkillPackageCategorySummary[]
+  skill_count: number
 }

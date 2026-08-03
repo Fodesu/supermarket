@@ -3,7 +3,7 @@ import type { PluginReleaseCandidate } from '../release'
 import type { PluginRelease } from '../types'
 import { diffPluginReleaseCandidates, renderPluginReleaseDiffs } from './release-diff'
 
-function candidate(revision: string, registryRevision: string, skillDigest: string): PluginReleaseCandidate {
+function candidate(revision: string, packageRevision: string): PluginReleaseCandidate {
   const artifact = {
     format: 'memoh_plugin_v1' as const, digest: 'f'.repeat(64), size: 10,
     content_type: 'application/gzip' as const,
@@ -13,65 +13,52 @@ function candidate(revision: string, registryRevision: string, skillDigest: stri
     plugin: {
       schema_version: '1', id: 'example', name: 'Example', version: '1.0.0',
       description: 'Example', author: { name: 'Memoh', email: '' },
-      skills: [{ registry_id: 'memoh', package_id: 'tools', skill_id: 'search' }],
+      packages: [{ registry_id: 'memoh', package_id: 'tools' }],
     },
     artifact,
-    skills: [{
-      registry_id: 'memoh', package_id: 'tools', skill_id: 'search',
-      registry_revision: registryRevision, source_revision: 'source',
-      install_id: 'memoh+tools+search',
-      artifact: {
-        format: 'memoh_skill_v1', digest: skillDigest, size: 20,
-        uncompressed_size: 20, archive_size: 1_024, file_count: 1,
-        content_type: 'application/gzip',
-      },
-    }],
+    packages: [{ registry_id: 'memoh', package_id: 'tools', revision: packageRevision }],
   }
-  return {
-    plugin_id: 'example', revision, release,
-    artifact_bytes: new Uint8Array(),
-  }
+  return { plugin_id: 'example', revision, release, artifact_bytes: new Uint8Array() }
 }
 
 describe('Plugin release review', () => {
-  test('shows affected Plugin and pinned Skill revisions without changing its Bundle', () => {
+  test('shows affected Plugin and pinned Package revisions without changing its Bundle', () => {
     const diffs = diffPluginReleaseCandidates(
-      [candidate('a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64))],
-      [candidate('d'.repeat(64), 'e'.repeat(64), 'f'.repeat(64))],
+      [candidate('a'.repeat(64), 'b'.repeat(64))],
+      [candidate('d'.repeat(64), 'e'.repeat(64))],
     )
     expect(diffs).toHaveLength(1)
     expect(diffs[0]).toMatchObject({
       plugin: 'example', bundle_before: 'f'.repeat(64), bundle_after: 'f'.repeat(64),
-      skills: [{
-        identity: 'memoh/tools/search',
-        artifact_before: { digest: 'c'.repeat(64) },
-        artifact_after: { digest: 'f'.repeat(64) },
+      packages: [{
+        identity: 'memoh/tools', revision_before: 'b'.repeat(64), revision_after: 'e'.repeat(64),
       }],
     })
     const report = renderPluginReleaseDiffs(diffs)
     expect(report).toContain('Affected Plugin releases')
-    expect(report).toContain('`memoh/tools/search`')
+    expect(report).toContain('`memoh/tools`')
     expect(report).toContain('approves both the Registry release and these pinned Plugin releases')
   })
 
   test('omits Plugins whose release revision did not change', () => {
-    const current = candidate('a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64))
+    const current = candidate('a'.repeat(64), 'b'.repeat(64))
     expect(diffPluginReleaseCandidates([current], [current])).toEqual([])
     expect(renderPluginReleaseDiffs([])).toBe('')
   })
 
-  test('truncates a large report at a complete Skill boundary', () => {
-    const previous = candidate('a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64))
-    const next = candidate('d'.repeat(64), 'e'.repeat(64), 'f'.repeat(64))
-    const diff = diffPluginReleaseCandidates([previous], [next])[0]!
+  test('truncates a large report at a complete Package boundary', () => {
+    const diff = diffPluginReleaseCandidates(
+      [candidate('a'.repeat(64), 'b'.repeat(64))],
+      [candidate('d'.repeat(64), 'e'.repeat(64))],
+    )[0]!
     const report = renderPluginReleaseDiffs([
-      { ...diff, skills: Array.from({ length: 100 }, (_, index) => ({
-        ...diff.skills[0]!, identity: `memoh/tools/search-${index}`,
+      { ...diff, packages: Array.from({ length: 100 }, (_, index) => ({
+        ...diff.packages[0]!, identity: `memoh/tools-${index}`,
       })) },
     ], 2_000)
 
     expect(report.length).toBeLessThanOrEqual(2_000)
-    expect(report).toContain('truncated at a complete Skill boundary')
+    expect(report).toContain('truncated at a complete Package boundary')
     expect(report).not.toContain('approves both the Registry release')
   })
 })

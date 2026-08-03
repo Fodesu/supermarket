@@ -14,7 +14,7 @@ function release(): PluginRelease {
       format: 'memoh_plugin_v1', digest: 'a'.repeat(64), size: 1,
       content_type: 'application/gzip',
     },
-    skills: [],
+    packages: [],
   }
 }
 

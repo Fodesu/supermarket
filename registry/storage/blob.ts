@@ -4,13 +4,20 @@ import type {
   SkillImageAsset,
   SkillRegistrySnapshot,
   SkillRegistryState,
+  SkillPackageRelease,
 } from '../types'
 import * as z from 'zod/mini'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../types'
-import { assertRegistryID } from '../definition'
+import { assertRegistryComponentID, assertRegistryID } from '../definition'
 import { summarizeCurrentSnapshot } from '../catalog'
 import { sha256 } from '../digest'
-import { registrySnapshotRevision, sameBytes, serializeRegistrySnapshot } from '../snapshot'
+import {
+  registrySnapshotRevision,
+  sameBytes,
+  serializeRegistrySnapshot,
+  serializeSkillPackageRelease,
+  skillPackageRevision,
+} from '../snapshot'
 import {
   type BlobBackend,
   type SkillRegistryStateRead,
@@ -126,6 +133,30 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
       throw new Error(`Stored Snapshot is not canonically serialized: ${key}`)
     }
     return snapshot
+  }
+
+  async putPackageRelease(release: SkillPackageRelease) {
+    const id = assertRegistryID(release.registry_id, 'registry ID')
+    const packageID = assertRegistryComponentID(release.package_id, 'package ID')
+    const bytes = serializeSkillPackageRelease(release)
+    const revision = assertDigest(skillPackageRevision(release))
+    const key = `skill-registries/${id}/packages/${packageID}/${revision}.json`
+    return { revision, stored: await putImmutableObject(this.backend, key, bytes, 'Package release') }
+  }
+
+  async getPackageRelease(registryID: string, packageID: string, revision: string) {
+    const id = assertRegistryID(registryID, 'registry ID')
+    const normalizedPackageID = assertRegistryComponentID(packageID, 'package ID')
+    const digest = assertDigest(revision)
+    const key = `skill-registries/${id}/packages/${normalizedPackageID}/${digest}.json`
+    const bytes = await this.backend.get(key)
+    if (!bytes) return null
+    const release = JSON.parse(decoder.decode(bytes)) as SkillPackageRelease
+    if (release.schema_version !== '1' || release.registry_id !== id || release.package_id !== normalizedPackageID
+      || skillPackageRevision(release) !== digest || !sameBytes(bytes, serializeSkillPackageRelease(release))) {
+      throw new Error(`Invalid stored Package release: ${key}`)
+    }
+    return release
   }
 
   async publishSnapshot(

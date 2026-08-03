@@ -4,6 +4,7 @@ import type {
   SkillImageAsset,
   SkillRegistrySnapshot,
   SkillRegistryState,
+  SkillPackageRelease,
 } from '../types'
 
 export interface BlobBackend {
@@ -51,6 +52,8 @@ export interface SkillRegistryStore {
   getStateWithVersion(registryID: string): Promise<SkillRegistryStateRead>
   putState(state: SkillRegistryState, expectedVersion?: string | null): Promise<void>
   getSnapshot(registryID: string, revision: string): Promise<SkillRegistrySnapshot | null>
+  putPackageRelease(release: SkillPackageRelease): Promise<{ revision: string; stored: boolean }>
+  getPackageRelease(registryID: string, packageID: string, revision: string): Promise<SkillPackageRelease | null>
   publishSnapshot(
     bytes: Uint8Array,
     definition: SkillRegistryState['definition'],

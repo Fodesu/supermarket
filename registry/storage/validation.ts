@@ -19,6 +19,7 @@ import {
 } from '../budget'
 import { assertSafeArchivePaths } from '#lib/archive'
 import { assertDigest } from '#lib/digest'
+import { skillPackageReleaseFromSnapshotPackage, skillPackageRevision } from '../snapshot'
 
 export { assertDigest } from '#lib/digest'
 
@@ -131,6 +132,9 @@ export function validateStoredSnapshot(
             validateImageAsset(image, image.digest)
           }
         }
+      }
+      if (assertDigest(pkg.revision) !== skillPackageRevision(skillPackageReleaseFromSnapshotPackage(snapshot, pkg))) {
+        throw new Error('Snapshot Package revision does not match its content')
       }
     } catch {
       throw new Error(`Invalid stored Snapshot Artifact reference: ${key}`)

@@ -29,7 +29,7 @@ async function fixture() {
       description: 'Example Plugin', author: { name: 'Memoh', email: '' },
     },
     artifact,
-    skills: [],
+    packages: [],
   }
   return { store, bytes, artifact, release, releaseBytes: serializePluginRelease(release) }
 }

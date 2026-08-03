@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { parsePluginManifest, pluginSkillReferenceIdentity } from './manifest'
-import { MAX_PLUGIN_RELEASE_SKILLS } from './types'
+import { parsePluginManifest, pluginPackageReferenceIdentity } from './manifest'
+import { MAX_PLUGIN_RELEASE_PACKAGES } from './types'
 
 describe('Plugin manifests', () => {
   test('parses a complete remote MCP Plugin', () => {
@@ -20,12 +20,12 @@ describe('Plugin manifests', () => {
         auth_ref: 'oauth',
         visibility: 'hidden',
       }],
-      skills: [{ registry_id: 'memoh', package_id: 'example', skill_id: 'example-search' }],
+      packages: [{ registry_id: 'memoh', package_id: 'example' }],
     }, 'example')).toMatchObject({
       id: 'example',
       author: { name: 'Memoh', email: 'support@example.com' },
       mcps: [{ key: 'example', transport: 'http', auth_ref: 'oauth' }],
-      skills: [{ registry_id: 'memoh', package_id: 'example', skill_id: 'example-search' }],
+      packages: [{ registry_id: 'memoh', package_id: 'example' }],
     })
   })
 
@@ -54,32 +54,29 @@ describe('Plugin manifests', () => {
     })).toThrow('Invalid MCP key')
   })
 
-  test('requires unique namespaced Registry Skill references', () => {
+  test('requires unique namespaced Registry Package references', () => {
     const base = {
       schema_version: '1', id: 'example', name: 'Example', version: '1.0.0',
       description: 'Example Plugin', author: { name: 'Memoh' },
     }
-    const reference = { registry_id: 'memoh', package_id: 'notion', skill_id: 'search' }
-    expect(pluginSkillReferenceIdentity(reference)).toBe('memoh/notion/search')
-    expect(() => parsePluginManifest({ ...base, skills: [reference, reference] })).toThrow('duplicate reference')
+    const reference = { registry_id: 'memoh', package_id: 'notion' }
+    expect(pluginPackageReferenceIdentity(reference)).toBe('memoh/notion')
+    expect(() => parsePluginManifest({ ...base, packages: [reference, reference] })).toThrow('duplicate reference')
     expect(() => parsePluginManifest({
-      ...base, skills: [{ ...reference, registry_id: '../memoh' }],
+      ...base, packages: [{ ...reference, registry_id: '../memoh' }],
     })).toThrow('Invalid Registry ID')
     expect(() => parsePluginManifest({
-      ...base, skills: [{ ...reference, registry_id: 'user' }],
+      ...base, packages: [{ ...reference, registry_id: 'user' }],
     })).toThrow('Invalid Registry ID')
-    expect(parsePluginManifest({
-      ...base, skills: [{ ...reference, skill_id: 'notion.search' }],
-    }).skills).toEqual([{ ...reference, skill_id: 'notion.search' }])
     expect(() => parsePluginManifest({
-      ...base, skills: [{ ...reference, skill_id: 'notion..search' }],
-    })).toThrow('Invalid Skill ID')
+      ...base, packages: [{ ...reference, package_id: 'notion..search' }],
+    })).toThrow('Invalid package ID')
     expect(() => parsePluginManifest({
       ...base,
-      skills: Array.from({ length: MAX_PLUGIN_RELEASE_SKILLS + 1 }, (_, index) => ({
+      packages: Array.from({ length: MAX_PLUGIN_RELEASE_PACKAGES + 1 }, (_, index) => ({
         ...reference,
-        skill_id: `skill-${index}`,
+        package_id: `package-${index}`,
       })),
-    })).toThrow(`${MAX_PLUGIN_RELEASE_SKILLS} Skill limit`)
+    })).toThrow(`${MAX_PLUGIN_RELEASE_PACKAGES} Package limit`)
   })
 })

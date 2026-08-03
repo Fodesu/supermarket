@@ -25,7 +25,7 @@ export class PluginReleasePublisher {
   ): Promise<PluginReleasePublishResult> {
     if (!lock) throw new Error(`${candidate.plugin_id}: release.lock.json is required`)
     assertPluginReleaseCandidate(candidate.plugin_id, lock, candidate.revision)
-    const { artifact: descriptor, skills } = candidate.release
+    const { artifact: descriptor, packages } = candidate.release
     const stateRead = await this.store.getStateWithVersion(candidate.plugin_id)
     const previous = stateRead.state
     const expectedVersion = stateRead.versioning === 'conditional' ? stateRead.version : undefined
@@ -33,11 +33,25 @@ export class PluginReleasePublisher {
       return { plugin: candidate.plugin_id, revision: candidate.revision, skipped: 'unchanged' }
     }
 
-    if (skills.length) {
+    if (packages.length) {
       if (!this.skillStore) throw new Error(`${candidate.plugin_id}: Skill Registry Store is required`)
+      const releases = await Promise.all(packages.map(async (reference) => {
+        const release = await this.skillStore!.getPackageRelease(
+          reference.registry_id,
+          reference.package_id,
+          reference.revision,
+        )
+        if (!release) {
+          throw new Error(
+            `${candidate.plugin_id}: referenced Package release is missing: `
+            + `${reference.registry_id}/${reference.package_id}/${reference.revision}`,
+          )
+        }
+        return release
+      }))
       await assertSkillArtifactsAvailable(
         this.skillStore,
-        skills.map((skill) => skill.artifact),
+        releases.flatMap((release) => release.skills.map((skill) => skill.artifact)),
         `${candidate.plugin_id}: referenced Skill Artifact`,
       )
     }

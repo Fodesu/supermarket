@@ -1,6 +1,4 @@
-import type { SkillArtifactDescriptor } from '#registry/types'
-
-export const MAX_PLUGIN_RELEASE_SKILLS = 128
+export const MAX_PLUGIN_RELEASE_PACKAGES = 128
 export const MAX_PLUGIN_SKILL_ARTIFACTS_COMPRESSED_BYTES = 128 * 1024 * 1024
 export const MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES = 128 * 1024 * 1024
 export const MAX_PLUGIN_SKILL_ARTIFACTS_ARCHIVE_BYTES = 128 * 1024 * 1024
@@ -43,17 +41,13 @@ export interface PluginMcpResource {
   capabilities?: string[]
 }
 
-export interface PluginSkillReference {
+export interface PluginPackageReference {
   registry_id: string
   package_id: string
-  skill_id: string
 }
 
-export interface PluginResolvedSkill extends PluginSkillReference {
-  registry_revision: string
-  source_revision: string
-  install_id: string
-  artifact: SkillArtifactDescriptor
+export interface PluginResolvedPackage extends PluginPackageReference {
+  revision: string
 }
 
 export interface PluginManifest {
@@ -71,7 +65,7 @@ export interface PluginManifest {
   variables?: PluginVariable[]
   auth_requirements?: PluginAuthRequirement[]
   mcps?: PluginMcpResource[]
-  skills?: PluginSkillReference[]
+  packages?: PluginPackageReference[]
 }
 
 export interface PluginArtifactDescriptor {
@@ -86,7 +80,7 @@ export interface PluginRelease {
   schema_version: '1'
   plugin: PluginManifest
   artifact: PluginArtifactDescriptor
-  skills: PluginResolvedSkill[]
+  packages: PluginResolvedPackage[]
 }
 
 export interface PluginReleaseCurrentSummary {
@@ -107,15 +101,11 @@ export interface PluginReleaseState {
 
 export type PublicPluginArtifactDescriptor = PluginArtifactDescriptor & { download_url: string }
 
-export type PublicPluginResolvedSkill = Omit<PluginResolvedSkill, 'artifact'> & {
-  artifact: SkillArtifactDescriptor & { download_url: string }
-}
-
 export interface PublicPluginRelease {
   revision: string
   published_at: string
   artifact: PublicPluginArtifactDescriptor
-  skills: PublicPluginResolvedSkill[]
+  packages: PluginResolvedPackage[]
 }
 
 export type PublishedPluginEntry = PluginManifest & { release: PublicPluginRelease }

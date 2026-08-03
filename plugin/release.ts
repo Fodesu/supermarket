@@ -1,27 +1,18 @@
-import {
-  MAX_SKILL_ARTIFACT_ARCHIVE_BYTES,
-  MAX_SKILL_ARTIFACT_COMPRESSED_BYTES,
-  MAX_SKILL_ARTIFACT_FILES,
-  MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
-  type SkillArtifactDescriptor,
-  type SkillRegistrySnapshot,
-} from '#registry/types'
-import { catalogSkillsFromSnapshot } from '#registry/snapshot'
+import type { SnapshotPackage, SkillRegistrySnapshot } from '#registry/types'
 import { sha256 } from '#registry/digest'
 import { assertDigest } from '#registry/storage/validation'
-import { skillInstallID } from '#registry/definition'
 import { sameBytes } from '#registry/snapshot'
 import { packagePlugin } from './artifact'
 import { MAX_PLUGIN_ARTIFACT_COMPRESSED_BYTES } from './bundle'
-import { parsePluginManifest, pluginSkillReferenceIdentity } from './manifest'
+import { parsePluginManifest, pluginPackageReferenceIdentity } from './manifest'
 import { loadCommittedPlugins } from './repository'
 import type {
   PluginArtifactDescriptor,
   PluginRelease,
-  PluginResolvedSkill,
+  PluginResolvedPackage,
 } from './types'
 import {
-  MAX_PLUGIN_RELEASE_SKILLS,
+  MAX_PLUGIN_RELEASE_PACKAGES,
   MAX_PLUGIN_SKILL_ARTIFACTS_ARCHIVE_BYTES,
   MAX_PLUGIN_SKILL_ARTIFACTS_COMPRESSED_BYTES,
   MAX_PLUGIN_SKILL_ARTIFACTS_FILES,
@@ -30,7 +21,6 @@ import {
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
-const sourceRevisionPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/
 
 export interface ApprovedSkillRegistrySnapshot {
   revision: string
@@ -61,48 +51,6 @@ function validatePluginArtifact(descriptor: PluginArtifactDescriptor, label: str
   }
 }
 
-function validateResolvedSkill(skill: PluginResolvedSkill, label: string) {
-  const identity = pluginSkillReferenceIdentity(skill)
-  assertDigest(skill.registry_revision)
-  if (typeof skill.source_revision !== 'string' || !sourceRevisionPattern.test(skill.source_revision)
-    || typeof skill.install_id !== 'string'
-    || skill.install_id !== skillInstallID(skill.registry_id, skill.package_id, skill.skill_id)) {
-    throw new Error(`${label} contains an invalid Skill lock: ${identity}`)
-  }
-  if (!skill.artifact || typeof skill.artifact !== 'object') {
-    throw new Error(`${label} contains an invalid Skill Artifact: ${identity}`)
-  }
-  assertDigest(skill.artifact.digest)
-  if (skill.artifact.format !== 'memoh_skill_v1' || skill.artifact.content_type !== 'application/gzip'
-    || !Number.isSafeInteger(skill.artifact.size) || skill.artifact.size < 1
-    || skill.artifact.size > MAX_SKILL_ARTIFACT_COMPRESSED_BYTES
-    || !Number.isSafeInteger(skill.artifact.uncompressed_size)
-    || skill.artifact.uncompressed_size < 1
-    || skill.artifact.uncompressed_size > MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES
-    || !Number.isSafeInteger(skill.artifact.archive_size)
-    || skill.artifact.archive_size < 1
-    || skill.artifact.archive_size > MAX_SKILL_ARTIFACT_ARCHIVE_BYTES
-    || !Number.isSafeInteger(skill.artifact.file_count)
-    || skill.artifact.file_count < 1
-    || skill.artifact.file_count > MAX_SKILL_ARTIFACT_FILES) {
-    throw new Error(`${label} contains an invalid Skill Artifact: ${identity}`)
-  }
-  return skill.artifact
-}
-
-function sameSkillArtifactDescriptor(
-  left: SkillArtifactDescriptor,
-  right: SkillArtifactDescriptor,
-) {
-  return left.format === right.format
-    && left.digest === right.digest
-    && left.size === right.size
-    && left.uncompressed_size === right.uncompressed_size
-    && left.archive_size === right.archive_size
-    && left.file_count === right.file_count
-    && left.content_type === right.content_type
-}
-
 export function parsePluginRelease(
   bytes: Uint8Array,
   pluginID: string,
@@ -114,55 +62,51 @@ export function parsePluginRelease(
   } catch {
     throw new Error(`${label} must contain valid JSON`)
   }
-  if (!release || release.schema_version !== '1' || !release.plugin || !Array.isArray(release.skills)) {
+  if (!release || release.schema_version !== '1' || !release.plugin || !Array.isArray(release.packages)) {
     throw new Error(`${label} has an invalid shape`)
   }
   const pluginInput = structuredClone(release.plugin) as PluginRelease['plugin']
   if (pluginInput.author?.email === '') delete (pluginInput.author as { email?: string }).email
   release.plugin = parsePluginManifest(pluginInput, pluginID)
   validatePluginArtifact(release.artifact, label)
-  const references = release.plugin.skills ?? []
-  if (references.length !== release.skills.length) throw new Error(`${label} does not lock every Skill reference`)
-  if (release.skills.length > MAX_PLUGIN_RELEASE_SKILLS) {
-    throw new Error(`${label} exceeds the ${MAX_PLUGIN_RELEASE_SKILLS} Skill limit`)
+  const references = release.plugin.packages ?? []
+  if (references.length !== release.packages.length) throw new Error(`${label} does not lock every Package reference`)
+  if (release.packages.length > MAX_PLUGIN_RELEASE_PACKAGES) {
+    throw new Error(`${label} exceeds the ${MAX_PLUGIN_RELEASE_PACKAGES} Package limit`)
   }
-  let totalCompressedSize = 0
-  let totalUncompressedSize = 0
-  let totalArchiveSize = 0
-  let totalFileCount = 0
-  const artifactsByDigest = new Map<string, SkillArtifactDescriptor>()
   for (let index = 0; index < references.length; index++) {
     const reference = references[index]!
-    const resolved = release.skills[index]!
-    if (pluginSkillReferenceIdentity(reference) !== pluginSkillReferenceIdentity(resolved)) {
-      throw new Error(`${label} Skill lock order does not match plugin.yaml`)
+    const resolved = release.packages[index]!
+    if (pluginPackageReferenceIdentity(reference) !== pluginPackageReferenceIdentity(resolved)) {
+      throw new Error(`${label} Package lock order does not match plugin.yaml`)
     }
-    const artifact = validateResolvedSkill(resolved, label)
-    const existingArtifact = artifactsByDigest.get(artifact.digest)
-    if (existingArtifact && !sameSkillArtifactDescriptor(existingArtifact, artifact)) {
-      throw new Error(`${label} contains inconsistent descriptors for Skill Artifact: ${artifact.digest}`)
-    }
-    artifactsByDigest.set(artifact.digest, artifact)
-    if (artifact.size > MAX_PLUGIN_SKILL_ARTIFACTS_COMPRESSED_BYTES - totalCompressedSize) {
-      throw new Error(`${label} Skill Artifacts exceed the ${MAX_PLUGIN_SKILL_ARTIFACTS_COMPRESSED_BYTES} byte compressed limit`)
-    }
-    if (artifact.uncompressed_size > MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES - totalUncompressedSize) {
-      throw new Error(`${label} Skill Artifacts exceed the ${MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES} byte uncompressed limit`)
-    }
-    if (artifact.archive_size > MAX_PLUGIN_SKILL_ARTIFACTS_ARCHIVE_BYTES - totalArchiveSize) {
-      throw new Error(`${label} Skill Artifacts exceed the ${MAX_PLUGIN_SKILL_ARTIFACTS_ARCHIVE_BYTES} byte archive limit`)
-    }
-    if (artifact.file_count > MAX_PLUGIN_SKILL_ARTIFACTS_FILES - totalFileCount) {
-      throw new Error(`${label} Skill Artifacts exceed the ${MAX_PLUGIN_SKILL_ARTIFACTS_FILES} file limit`)
-    }
-    totalCompressedSize += artifact.size
-    totalUncompressedSize += artifact.uncompressed_size
-    totalArchiveSize += artifact.archive_size
-    totalFileCount += artifact.file_count
+    assertDigest(resolved.revision)
   }
   const canonical = serializePluginRelease(release)
   if (!sameBytes(bytes, canonical)) throw new Error(`${label} must use canonical JSON formatting`)
   return release
+}
+
+function validatePackageArtifactBudget(packages: SnapshotPackage[], label: string) {
+  let compressed = 0
+  let uncompressed = 0
+  let archive = 0
+  let files = 0
+  for (const pkg of packages) {
+    for (const skill of pkg.skills) {
+      const artifact = skill.artifact
+      if (artifact.size > MAX_PLUGIN_SKILL_ARTIFACTS_COMPRESSED_BYTES - compressed
+        || artifact.uncompressed_size > MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES - uncompressed
+        || artifact.archive_size > MAX_PLUGIN_SKILL_ARTIFACTS_ARCHIVE_BYTES - archive
+        || artifact.file_count > MAX_PLUGIN_SKILL_ARTIFACTS_FILES - files) {
+        throw new Error(`${label} Package Skill Artifacts exceed the Plugin install budget`)
+      }
+      compressed += artifact.size
+      uncompressed += artifact.uncompressed_size
+      archive += artifact.archive_size
+      files += artifact.file_count
+    }
+  }
 }
 
 export async function assertPluginReleaseRevision(bytes: Uint8Array, expectedRevision: string) {
@@ -175,13 +119,13 @@ export async function buildPluginReleaseCandidates(
   projectRoot: string,
   registries: ApprovedSkillRegistrySnapshot[],
 ): Promise<PluginReleaseCandidate[]> {
-  const skills = new Map<string, { registryRevision: string; skill: ReturnType<typeof catalogSkillsFromSnapshot>[number] }>()
+  const packages = new Map<string, SnapshotPackage>()
   for (const registry of registries) {
     assertDigest(registry.revision)
-    for (const skill of catalogSkillsFromSnapshot(registry.snapshot)) {
-      const identity = `${skill.registry_id}/${skill.package_id}/${skill.skill_id}`
-      if (skills.has(identity)) throw new Error(`Duplicate Registry Skill identity: ${identity}`)
-      skills.set(identity, { registryRevision: registry.revision, skill })
+    for (const pkg of registry.snapshot.packages) {
+      const identity = `${registry.snapshot.registry_id}/${pkg.package_id}`
+      if (packages.has(identity)) throw new Error(`Duplicate Registry Package identity: ${identity}`)
+      packages.set(identity, pkg)
     }
   }
 
@@ -190,23 +134,20 @@ export async function buildPluginReleaseCandidates(
   for (const plugin of await loadCommittedPlugins(projectRoot)) {
     try {
       const artifact = await packagePlugin(plugin)
-      const resolved = (plugin.manifest.skills ?? []).map((reference): PluginResolvedSkill => {
-        const identity = pluginSkillReferenceIdentity(reference)
-        const current = skills.get(identity)
-        if (!current) throw new Error(`references missing Registry Skill: ${identity}`)
-        return {
-          ...reference,
-          registry_revision: current.registryRevision,
-          source_revision: current.skill.source.revision,
-          install_id: current.skill.install_id,
-          artifact: current.skill.artifact,
-        }
+      const referencedPackages: SnapshotPackage[] = []
+      const resolved = (plugin.manifest.packages ?? []).map((reference): PluginResolvedPackage => {
+        const identity = pluginPackageReferenceIdentity(reference)
+        const current = packages.get(identity)
+        if (!current) throw new Error(`references missing Registry Package: ${identity}`)
+        referencedPackages.push(current)
+        return { ...reference, revision: current.revision }
       })
+      validatePackageArtifactBudget(referencedPackages, plugin.id)
       const release: PluginRelease = {
         schema_version: '1',
         plugin: plugin.manifest,
         artifact: artifact.descriptor,
-        skills: resolved,
+        packages: resolved,
       }
       const releaseBytes = serializePluginRelease(release)
       candidates.push({

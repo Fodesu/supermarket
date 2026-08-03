@@ -4,12 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { parseGzipTarArchive } from '#client/archive'
 import type { CatalogSkill, SkillRegistrySnapshot } from '#registry/types'
-import {
-  MAX_SKILL_ARTIFACT_ARCHIVE_BYTES,
-  MAX_SKILL_ARTIFACT_COMPRESSED_BYTES,
-  MAX_SKILL_ARTIFACT_FILES,
-  MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
-} from '#registry/types'
+import { MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES } from '#registry/types'
 import { compactCatalogPackages } from '#registry/snapshot'
 import {
   assertPluginReleaseRevision,
@@ -17,19 +12,36 @@ import {
   parsePluginRelease,
   serializePluginRelease,
 } from './release'
-import {
-  MAX_PLUGIN_SKILL_ARTIFACTS_ARCHIVE_BYTES,
-  MAX_PLUGIN_SKILL_ARTIFACTS_COMPRESSED_BYTES,
-  MAX_PLUGIN_SKILL_ARTIFACTS_FILES,
-  MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES,
-  type PluginRelease,
-} from './types'
 
 const roots: string[] = []
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
+
+function skill(packageID: string, skillID: string, digest: string, uncompressedSize = 456): CatalogSkill {
+  return {
+    schema_version: '1', registry_id: 'example', registry_priority: 1,
+    package_id: packageID, skill_id: skillID, install_id: `example+${packageID}+${skillID}`,
+    name: skillID, description: skillID, author: { name: 'Test', email: '' },
+    tags: [], category: 'tools', category_name: 'Tools',
+    source: { type: 'local', revision: 'e'.repeat(64), path: `${packageID}/${skillID}` },
+    files: ['SKILL.md'],
+    artifact: {
+      format: 'memoh_skill_v1', digest, size: 123,
+      uncompressed_size: uncompressedSize, archive_size: 1_024, file_count: 1,
+      content_type: 'application/gzip',
+    },
+  }
+}
+
+function snapshot(skills: CatalogSkill[]): SkillRegistrySnapshot {
+  return {
+    schema_version: '1', registry_id: 'example', registry_priority: 1,
+    source: { type: 'local', revision: 'e'.repeat(64) },
+    packages: compactCatalogPackages(skills), diagnostics: [],
+  }
+}
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'plugin-release-'))
@@ -38,80 +50,30 @@ async function fixture() {
   await mkdir(path.join(pluginRoot, 'scripts'), { recursive: true })
   await writeFile(path.join(pluginRoot, 'plugin.yaml'), [
     'schema_version: "1"', 'id: example', 'name: Example', 'version: 1.0.0',
-    'description: Example Plugin', 'author:', '  name: Memoh', 'skills:',
-    '  - registry_id: example', '    package_id: tools', '    skill_id: search',
+    'description: Example Plugin', 'author:', '  name: Memoh', 'packages:',
+    '  - registry_id: example', '    package_id: tools',
   ].join('\n'))
   await writeFile(path.join(pluginRoot, 'scripts/run.sh'), '#!/bin/sh\n', { mode: 0o755 })
   await writeFile(path.join(pluginRoot, 'release.lock.json'), '{}\n')
-  const artifact = {
-    format: 'memoh_skill_v1' as const,
-    digest: 'a'.repeat(64),
-    size: 123,
-    uncompressed_size: 456,
-    archive_size: 1_024,
-    file_count: 1,
-    content_type: 'application/gzip' as const,
-  }
-  const skill: CatalogSkill = {
-    schema_version: '1', registry_id: 'example', registry_priority: 1,
-    package_id: 'tools', skill_id: 'search', install_id: 'example+tools+search',
-    name: 'Search', description: 'Search', author: { name: 'Test', email: '' },
-    tags: ['search'], category: 'tools', category_name: 'Tools',
-    source: { type: 'local', revision: 'e'.repeat(64), path: 'skills/search' },
-    files: ['SKILL.md'], artifact,
-  }
-  const snapshot: SkillRegistrySnapshot = {
-    schema_version: '1', registry_id: 'example', registry_priority: 1,
-    source: { type: 'local', revision: 'e'.repeat(64) },
-    packages: compactCatalogPackages([skill]), diagnostics: [],
-  }
-  return { root, snapshot }
-}
-
-function releaseWithSkills(count: number, artifactOverrides: Partial<PluginRelease['skills'][number]['artifact']> = {}): PluginRelease {
-  const references = Array.from({ length: count }, (_, index) => ({
-    registry_id: 'example', package_id: 'tools', skill_id: `skill-${index}`,
-  }))
   return {
-    schema_version: '1',
-    plugin: {
-      schema_version: '1', id: 'example', name: 'Example', version: '1.0.0',
-      description: 'Example Plugin', author: { name: 'Memoh', email: '' }, skills: references,
-    },
-    artifact: {
-      format: 'memoh_plugin_v1', digest: 'a'.repeat(64), size: 1,
-      content_type: 'application/gzip',
-    },
-    skills: references.map((reference) => ({
-      ...reference,
-      registry_revision: 'b'.repeat(64),
-      source_revision: 'd'.repeat(64),
-      install_id: `${reference.registry_id}+${reference.package_id}+${reference.skill_id}`,
-      artifact: {
-        format: 'memoh_skill_v1', digest: 'c'.repeat(64), size: 1,
-        uncompressed_size: 1, archive_size: 1, file_count: 1,
-        content_type: 'application/gzip',
-        ...artifactOverrides,
-      },
-    })),
+    root,
+    snapshot: snapshot([
+      skill('tools', 'search', 'a'.repeat(64)),
+      skill('other', 'other', 'b'.repeat(64)),
+    ]),
   }
 }
 
 describe('Plugin release candidates', () => {
-  test('packages only Plugin files and pins the approved Skill Artifact', async () => {
-    const { root, snapshot } = await fixture()
-    const [candidate] = await buildPluginReleaseCandidates(root, [{
-      revision: 'b'.repeat(64), snapshot,
+  test('packages only Plugin files and pins the approved Package release', async () => {
+    const current = await fixture()
+    const [candidate] = await buildPluginReleaseCandidates(current.root, [{
+      revision: 'b'.repeat(64), snapshot: current.snapshot,
     }])
-    expect(candidate).toBeDefined()
-    expect(candidate!.release.skills[0]).toMatchObject({
-      registry_id: 'example', package_id: 'tools', skill_id: 'search',
-      registry_revision: 'b'.repeat(64), source_revision: 'e'.repeat(64),
-      install_id: 'example+tools+search',
-      artifact: {
-        digest: 'a'.repeat(64), uncompressed_size: 456, archive_size: 1_024, file_count: 1,
-      },
-    })
+    const packageRevision = current.snapshot.packages.find(pkg => pkg.package_id === 'tools')!.revision
+    expect(candidate!.release.packages).toEqual([{
+      registry_id: 'example', package_id: 'tools', revision: packageRevision,
+    }])
     const releaseBytes = serializePluginRelease(candidate!.release)
     expect(parsePluginRelease(releaseBytes, 'example')).toEqual(candidate!.release)
     await expect(assertPluginReleaseRevision(releaseBytes, candidate!.revision)).resolves.toBeUndefined()
@@ -119,67 +81,64 @@ describe('Plugin release candidates', () => {
     const files = await parseGzipTarArchive(candidate!.artifact_bytes)
     expect([...files.keys()].sort()).toEqual(['example/plugin.yaml', 'example/scripts/run.sh'])
     expect(files.get('example/scripts/run.sh')?.mode).toBe(0o755)
-    expect([...files.keys()].some((name) => name.includes('release.lock'))).toBeFalse()
+    expect([...files.keys()].some(name => name.includes('release.lock'))).toBeFalse()
   })
 
-  test('changes release revision when a pinned Skill digest changes', async () => {
-    const { root, snapshot } = await fixture()
-    const [before] = await buildPluginReleaseCandidates(root, [{ revision: 'b'.repeat(64), snapshot }])
-    snapshot.packages[0]!.skills[0]!.artifact.digest = 'c'.repeat(64)
-    const [after] = await buildPluginReleaseCandidates(root, [{ revision: 'd'.repeat(64), snapshot }])
-    expect(after!.revision).not.toBe(before!.revision)
-    expect(after!.release.artifact.digest).toBe(before!.release.artifact.digest)
+  test('changes only when a referenced Package changes', async () => {
+    const current = await fixture()
+    const [before] = await buildPluginReleaseCandidates(current.root, [{
+      revision: 'b'.repeat(64), snapshot: current.snapshot,
+    }])
+    const unrelated = snapshot([
+      skill('tools', 'search', 'a'.repeat(64)),
+      skill('other', 'other', 'c'.repeat(64)),
+    ])
+    const [afterUnrelated] = await buildPluginReleaseCandidates(current.root, [{
+      revision: 'c'.repeat(64), snapshot: unrelated,
+    }])
+    expect(afterUnrelated!.revision).toBe(before!.revision)
+
+    const changed = snapshot([
+      skill('tools', 'search', 'd'.repeat(64)),
+      skill('other', 'other', 'c'.repeat(64)),
+    ])
+    const [afterReferenced] = await buildPluginReleaseCandidates(current.root, [{
+      revision: 'd'.repeat(64), snapshot: changed,
+    }])
+    expect(afterReferenced!.revision).not.toBe(before!.revision)
+    expect(afterReferenced!.release.artifact.digest).toBe(before!.release.artifact.digest)
   })
 
-  test('rejects a missing referenced Skill', async () => {
-    const { root, snapshot } = await fixture()
-    snapshot.packages = []
-    await expect(buildPluginReleaseCandidates(root, [{ revision: 'b'.repeat(64), snapshot }]))
-      .rejects.toThrow('references missing Registry Skill')
+  test('rejects a missing referenced Package', async () => {
+    const current = await fixture()
+    current.snapshot.packages = []
+    await expect(buildPluginReleaseCandidates(current.root, [{
+      revision: 'b'.repeat(64), snapshot: current.snapshot,
+    }])).rejects.toThrow('references missing Registry Package')
   })
 
-  test('rejects releases whose Skill Artifacts exceed the Memoh install budgets', () => {
-    expect(() => parsePluginRelease(serializePluginRelease(releaseWithSkills(26, {
-      uncompressed_size: MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
-    })), 'example'))
-      .toThrow(`${MAX_PLUGIN_SKILL_ARTIFACTS_UNCOMPRESSED_BYTES} byte uncompressed limit`)
-    expect(() => parsePluginRelease(serializePluginRelease(releaseWithSkills(22, {
-      size: MAX_SKILL_ARTIFACT_COMPRESSED_BYTES,
-    })), 'example'))
-      .toThrow(`${MAX_PLUGIN_SKILL_ARTIFACTS_COMPRESSED_BYTES} byte compressed limit`)
-    expect(() => parsePluginRelease(serializePluginRelease(releaseWithSkills(26, {
-      archive_size: MAX_SKILL_ARTIFACT_ARCHIVE_BYTES,
-    })), 'example'))
-      .toThrow(`${MAX_PLUGIN_SKILL_ARTIFACTS_ARCHIVE_BYTES} byte archive limit`)
-    expect(() => parsePluginRelease(serializePluginRelease(releaseWithSkills(11, {
-      file_count: MAX_SKILL_ARTIFACT_FILES,
-    })), 'example'))
-      .toThrow(`${MAX_PLUGIN_SKILL_ARTIFACTS_FILES} file limit`)
+  test('rejects Packages whose Skill Artifacts exceed the Plugin install budget', async () => {
+    const current = await fixture()
+    current.snapshot = snapshot(Array.from({ length: 26 }, (_, index) => skill(
+      'tools', `skill-${index}`, `${index.toString(16).padStart(2, '0')}${'a'.repeat(62)}`,
+      MAX_SKILL_ARTIFACT_UNCOMPRESSED_BYTES,
+    )))
+    await expect(buildPluginReleaseCandidates(current.root, [{
+      revision: 'b'.repeat(64), snapshot: current.snapshot,
+    }])).rejects.toThrow('Package Skill Artifacts exceed the Plugin install budget')
   })
 
-  test('rejects Skill Artifact descriptors without extraction metadata', () => {
-    const release = releaseWithSkills(1)
-    delete (release.skills[0]!.artifact as Partial<typeof release.skills[0]['artifact']>).archive_size
-    expect(() => parsePluginRelease(serializePluginRelease(release), 'example'))
-      .toThrow('invalid Skill Artifact')
-  })
-
-  test('rejects different descriptors for the same Skill Artifact digest', () => {
-    const release = releaseWithSkills(2)
-    release.skills[1]!.artifact.uncompressed_size = 2
-    expect(() => parsePluginRelease(serializePluginRelease(release), 'example'))
-      .toThrow('contains inconsistent descriptors for Skill Artifact')
-  })
-
-  test('rejects malformed source revisions and non-canonical install identities', () => {
-    const malformedSource = releaseWithSkills(1)
-    ;(malformedSource.skills[0] as unknown as { source_revision: number }).source_revision = 42
-    expect(() => parsePluginRelease(serializePluginRelease(malformedSource), 'example'))
-      .toThrow('contains an invalid Skill lock')
-
-    const wrongInstallID = releaseWithSkills(1)
-    wrongInstallID.skills[0]!.install_id = 'example+tools+different'
-    expect(() => parsePluginRelease(serializePluginRelease(wrongInstallID), 'example'))
-      .toThrow('contains an invalid Skill lock')
+  test('rejects malformed and reordered Package locks', async () => {
+    const current = await fixture()
+    const [candidate] = await buildPluginReleaseCandidates(current.root, [{
+      revision: 'b'.repeat(64), snapshot: current.snapshot,
+    }])
+    candidate!.release.packages[0]!.revision = 'invalid'
+    expect(() => parsePluginRelease(serializePluginRelease(candidate!.release), 'example')).toThrow()
+    candidate!.release.packages[0] = {
+      registry_id: 'example', package_id: 'other', revision: 'a'.repeat(64),
+    }
+    expect(() => parsePluginRelease(serializePluginRelease(candidate!.release), 'example'))
+      .toThrow('Package lock order')
   })
 })
