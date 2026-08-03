@@ -10,7 +10,7 @@ import { MAX_SKILL_IMAGE_BYTES } from '../types'
 import { assertRegistryComponentID, safeRelativePath } from '../definition'
 import { resolveRealInside } from '../filesystem'
 import { compareCanonicalText } from '#lib/order'
-import { sha256 } from '../digest'
+import { sha256 } from '#lib/digest'
 import { buildSkillCandidate, hasComponent } from './common'
 import type { SkillAdapterInput, SkillAdapterResult, SkillCandidate } from './types'
 import {

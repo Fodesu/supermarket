@@ -9,7 +9,7 @@ import type {
 import path from 'node:path'
 import { buildSkillCandidates, skillAdapterBootstrapPaths } from '../adapters/index'
 import { packageSkill } from '../artifacts/build'
-import { sha256 } from '../digest'
+import { sha256 } from '#lib/digest'
 import { materializeSkillRegistrySource } from '../sources/index'
 import {
   compactCatalogPackages,

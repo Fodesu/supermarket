@@ -10,7 +10,7 @@ import * as z from 'zod/mini'
 import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../types'
 import { assertRegistryComponentID, assertRegistryID } from '../definition'
 import { summarizeCurrentSnapshot } from '../catalog'
-import { sha256 } from '../digest'
+import { sha256 } from '#lib/digest'
 import {
   registrySnapshotRevision,
   sameBytes,
