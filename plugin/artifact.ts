@@ -1,6 +1,6 @@
 import { stringify as stringifyYaml } from 'yaml'
 import { createTar, gzip, type TarFileInput } from '#lib/archive'
-import { sha256 } from '#registry/digest'
+import { sha256 } from '#lib/digest'
 import {
   MAX_PLUGIN_ARCHIVE_BYTES,
   MAX_PLUGIN_ARTIFACT_COMPRESSED_BYTES,

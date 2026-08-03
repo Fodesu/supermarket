@@ -1,5 +1,5 @@
 import type { SnapshotPackage, SkillRegistrySnapshot } from '#registry/types'
-import { sha256 } from '#registry/digest'
+import { sha256 } from '#lib/digest'
 import { assertDigest } from '#registry/storage/validation'
 import { sameBytes } from '#registry/snapshot'
 import { packagePlugin } from './artifact'

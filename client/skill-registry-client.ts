@@ -1,6 +1,6 @@
 import path from 'node:path'
 import * as z from 'zod/mini'
-import { sha256 } from '#registry/digest'
+import { sha256 } from '#lib/digest'
 import { skillInstallID } from '#registry/definition'
 import {
   MAX_SKILL_ARTIFACT_ARCHIVE_BYTES,

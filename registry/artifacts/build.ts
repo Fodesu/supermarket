@@ -2,7 +2,7 @@ import {
   MAX_SKILL_ARTIFACT_COMPRESSED_BYTES,
 } from '../types'
 import { createTar, gzip } from '#lib/archive'
-import { sha256 } from '../digest'
+import { sha256 } from '#lib/digest'
 import type { SkillSourceFile } from '../filesystem'
 
 export async function packageSkill(files: Record<string, SkillSourceFile>) {

@@ -27,7 +27,7 @@ import {
 } from '#registry/snapshot'
 import { createTar, gzip } from '#lib/archive'
 import { R2BlobBackend } from '#registry/storage/r2'
-import { sha256 } from '#registry/digest'
+import { sha256 } from '#lib/digest'
 import { BlobSkillRegistryStore } from '#registry/storage/blob'
 import { packageSkill } from '#registry/artifacts/build'
 import { BlobPluginReleaseStore } from '#plugin/storage/blob'

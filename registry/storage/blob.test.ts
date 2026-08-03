@@ -6,7 +6,7 @@ import { MAX_SKILL_ARTIFACT_COMPRESSED_BYTES } from '../types'
 import type { SkillArtifactDescriptor, SkillImageAsset, SkillRegistryDefinition, SkillRegistrySnapshot } from '../types'
 import { LocalSkillRegistryStore } from './local'
 import { R2BlobBackend } from './r2'
-import { sha256 } from '../digest'
+import { sha256 } from '#lib/digest'
 import {
   BlobSkillRegistryStore,
   MAX_REGISTRY_STATE_BYTES,

@@ -1,4 +1,4 @@
-import { sha256 } from '../digest'
+import { sha256 } from '#lib/digest'
 import { conditionalBlobBackend, type BlobBackend } from './contracts'
 
 // Digest-addressed writes are retryable because every successful writer must

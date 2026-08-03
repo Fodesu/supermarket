@@ -1,4 +1,4 @@
-import { sha256 } from '#registry/digest'
+import { sha256 } from '#lib/digest'
 import { assertIdentifier } from '#registry/definition'
 import {
   type StreamingBlobBackend,
