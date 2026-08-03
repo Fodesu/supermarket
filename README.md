@@ -28,7 +28,7 @@ supermarket/
 └── vite.config.ts
 ```
 
-Registry Skills and Plugins are published into `.data/registries` locally or R2 when deployed; neither Registry Snapshots nor installable content is bundled into the API Worker. A Registry Snapshot stores the complete immutable Package set for one Registry, with each Package containing its Skill descriptors. The API exposes Packages directly and expands their members into the searchable Skill Catalog view. Each Plugin has an immutable release descriptor that binds its Bundle digest and the exact Registry Snapshot and Skill Artifact descriptor for every referenced Skill. Git commits `release.lock.json` files as approval records. Runtime `state.json` objects are the only mutable pointers and select the current approved Snapshot or Plugin release after every referenced immutable object has been stored.
+Registry Skills and Plugins are published into `.data/registries` locally or R2 when deployed; neither Registry Snapshots nor installable content is bundled into the API Worker. A Registry Snapshot stores the complete immutable Package set for one Registry, with each Package containing its Skill descriptors. The API exposes Packages directly and expands their members into the searchable Skill Catalog view. Each Plugin has an immutable release descriptor that binds its Bundle digest and the exact revision of every referenced Package. Each immutable Package release in turn binds its member Skill Artifact descriptors. Git commits `release.lock.json` files as approval records. Runtime `state.json` objects are the only mutable pointers and select the current approved Snapshot or Plugin release after every referenced immutable object has been stored.
 
 The Codex Marketplace adapter imports only Packages that declare Skills without Apps, MCP servers, hooks, commands, agents, or LSP servers.
 
@@ -59,7 +59,7 @@ The first publication must publish every enabled Registry so the local Store con
 | `bun test` | Run the Bun test suite |
 | `bun run typecheck` | Generate Worker types and check server and Vue projects |
 | `bun run build` | Validate approved releases and build the Cloudflare Worker |
-| `bun run registry:lock -- --registry <id>` | Rebuild one Registry lock and all affected Plugin locks |
+| `bun run registry:lock -- --registry <id>` | Rebuild one Registry lock and recalculate all Plugin locks |
 | `bun run registry:lock -- --plugin <id>` | Rebuild one Plugin lock |
 | `bun run registry:validate` | Rebuild every enabled source and verify committed locks |
 | `bun run registry:publish` | Publish approved releases to the local Store |
@@ -101,8 +101,8 @@ Base URL: `https://supermarket.memoh.ai`
 | GET | `/api/artifacts/skill/:digest` | Download a Skill archive |
 | GET | `/api/artifacts/icon/:digest` | Download a Skill icon |
 
-Packages are derived from one immutable Registry Snapshot and group all Skills with the same `(registry_id, package_id)`. A Package descriptor pins its Snapshot revision and every member Skill Artifact digest; it does not create a combined archive. Registry Skills use the identity `(registry_id, package_id, skill_id)`. The reference client installs them into `<registry_id>+<package_id>+<skill_id>`.
-Plugin source manifests use those identities as references. A published Plugin release resolves each reference to a fixed Registry Snapshot revision and Skill Artifact digest, so installing the same Plugin release always installs the same Skill content.
+Packages are derived from one immutable Registry Snapshot and group all Skills with the same `(registry_id, package_id)`. A Package release has its own content-derived revision and pins every member Skill Artifact digest; it does not create a combined archive. Registry Skills use the identity `(registry_id, package_id, skill_id)`. The reference client installs them into `<registry_id>+<package_id>+<skill_id>`.
+Plugin source manifests reference Packages by `(registry_id, package_id)`. A published Plugin release resolves each reference to a fixed Package revision, so installing the same Plugin release always resolves the same member Skill content.
 The installation identity is supplied by the client rather than embedded as an archive directory; the archive itself contains the Skill files at its root.
 ## Contributing
 
@@ -197,7 +197,7 @@ bun run dev
 
 On a new checkout, run the full `bun run registry:publish` once before using partial publication. Commit the Registry `release.lock.json` and any changed `plugins/*/release.lock.json` files with the Skill source. `registry:lock -- --registry <id>` rebuilds Plugin locks because a changed Skill may produce a new Plugin release.
 
-Skill archives include regular files under the Skill root, including binary assets; `.git` and `node_modules` directories are ignored. An archive is limited to 1,000 files, 5 MiB of regular-file content, 5 MiB of serialized TAR data, and 6 MiB compressed. Every Artifact descriptor includes the immutable digest, compressed `size`, regular-file `uncompressed_size`, serialized `archive_size`, and `file_count`; clients must reject descriptors that omit those extraction fields. A Plugin release may reference at most 128 Skills, with aggregate limits of 128 MiB each for compressed bytes, regular-file body bytes, and serialized TAR bytes, plus 10,000 files.
+Skill archives include regular files under the Skill root, including binary assets; `.git` and `node_modules` directories are ignored. An archive is limited to 1,000 files, 5 MiB of regular-file content, 5 MiB of serialized TAR data, and 6 MiB compressed. Every Artifact descriptor includes the immutable digest, compressed `size`, regular-file `uncompressed_size`, serialized `archive_size`, and `file_count`; clients must reject descriptors that omit those extraction fields. A Plugin release may reference at most 128 Packages. Across their member Skills, the aggregate limits are 128 MiB each for compressed bytes, regular-file body bytes, and serialized TAR bytes, plus 10,000 files.
 
 ### Adding a Registry
 
@@ -229,7 +229,7 @@ bun run registry:validate
 
 Supported sources are `local` and HTTPS `git`; adapters are `skill_directory`, `skill_package_directory`, and `codex_marketplace_skills`. `skill_package_directory` reads `<package-id>/skills/<skill-id>` from its source root. A local source path is relative to the directory containing its `registry.yaml`. A Git source must pin an exact commit in `revision`; optional `tracking_ref` opts it into upstream update checks.
 
-`codex_marketplace_skills` reads `catalog_path` from its source root and supports only Marketplace Packages whose source is a local path in that same checkout. Each Package must contain `.codex-plugin/plugin.json` and declare one or more Skill paths. The Adapter imports only declared Skills; other Package components such as `apps`, `mcpServers`, and `hooks` are outside the Skill Catalog. Packages with no Skills, another source type, or invalid Skill content are skipped with explicit Registry diagnostics. An invalid Package is isolated so other valid Packages in the same Registry can still be published.
+`codex_marketplace_skills` reads `catalog_path` from its source root and supports only Marketplace Packages whose source is a local path in that same checkout. Each Package must contain `.codex-plugin/plugin.json` and declare one or more Skill paths. Packages that also declare `apps`, `mcpServers`, `hooks`, commands, agents, or LSP servers are excluded as a whole rather than partially imported. Packages with no Skills, another source type, or invalid Skill content are skipped with explicit Registry diagnostics. An invalid Package is isolated so other valid Packages in the same Registry can still be published.
 
 Git sources use a filtered shallow fetch and root-anchored sparse checkout for the Adapter paths. Adapter reads enforce Registry-wide limits of 10,000 Skills, 100,000 source files, 512 MiB of source file bodies, 64 MiB of retained review text, and an 8 MiB Snapshot. Registry-producing commands build Registries sequentially, so those per-build bounds do not multiply with Registry count. Every enabled Registry must commit `release.lock.json`, whose `snapshot_revision` must equal the canonical Snapshot rebuilt from the approved source.
 
