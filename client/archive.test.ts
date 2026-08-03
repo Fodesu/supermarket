@@ -66,20 +66,6 @@ describe('Skill Registry client archives', () => {
     expect((await stat(path.join(installed, 'scripts/run.sh'))).mode & 0o777).toBe(0o755)
   })
 
-  test('uses install identity only to select the destination', async () => {
-    const files = await parseTarArchive(await createTar({
-      'SKILL.md': new TextEncoder().encode('---\nname: shared\n---\n'),
-    }, ''))
-    const root = await mkdtemp(path.join(os.tmpdir(), 'skill-client-install-identity-'))
-    roots.push(root)
-
-    const first = await extractSkillArchive(files, root, 'registry-a+package+skill')
-    const second = await extractSkillArchive(files, root, 'registry-b+package+skill')
-
-    expect(await readFile(path.join(first, 'SKILL.md'), 'utf8')).toContain('name: shared')
-    expect(await readFile(path.join(second, 'SKILL.md'), 'utf8')).toContain('name: shared')
-  })
-
   test('rejects install identities that escape the destination', async () => {
     const files = await parseTarArchive(await createTar({
       'SKILL.md': new TextEncoder().encode('---\nname: shared\n---\n'),

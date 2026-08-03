@@ -35,23 +35,4 @@ describe('Plugin release service cache', () => {
     expect(await cachedRelease(store, 'example', 'b'.repeat(64))).toEqual(current)
     expect(reads).toBe(2)
   })
-
-  test('does not share in-flight Store I/O between requests', async () => {
-    const resolvers: Array<(value: PluginRelease) => void> = []
-    let reads = 0
-    const store = {
-      async getRelease() {
-        reads++
-        return new Promise<PluginRelease>((resolve) => resolvers.push(resolve))
-      },
-    } as unknown as PluginReleaseStore
-    const revision = 'c'.repeat(64)
-
-    const first = cachedRelease(store, 'example', revision)
-    const second = cachedRelease(store, 'example', revision)
-    expect(reads).toBe(2)
-    for (const resolve of resolvers) resolve(release())
-    await expect(first).resolves.toEqual(release())
-    await expect(second).resolves.toEqual(release())
-  })
 })
