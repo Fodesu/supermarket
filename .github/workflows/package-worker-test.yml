@@ -1,0 +1,32 @@
+name: Test Package Registry publication
+
+on:
+  push:
+    branches: [test/package-worker-27886a0]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-worker-test
+  cancel-in-progress: false
+
+jobs:
+  publish-test:
+    runs-on: ubuntu-latest
+    environment: test
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - run: bun run typecheck
+      - run: bun run registry:validate
+      - name: Publish pinned releases to test R2
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: bun run registry:publish -- --environment test
