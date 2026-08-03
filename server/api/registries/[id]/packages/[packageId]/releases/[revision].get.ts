@@ -3,8 +3,7 @@ import { getHeader, getRouterParam, setResponseHeader, setResponseStatus } from 
 import { assertDigest } from '#registry/storage/validation'
 import { requireRegistryComponentID, requireRegistryID } from '#server/services/skill-registry-query'
 import { getSkillPackageRelease } from '#server/services/skill-registry'
-
-const encoder = new TextEncoder()
+import { serializeSkillPackageRelease } from '#registry/snapshot'
 
 export default defineHandler(async (event) => {
   const registryID = requireRegistryID(getRouterParam(event, 'id')!)
@@ -15,16 +14,17 @@ export default defineHandler(async (event) => {
   } catch {
     throw new HTTPError('Invalid Package release revision', { statusCode: 400 })
   }
-  const descriptor = await getSkillPackageRelease(event, registryID, packageID, revision)
-  if (!descriptor) {
+  const release = await getSkillPackageRelease(event, registryID, packageID, revision)
+  if (!release) {
     throw new HTTPError(`Package release "${registryID}/${packageID}/${revision}" not found`, { statusCode: 404 })
   }
 
-  const bytes = encoder.encode(`${JSON.stringify(descriptor, null, 2)}\n`)
+  const bytes = serializeSkillPackageRelease(release)
   const etag = `"${revision}:${packageID}"`
   setResponseHeader(event, 'content-type', 'application/json; charset=utf-8')
   setResponseHeader(event, 'content-length', String(bytes.length))
   setResponseHeader(event, 'etag', etag)
+  setResponseHeader(event, 'x-content-sha256', revision)
   setResponseHeader(event, 'cache-control', 'public, max-age=31536000, immutable')
   const validators = (getHeader(event, 'if-none-match') ?? '')
     .split(',')

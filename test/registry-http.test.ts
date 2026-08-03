@@ -216,8 +216,10 @@ describe('Marketplace HTTP protocol', () => {
     const packageRelease = await app.fetch(new Request(packageReleaseURL))
     expect(packageRelease.headers.get('cache-control')).toContain('immutable')
     expect(packageRelease.headers.get('etag')).toBe(`"${snapshot.packages[0]!.revision}:tools"`)
-    expect(await packageRelease.json()).toMatchObject({
-      revision: snapshot.packages[0]!.revision,
+    expect(packageRelease.headers.get('x-content-sha256')).toBe(snapshot.packages[0]!.revision)
+    const packageReleaseBytes = new Uint8Array(await packageRelease.arrayBuffer())
+    expect(await sha256(packageReleaseBytes)).toBe(snapshot.packages[0]!.revision)
+    expect(JSON.parse(new TextDecoder().decode(packageReleaseBytes))).toMatchObject({
       skills: [{ skill_id: 'demo', artifact: { digest } }],
     })
     expect((await app.fetch(new Request(packageReleaseURL, {
@@ -346,10 +348,20 @@ describe('Marketplace HTTP protocol', () => {
     })
     const historicalPackage = await app.fetch(new Request(packageReleaseURL))
     expect(await historicalPackage.json()).toMatchObject({
-      revision: snapshot.packages[0]!.revision,
       description: 'Demo Skill',
       skills: [{ artifact: { digest } }],
     })
+
+    const stateRead = await store.getStateWithVersion('example')
+    if (stateRead.versioning !== 'conditional') {
+      throw new Error('Expected conditional Registry state versioning')
+    }
+    await store.putState({
+      ...stateRead.state!,
+      definition: { ...stateRead.state!.definition, enabled: false },
+    }, stateRead.version)
+    expect((await app.fetch(new Request(packageReleaseURL))).status).toBe(200)
+    expect((await app.fetch(new Request('http://local/api/registries/example/packages/tools'))).status).toBe(404)
 
   })
 })

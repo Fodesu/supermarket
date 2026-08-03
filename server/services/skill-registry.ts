@@ -144,10 +144,7 @@ export async function getSkillPackageRelease(
   revision: string,
 ) {
   const store = await getRuntimeSkillRegistryStore(event)
-  const state = await store.getState(registryID)
-  if (!state?.definition.enabled) return undefined
-  const release = await store.getPackageRelease(registryID, packageID, revision)
-  return release ? publicPackageDescriptor(packageDescriptorFromRelease(release, revision)) : undefined
+  return store.getPackageRelease(registryID, packageID, revision)
 }
 
 export async function getRegistryCatalogSkills(
