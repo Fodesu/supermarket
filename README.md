@@ -52,7 +52,7 @@ bun run registry:publish
 bun run dev
 ```
 
-The first publication must publish every enabled Registry so the local Store contains the approved Snapshots needed to resolve Plugin Skill references. Later publications may select one Registry with `bun run registry:publish -- --registry <id>`. The Vite and Nitro development server listens on `http://127.0.0.1:5173` by default and reads `.data/registries`. Set `REGISTRY_DATA_DIR` to use a different local Store.
+The first publication must publish every enabled Registry so the local Store contains the approved Package releases referenced by Plugins. Later publications may select one Registry with `bun run registry:publish -- --registry <id>`. The Vite and Nitro development server listens on `http://127.0.0.1:5173` by default and reads `.data/registries`. Set `REGISTRY_DATA_DIR` to use a different local Store.
 
 | Command | Purpose |
 |---------|---------|
@@ -154,7 +154,7 @@ packages:
     package_id: notion
 ```
 
-3. Optionally add `hooks.json` and `scripts/**`. Plugin download archives include those allowed files and `plugin.yaml`. Skill content must be published as a Registry Package; `registry:validate` rejects bundled `plugins/<id>/skills/**` content and missing Package references.
+3. Optionally add `hooks.json` and `scripts/**`. Plugin download archives include those allowed files and `plugin.yaml`. Skill content must be published as a Registry Package; `registry:validate` rejects bundled `registries/memoh/plugins/<id>/skills/**` content and missing Package references.
 4. Generate and review the Plugin release lock:
 
 ```bash
@@ -195,7 +195,7 @@ bun run registry:publish -- --registry memoh
 bun run dev
 ```
 
-On a new checkout, run the full `bun run registry:publish` once before using partial publication. Commit the Registry `release.lock.json` and any changed `plugins/*/release.lock.json` files with the Skill source. `registry:lock -- --registry <id>` rebuilds Plugin locks because a changed Skill may produce a new Plugin release.
+On a new checkout, run the full `bun run registry:publish` once before using partial publication. Commit the Registry `release.lock.json` and any changed `registries/memoh/plugins/*/release.lock.json` files with the Skill source. `registry:lock -- --registry <id>` rebuilds Plugin locks because a changed Skill may produce a new Plugin release.
 
 Skill archives include regular files under the Skill root, including binary assets; `.git` and `node_modules` directories are ignored. An archive is limited to 1,000 files, 5 MiB of regular-file content, 5 MiB of serialized TAR data, and 6 MiB compressed. Every Artifact descriptor includes the immutable digest, compressed `size`, regular-file `uncompressed_size`, serialized `archive_size`, and `file_count`; clients must reject descriptors that omit those extraction fields. A Plugin release may reference at most 128 Packages. Across their member Skills, the aggregate limits are 128 MiB each for compressed bytes, regular-file body bytes, and serialized TAR bytes, plus 10,000 files.
 
