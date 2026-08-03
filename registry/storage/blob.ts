@@ -33,7 +33,7 @@ import {
 } from './validation'
 import { putImmutableObject } from './immutable'
 import { VersionedJSONState } from './versioned-state'
-import { MAX_REGISTRY_SNAPSHOT_BYTES } from '../budget'
+import { MAX_REGISTRY_PACKAGE_RELEASE_BYTES, MAX_REGISTRY_SNAPSHOT_BYTES } from '../budget'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -139,6 +139,9 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     const id = assertRegistryID(release.registry_id, 'registry ID')
     const packageID = assertRegistryComponentID(release.package_id, 'package ID')
     const bytes = serializeSkillPackageRelease(release)
+    if (bytes.length > MAX_REGISTRY_PACKAGE_RELEASE_BYTES) {
+      throw new Error(`Package release exceeds ${MAX_REGISTRY_PACKAGE_RELEASE_BYTES} bytes: ${id}/${packageID}`)
+    }
     const revision = assertDigest(skillPackageRevision(release))
     const key = `skill-registries/${id}/packages/${packageID}/${revision}.json`
     return { revision, stored: await putImmutableObject(this.backend, key, bytes, 'Package release') }
@@ -151,6 +154,9 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     const key = `skill-registries/${id}/packages/${normalizedPackageID}/${digest}.json`
     const bytes = await this.backend.get(key)
     if (!bytes) return null
+    if (bytes.length > MAX_REGISTRY_PACKAGE_RELEASE_BYTES) {
+      throw new Error(`Stored Package release exceeds ${MAX_REGISTRY_PACKAGE_RELEASE_BYTES} bytes: ${key}`)
+    }
     const release = JSON.parse(decoder.decode(bytes)) as SkillPackageRelease
     if (release.schema_version !== '1' || release.registry_id !== id || release.package_id !== normalizedPackageID
       || skillPackageRevision(release) !== digest || !sameBytes(bytes, serializeSkillPackageRelease(release))) {

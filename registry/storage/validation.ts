@@ -14,6 +14,11 @@ import {
 import { assertRegistryComponentID } from '../definition'
 import {
   MAX_REGISTRY_SKILLS,
+  MAX_REGISTRY_PACKAGE_ARTIFACT_ARCHIVE_BYTES,
+  MAX_REGISTRY_PACKAGE_ARTIFACT_COMPRESSED_BYTES,
+  MAX_REGISTRY_PACKAGE_ARTIFACT_FILES,
+  MAX_REGISTRY_PACKAGE_ARTIFACT_UNCOMPRESSED_BYTES,
+  MAX_REGISTRY_PACKAGE_SKILLS,
   MAX_REGISTRY_SOURCE_BYTES,
   MAX_REGISTRY_SOURCE_FILES,
 } from '../budget'
@@ -73,10 +78,15 @@ export function validateStoredSnapshot(
     try {
       const packageID = assertRegistryComponentID(pkg?.package_id, 'package ID')
       if (packageIDs.has(packageID) || typeof pkg.name !== 'string' || typeof pkg.description !== 'string'
-        || !Array.isArray(pkg.tags) || !Array.isArray(pkg.skills) || !pkg.skills.length) {
+        || !Array.isArray(pkg.tags) || !Array.isArray(pkg.skills) || !pkg.skills.length
+        || pkg.skills.length > MAX_REGISTRY_PACKAGE_SKILLS) {
         throw new Error('Snapshot contains an invalid Package')
       }
       packageIDs.add(packageID)
+      let packageCompressedBytes = 0
+      let packageUncompressedBytes = 0
+      let packageArchiveBytes = 0
+      let packageFiles = 0
       for (const image of [pkg.icon?.card, pkg.icon?.detail, pkg.icon?.dark]) {
         if (image) {
           assertDigest(image.digest)
@@ -118,6 +128,16 @@ export function validateStoredSnapshot(
           || skill.artifact.file_count !== skill.files.length) {
           throw new Error('Catalog Skill contains invalid Artifact file count')
         }
+        if (skill.artifact.size > MAX_REGISTRY_PACKAGE_ARTIFACT_COMPRESSED_BYTES - packageCompressedBytes
+          || skill.artifact.uncompressed_size > MAX_REGISTRY_PACKAGE_ARTIFACT_UNCOMPRESSED_BYTES - packageUncompressedBytes
+          || skill.artifact.archive_size > MAX_REGISTRY_PACKAGE_ARTIFACT_ARCHIVE_BYTES - packageArchiveBytes
+          || skill.artifact.file_count > MAX_REGISTRY_PACKAGE_ARTIFACT_FILES - packageFiles) {
+          throw new Error('Package Skill Artifacts exceed the install budget')
+        }
+        packageCompressedBytes += skill.artifact.size
+        packageUncompressedBytes += skill.artifact.uncompressed_size
+        packageArchiveBytes += skill.artifact.archive_size
+        packageFiles += skill.artifact.file_count
         if (skill.artifact.uncompressed_size > MAX_REGISTRY_SOURCE_BYTES - totalSourceBytes) {
           throw new Error('Catalog Skills exceed the Registry source byte limit')
         }

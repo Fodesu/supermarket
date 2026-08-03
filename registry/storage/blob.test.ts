@@ -187,6 +187,25 @@ describe('Immutable digest-addressed uploads', () => {
       .toThrow('Snapshot Artifact reference')
   })
 
+  test('rejects a Package that exceeds the client install budget', () => {
+    const stored = snapshot()
+    stored.packages = [{
+      revision: 'a'.repeat(64),
+      package_id: 'package', name: 'package', description: '', tags: [],
+      skills: Array.from({ length: 65 }, (_, index) => ({
+        skill_id: `skill-${index}`, name: `Skill ${index}`, description: '', author: { name: '' },
+        tags: [], category: 'other', category_name: 'Other', source_path: `skill-${index}`,
+        files: ['SKILL.md'],
+        artifact: {
+          digest: index.toString(16).padStart(64, '0'), size: 2 * 1024 * 1024,
+          uncompressed_size: 1, archive_size: 1, file_count: 1,
+        },
+      })),
+    }]
+    expect(() => validateStoredSnapshot(stored, 'example', 'oversized-package'))
+      .toThrow('Snapshot Artifact reference')
+  })
+
   test('rejects stored Snapshot bytes that do not match their revision', async () => {
     const { backend, objects } = memoryBackend()
     const store = new BlobSkillRegistryStore(backend)
