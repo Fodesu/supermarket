@@ -20,12 +20,15 @@ import registrySkills from '../server/api/registries/[id]/skills/index.get'
 import registries from '../server/api/registries/index.get'
 import skills from '../server/api/skills/index.get'
 import type { CatalogSkill, SkillArtifactDescriptor, SkillRegistryDefinition, SkillRegistrySnapshot } from '#registry/types'
-import { compactCatalogPackages } from '#registry/snapshot'
+import {
+  compactCatalogPackages,
+  serializeRegistrySnapshot,
+  skillPackageReleaseFromSnapshotPackage,
+} from '#registry/snapshot'
 import { createTar, gzip } from '#lib/archive'
 import { R2BlobBackend } from '#registry/storage/r2'
 import { sha256 } from '#registry/digest'
 import { BlobSkillRegistryStore } from '#registry/storage/blob'
-import { serializeRegistrySnapshot } from '#registry/snapshot'
 import { packageSkill } from '#registry/artifacts/build'
 import { BlobPluginReleaseStore } from '#plugin/storage/blob'
 import { serializePluginRelease } from '#plugin/release'
@@ -124,6 +127,9 @@ describe('Marketplace HTTP protocol', () => {
     }
     await store.putArtifact(artifact, archive)
     await store.putImage(image, imageBytes)
+    await store.putPackageRelease(
+      skillPackageReleaseFromSnapshotPackage(snapshot, snapshot.packages[0]!),
+    )
     const snapshotRevision = await store.publishSnapshot(serializeRegistrySnapshot(snapshot), definition, {
       publishedAt: '2026-01-01T00:00:00.000Z',
     })
@@ -141,13 +147,11 @@ describe('Marketplace HTTP protocol', () => {
         schema_version: '1', id: 'demo-plugin', name: 'Demo Plugin', version: '1.0.0',
         description: 'Uses the Demo Skill', author: { name: 'Test', email: '' },
         tags: ['demo'],
-        skills: [{ registry_id: 'example', package_id: 'tools', skill_id: 'demo' }],
+        packages: [{ registry_id: 'example', package_id: 'tools' }],
       },
       artifact: pluginArtifact,
-      skills: [{
-        registry_id: 'example', package_id: 'tools', skill_id: 'demo',
-        registry_revision: snapshotRevision, source_revision: sourceRevision, install_id: installID,
-        artifact,
+      packages: [{
+        registry_id: 'example', package_id: 'tools', revision: snapshot.packages[0]!.revision,
       }],
     }
     await pluginStore.putArtifact(pluginArtifact, pluginArchive)
@@ -203,21 +207,21 @@ describe('Marketplace HTTP protocol', () => {
     expect(packageResponse.status).toBe(200)
     const packageDescriptor = await packageResponse.json() as any
     expect(packageDescriptor).toMatchObject({
-      registry_id: 'example', package_id: 'tools', revision: snapshotRevision,
-      source_revision: sourceRevision, skill_count: 1,
-      release_url: `/api/registries/example/packages/tools/releases/${snapshotRevision}`,
+      registry_id: 'example', package_id: 'tools', revision: snapshot.packages[0]!.revision,
+      skill_count: 1,
+      release_url: `/api/registries/example/packages/tools/releases/${snapshot.packages[0]!.revision}`,
       skills: [{ skill_id: 'demo', artifact: { digest } }],
     })
     const packageReleaseURL = `http://local${packageDescriptor.release_url}`
     const packageRelease = await app.fetch(new Request(packageReleaseURL))
     expect(packageRelease.headers.get('cache-control')).toContain('immutable')
-    expect(packageRelease.headers.get('etag')).toBe(`"${snapshotRevision}:tools"`)
+    expect(packageRelease.headers.get('etag')).toBe(`"${snapshot.packages[0]!.revision}:tools"`)
     expect(await packageRelease.json()).toMatchObject({
-      revision: snapshotRevision,
+      revision: snapshot.packages[0]!.revision,
       skills: [{ skill_id: 'demo', artifact: { digest } }],
     })
     expect((await app.fetch(new Request(packageReleaseURL, {
-      headers: { 'if-none-match': `"${snapshotRevision}:tools"` },
+      headers: { 'if-none-match': `"${snapshot.packages[0]!.revision}:tools"` },
     }))).status).toBe(304)
     expect((await app.fetch(new Request(
       `http://local/api/registries/example/packages/tools/releases/${'0'.repeat(64)}`,
@@ -279,12 +283,10 @@ describe('Marketplace HTTP protocol', () => {
             digest: pluginArtifact.digest,
             download_url: `/api/artifacts/plugin/${pluginArtifact.digest}`,
           },
-          skills: [{
-            registry_revision: snapshotRevision,
-            artifact: {
-              ...artifact,
-              download_url: `/api/artifacts/skill/${digest}`,
-            },
+          packages: [{
+            registry_id: 'example',
+            package_id: 'tools',
+            revision: snapshot.packages[0]!.revision,
           }],
         },
       }],
@@ -330,18 +332,21 @@ describe('Marketplace HTTP protocol', () => {
       source: { ...snapshot.source, revision: 'f'.repeat(64) },
       packages: compactCatalogPackages([{ ...skill, description: 'Updated Demo Skill' }]),
     }
+    await store.putPackageRelease(
+      skillPackageReleaseFromSnapshotPackage(updatedSnapshot, updatedSnapshot.packages[0]!),
+    )
     const updatedRevision = await store.publishSnapshot(serializeRegistrySnapshot(updatedSnapshot), definition, {
       publishedAt: '2026-01-03T00:00:00.000Z',
     })
     expect(updatedRevision).not.toBe(snapshotRevision)
     const updatedPackage = await app.fetch(new Request('http://local/api/registries/example/packages/tools'))
     expect(await updatedPackage.json()).toMatchObject({
-      revision: updatedRevision,
+      revision: updatedSnapshot.packages[0]!.revision,
       description: 'Updated Demo Skill',
     })
     const historicalPackage = await app.fetch(new Request(packageReleaseURL))
     expect(await historicalPackage.json()).toMatchObject({
-      revision: snapshotRevision,
+      revision: snapshot.packages[0]!.revision,
       description: 'Demo Skill',
       skills: [{ artifact: { digest } }],
     })

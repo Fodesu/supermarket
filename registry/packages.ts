@@ -2,6 +2,7 @@ import type {
   CatalogSkill,
   SnapshotPackage,
   SkillPackageDescriptor,
+  SkillPackageRelease,
   SkillPackageSummary,
   SkillRegistrySnapshot,
 } from './types'
@@ -110,18 +111,21 @@ export function searchSkillPackages(all: CatalogSkillPackage[], options: SkillPa
   }
 }
 
-export function packageDescriptorFromSnapshot(
-  snapshot: SkillRegistrySnapshot,
+export function packageDescriptorFromRelease(
+  release: SkillPackageRelease,
   revision: string,
-  packageID: string,
-): SkillPackageDescriptor | undefined {
-  const pkg = catalogPackagesFromSnapshot(snapshot).find((item) => item.package_id === packageID)
-  if (!pkg) return undefined
-  const { registry_priority: _priority, skills, ...summary } = pkg
+): SkillPackageDescriptor {
+  const categories = new Map<string, { name: string; skill_count: number }>()
+  for (const skill of release.skills) {
+    const current = categories.get(skill.category) ?? { name: skill.category_name, skill_count: 0 }
+    current.skill_count++
+    categories.set(skill.category, current)
+  }
   return {
-    ...summary,
+    ...release,
     revision,
-    source_revision: snapshot.source.revision,
-    skills,
+    categories: [...categories.entries()].map(([id, value]) => ({ id, ...value }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    skill_count: release.skills.length,
   }
 }

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { CatalogSkill, SkillRegistrySnapshot } from './types'
-import { compactCatalogPackages } from './snapshot'
-import { catalogPackagesFromSnapshot, packageDescriptorFromSnapshot, searchSkillPackages } from './packages'
+import { compactCatalogPackages, skillPackageReleaseFromSnapshotPackage } from './snapshot'
+import { catalogPackagesFromSnapshot, packageDescriptorFromRelease, searchSkillPackages } from './packages'
 
 function skill(overrides: Partial<CatalogSkill> = {}): CatalogSkill {
   return {
@@ -62,7 +62,7 @@ describe('Skill Packages', () => {
     expect(searchSkillPackages(packages, { category: 'productivity' }).total).toBe(2)
   })
 
-  test('derives a pinned descriptor from one Snapshot revision', () => {
+  test('derives a descriptor from one immutable Package release', () => {
     const value = snapshot([
       skill(),
       skill({
@@ -70,15 +70,27 @@ describe('Skill Packages', () => {
         artifact: { ...skill().artifact, digest: 'c'.repeat(64) },
       }),
     ])
-    const descriptor = packageDescriptorFromSnapshot(value, 'd'.repeat(64), 'notion')
+    const pkg = value.packages[0]!
+    const descriptor = packageDescriptorFromRelease(skillPackageReleaseFromSnapshotPackage(value, pkg), pkg.revision)
     expect(descriptor).toMatchObject({
-      registry_id: 'openai', package_id: 'notion', revision: 'd'.repeat(64),
-      source_revision: 'a'.repeat(40), skill_count: 2,
+      registry_id: 'openai', package_id: 'notion', revision: pkg.revision, skill_count: 2,
     })
     expect(descriptor?.skills.map((item) => [item.skill_id, item.artifact.digest])).toEqual([
       ['search', 'b'.repeat(64)],
       ['write', 'c'.repeat(64)],
     ])
-    expect(packageDescriptorFromSnapshot(value, 'd'.repeat(64), 'missing')).toBeUndefined()
+  })
+
+  test('keeps a Package revision stable when another Package changes', () => {
+    const before = snapshot([skill(), skill({
+      package_id: 'figma', skill_id: 'design', install_id: 'openai+figma+design',
+    })])
+    const after = snapshot([skill(), skill({
+      package_id: 'figma', skill_id: 'design', install_id: 'openai+figma+design', description: 'Changed',
+    })])
+    expect(before.packages.find(item => item.package_id === 'notion')?.revision)
+      .toBe(after.packages.find(item => item.package_id === 'notion')?.revision)
+    expect(before.packages.find(item => item.package_id === 'figma')?.revision)
+      .not.toBe(after.packages.find(item => item.package_id === 'figma')?.revision)
   })
 })

@@ -28,7 +28,7 @@ async function candidate(version = '1.0.0'): Promise<PluginReleaseCandidate> {
       description: 'Example Plugin', author: { name: 'Memoh', email: '' },
     },
     artifact: descriptor,
-    skills: [],
+    packages: [],
   }
   const releaseBytes = serializePluginRelease(release)
   return {

@@ -2,7 +2,11 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { serializeRegistrySnapshot } from '#registry/snapshot'
+import {
+  serializeRegistrySnapshot,
+  skillPackageReleaseFromSnapshotPackage,
+  skillPackageRevision,
+} from '#registry/snapshot'
 import { LocalSkillRegistryStore } from '#registry/storage/local'
 import type { SkillRegistryDefinition, SkillRegistrySnapshot } from '#registry/types'
 import { assertPartialRegistrySnapshotsPublished } from './publish'
@@ -28,6 +32,7 @@ async function publishedDependency() {
     schema_version: '1', registry_id: 'other', registry_priority: 10,
     source: { type: 'local', revision: 'source-revision' },
     packages: [{
+      revision: '',
       package_id: 'tools', name: 'tools', description: 'Search', tags: [],
       skills: [{
         skill_id: 'search', name: 'Search', description: 'Search',
@@ -41,6 +46,10 @@ async function publishedDependency() {
     }],
     diagnostics: [],
   }
+  snapshot.packages[0]!.revision = skillPackageRevision(
+    skillPackageReleaseFromSnapshotPackage(snapshot, snapshot.packages[0]!),
+  )
+  await store.putPackageRelease(skillPackageReleaseFromSnapshotPackage(snapshot, snapshot.packages[0]!))
   const revision = await store.publishSnapshot(serializeRegistrySnapshot(snapshot), definition('other'))
   return { store, candidate: { definition: definition('other'), revision }, dataRoot }
 }

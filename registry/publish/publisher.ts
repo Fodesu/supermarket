@@ -6,6 +6,7 @@ import {
   type SkillRegistryCandidate,
   type SkillRegistryBuildProgress,
 } from './candidate'
+import { skillPackageReleaseFromSnapshotPackage } from '../snapshot'
 
 export interface SkillRegistryPublishResult {
   registry: string
@@ -118,6 +119,14 @@ export class SkillRegistryPublisher {
     }
 
     await this.publishCandidateAssets(candidate)
+    for (const pkg of candidate.snapshot.packages) {
+      const stored = await this.store.putPackageRelease(
+        skillPackageReleaseFromSnapshotPackage(candidate.snapshot, pkg),
+      )
+      if (stored.revision !== pkg.revision) {
+        throw new Error(`${definition.id}/${pkg.package_id}: Package revision does not match its Snapshot`)
+      }
+    }
     this.onProgress({ type: 'publishing', registry: definition.id, revision: candidate.revision })
     await this.store.publishSnapshot(candidate.snapshotBytes, definition, { expectedVersion: stateVersion })
     return {

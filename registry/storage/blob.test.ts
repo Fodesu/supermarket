@@ -128,6 +128,7 @@ describe('Immutable digest-addressed uploads', () => {
   test('rejects invalid or incomplete Snapshot Artifact metadata', () => {
     const stored = snapshot()
     stored.packages.push({
+      revision: 'a'.repeat(64),
       package_id: 'package', name: 'package', description: '', tags: [],
       skills: [{
         skill_id: 'skill',
@@ -172,6 +173,7 @@ describe('Immutable digest-addressed uploads', () => {
     }
     const stored = snapshot()
     stored.packages = [{
+      revision: 'a'.repeat(64),
       package_id: 'package', name: 'package', description: '', tags: [],
       skills: [structuredClone(skill), structuredClone(skill)],
     }]

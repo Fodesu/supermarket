@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto'
 import { skillInstallID } from './definition'
 import type {
   CatalogSkill,
+  SkillPackageRelease,
+  SkillPackageReleaseSkill,
   SnapshotPackage,
   SkillRegistrySnapshot,
   SnapshotSkill,
@@ -16,6 +18,14 @@ export function serializeRegistrySnapshot(snapshot: SkillRegistrySnapshot): Uint
 
 export function registrySnapshotRevision(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
+}
+
+export function serializeSkillPackageRelease(release: SkillPackageRelease): Uint8Array {
+  return encoder.encode(`${JSON.stringify(release, null, 2)}\n`)
+}
+
+export function skillPackageRevision(release: SkillPackageRelease): string {
+  return registrySnapshotRevision(serializeSkillPackageRelease(release))
 }
 
 export function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
@@ -58,15 +68,47 @@ export function compactCatalogPackages(skills: CatalogSkill[]): SnapshotPackage[
     .map(([packageID, packageSkills]) => {
       const ordered = [...packageSkills].sort((a, b) => compareCanonicalText(a.skill_id, b.skill_id))
       const representative = ordered.find((skill) => skill.skill_id === packageID) ?? ordered[0]!
-      return {
+      const release: SkillPackageRelease = {
+        schema_version: '1',
+        registry_id: representative.registry_id,
         package_id: packageID,
         name: packageID,
         description: representative.description,
         tags: [...new Set(ordered.flatMap((skill) => skill.tags))].sort(compareCanonicalText),
         ...(representative.icon ? { icon: representative.icon } : {}),
+        skills: ordered.map(packageReleaseSkill),
+      }
+      return {
+        revision: skillPackageRevision(release),
+        package_id: release.package_id,
+        name: release.name,
+        description: release.description,
+        tags: release.tags,
+        ...(release.icon ? { icon: release.icon } : {}),
         skills: ordered.map(compactCatalogSkill),
       }
     })
+}
+
+function packageReleaseSkill(skill: CatalogSkill): SkillPackageReleaseSkill {
+  const { registry_priority: _priority, source: _source, ...member } = skill
+  return member
+}
+
+export function skillPackageReleaseFromSnapshotPackage(
+  snapshot: SkillRegistrySnapshot,
+  pkg: SnapshotPackage,
+): SkillPackageRelease {
+  return {
+    schema_version: '1',
+    registry_id: snapshot.registry_id,
+    package_id: pkg.package_id,
+    name: pkg.name,
+    description: pkg.description,
+    tags: pkg.tags,
+    ...(pkg.icon ? { icon: pkg.icon } : {}),
+    skills: catalogSkillsFromSnapshotPackage(snapshot, pkg).map(packageReleaseSkill),
+  }
 }
 
 export function catalogSkillsFromSnapshot(snapshot: SkillRegistrySnapshot): CatalogSkill[] {

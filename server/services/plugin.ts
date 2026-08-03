@@ -73,10 +73,7 @@ function publicPlugin(current: CurrentPluginRelease): PublishedPluginEntry {
       revision,
       published_at: publishedAt,
       artifact: publicArtifact(current.release.artifact, 'plugin'),
-      skills: current.release.skills.map((skill) => ({
-        ...skill,
-        artifact: publicArtifact(skill.artifact, 'skill'),
-      })),
+      packages: current.release.packages,
     },
   }
 }

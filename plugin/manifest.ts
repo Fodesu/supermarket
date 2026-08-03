@@ -1,9 +1,9 @@
 import { parse as parseYaml } from 'yaml'
 import * as z from 'zod/mini'
 import {
-  MAX_PLUGIN_RELEASE_SKILLS,
+  MAX_PLUGIN_RELEASE_PACKAGES,
   type PluginManifest,
-  type PluginSkillReference,
+  type PluginPackageReference,
 } from './types'
 import { isIdentifier, isRegistryComponentID } from '#registry/definition'
 
@@ -64,10 +64,9 @@ const mcpSchema = z.discriminatedUnion('transport', [
   z.object({ ...mcpBaseShape, transport: z.literal('sse'), url: httpsURL('mcp.url must use HTTPS') }),
 ])
 
-const skillSchema = z.object({
+const packageSchema = z.object({
   registry_id: nonEmpty.check(z.refine(isRegistryID, 'Invalid Registry ID')),
   package_id: nonEmpty.check(z.refine(isRegistryComponentID, 'Invalid package ID')),
-  skill_id: nonEmpty.check(z.refine(isRegistryComponentID, 'Invalid Skill ID')),
 })
 
 function uniqueKeys(label: string) {
@@ -80,14 +79,14 @@ function uniqueKeys(label: string) {
   }
 }
 
-function uniqueSkillReferences(items: PluginSkillReference[], ctx: z.core.$RefinementCtx<PluginSkillReference[]>) {
-  if (items.length > MAX_PLUGIN_RELEASE_SKILLS) {
-    ctx.addIssue({ code: 'custom', message: `skills exceeds the ${MAX_PLUGIN_RELEASE_SKILLS} Skill limit` })
+function uniquePackageReferences(items: PluginPackageReference[], ctx: z.core.$RefinementCtx<PluginPackageReference[]>) {
+  if (items.length > MAX_PLUGIN_RELEASE_PACKAGES) {
+    ctx.addIssue({ code: 'custom', message: `packages exceeds the ${MAX_PLUGIN_RELEASE_PACKAGES} Package limit` })
   }
   const seen = new Set<string>()
   for (const item of items) {
-    const identity = pluginSkillReferenceIdentity(item)
-    if (seen.has(identity)) ctx.addIssue({ code: 'custom', message: `skills contains duplicate reference: ${identity}` })
+    const identity = pluginPackageReferenceIdentity(item)
+    if (seen.has(identity)) ctx.addIssue({ code: 'custom', message: `packages contains duplicate reference: ${identity}` })
     seen.add(identity)
   }
 }
@@ -107,7 +106,7 @@ const pluginManifestSchema = z.object({
   variables: z.optional(z.array(variableSchema)),
   auth_requirements: z.optional(z.array(authRequirementSchema).check(z.superRefine(uniqueKeys('auth_requirements')))),
   mcps: z.optional(z.array(mcpSchema).check(z.superRefine(uniqueKeys('mcps')))),
-  skills: z.optional(z.array(skillSchema).check(z.superRefine(uniqueSkillReferences))),
+  packages: z.optional(z.array(packageSchema).check(z.superRefine(uniquePackageReferences))),
 }).check(z.superRefine((manifest, ctx) => {
   const authKeys = new Set((manifest.auth_requirements ?? []).map((item) => item.key))
   manifest.mcps?.forEach((mcp, index) => {
@@ -132,7 +131,7 @@ function decode<T>(schema: z.ZodMiniType<T>, value: unknown): T {
 const pluginFields = new Set([
   'schema_version', 'id', 'name', 'version', 'description', 'author', 'icon',
   'homepage', 'tags', 'capabilities', 'install', 'variables',
-  'auth_requirements', 'mcps', 'skills',
+  'auth_requirements', 'mcps', 'packages',
 ])
 
 export function parsePluginManifest(raw: unknown, expectedID?: string): PluginManifest {
@@ -147,6 +146,6 @@ export function parsePluginManifest(raw: unknown, expectedID?: string): PluginMa
   return manifest
 }
 
-export function pluginSkillReferenceIdentity(reference: PluginSkillReference): string {
-  return `${reference.registry_id}/${reference.package_id}/${reference.skill_id}`
+export function pluginPackageReferenceIdentity(reference: PluginPackageReference): string {
+  return `${reference.registry_id}/${reference.package_id}`
 }

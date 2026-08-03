@@ -143,19 +143,18 @@ mcps:
     args: ["-y", "@notionhq/notion-mcp-server"]
     auth_ref: notion_oauth
     visibility: hidden
-skills: []
+packages: []
 ```
 
-Plugin Skills are Registry references, not embedded files:
+Plugin Skill dependencies are Registry Package references, not embedded files:
 
 ```yaml
-skills:
+packages:
   - registry_id: memoh
     package_id: notion
-    skill_id: notion-meeting-intelligence
 ```
 
-3. Optionally add `hooks.json` and `scripts/**`. Plugin download archives include those allowed files and `plugin.yaml`. Skill content must be published by a Registry; `registry:validate` rejects bundled `plugins/<id>/skills/**` content and missing references.
+3. Optionally add `hooks.json` and `scripts/**`. Plugin download archives include those allowed files and `plugin.yaml`. Skill content must be published as a Registry Package; `registry:validate` rejects bundled `plugins/<id>/skills/**` content and missing Package references.
 4. Generate and review the Plugin release lock:
 
 ```bash
@@ -163,7 +162,7 @@ bun run registry:lock -- --plugin notion
 bun run registry:validate
 ```
 
-Commit `release.lock.json` with the Plugin source. It locks the canonical release descriptor, including the Plugin Bundle digest and every resolved Skill digest. Changing Plugin files or approved Skill dependencies without updating this lock makes CI fail.
+Commit `release.lock.json` with the Plugin source. It locks the canonical release descriptor, including the Plugin Bundle digest and each resolved Package revision. A Package Release independently locks all member Skill Artifacts. Changing Plugin files or a referenced Package without updating this lock makes CI fail; changes to unrelated Packages do not affect the Plugin release.
 
 ### Adding a Skill
 
