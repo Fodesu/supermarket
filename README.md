@@ -44,7 +44,7 @@ flowchart LR
 
 ## Development
 
-Development requires the Bun version pinned in `.bun-version`. Git and upstream network access are also required when validating or publishing a Git-backed Registry.
+Development requires the Bun version pinned in `.bun-version`. Git and upstream network access are required when locking, validating, updating, or publishing a Git-backed Registry. Local API and UI development can use previously published data in `.data/registries` without contacting the upstream source.
 
 ```bash
 bun install
@@ -235,7 +235,9 @@ Git sources use a filtered shallow fetch and root-anchored sparse checkout for t
 
 ## Registry Updates
 
-The scheduled `Check Registry updates` workflow runs every 12 hours and keeps at most one open review PR for each changed Registry. If the upstream revision or `main` base changes before merge, the workflow rebuilds the candidate, updates that PR with `--force-with-lease`, replaces its report, and reruns CI. Branch protection must dismiss stale approvals when new commits are pushed. A closed PR is not recreated for the same upstream revision. The PR and Actions Summary include concrete errors for skipped Packages. Merging the PR approves the updated Registry and affected Plugin locks. A manual run can optionally select one Registry.
+The scheduled `Check Registry updates` workflow runs every 12 hours and keeps at most one open repository-owned review PR for each changed Registry. Candidate detection ignores similarly named branches from forks. If the upstream revision or `main` base changes before merge, the workflow rebuilds the candidate, updates that PR with `--force-with-lease`, replaces its report, and reruns CI. Branch protection must dismiss stale approvals when new commits are pushed. A closed PR is not recreated for the same upstream revision. The PR and Actions Summary include concrete errors for skipped Packages. Merging the PR approves the updated Registry and affected Plugin locks. A manual run can optionally select one Registry.
+
+Automatic update checks never publish an upstream revision directly. They only prepare or update a candidate PR; production R2 publication is performed by the approved publisher after that PR passes CI and review and is merged into `main`.
 
 If publisher, Adapter, or archive code intentionally changes the generated Snapshot without changing the pinned upstream commit, regenerate the lock with `bun run registry:lock -- --registry <id>` and review its revision change in the same PR.
 
