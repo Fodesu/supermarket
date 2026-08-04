@@ -105,9 +105,15 @@ jobs:
           candidate_title="chore(registry): review $REGISTRY ${CANDIDATE_REVISION:0:12}"
 
           mapfile -t open_candidates < <(
-            gh pr list --base main --state open --limit 100 --json number,headRefName |
-              jq -r --arg prefix "$branch_prefix" \
-                '.[] | select(.headRefName | startswith($prefix)) | "\(.number)\t\(.headRefName)"'
+            gh pr list --base main --state open --limit 100 \
+              --json number,headRefName,headRepositoryOwner,isCrossRepository |
+              jq -r --arg prefix "$branch_prefix" --arg owner "$GITHUB_REPOSITORY_OWNER" '
+                .[]
+                | select(.isCrossRepository == false)
+                | select(((.headRepositoryOwner.login // "") | ascii_downcase) == ($owner | ascii_downcase))
+                | select(.headRefName | startswith($prefix))
+                | "\(.number)\t\(.headRefName)"
+              '
           )
           if (( ${#open_candidates[@]} > 1 )); then
             echo "Multiple open candidate PRs exist for $REGISTRY; close all but one before retrying" >&2
@@ -120,9 +126,18 @@ jobs:
             IFS=$'\t' read -r existing_number branch <<< "${open_candidates[0]}"
           else
             previous_number="$(
-              gh pr list --base main --state all --limit 100 --json number,state,title,headRefName |
+              gh pr list --base main --state all --limit 100 \
+                --json number,state,title,headRefName,headRepositoryOwner,isCrossRepository |
                 jq -r --arg prefix "$branch_prefix" --arg title "$candidate_title" \
-                  '[.[] | select(.state != "OPEN" and .title == $title and (.headRefName | startswith($prefix)))][0].number // empty'
+                  --arg owner "$GITHUB_REPOSITORY_OWNER" '
+                    [
+                      .[]
+                      | select(.isCrossRepository == false)
+                      | select(((.headRepositoryOwner.login // "") | ascii_downcase) == ($owner | ascii_downcase))
+                      | select(.state != "OPEN" and .title == $title)
+                      | select(.headRefName | startswith($prefix))
+                    ][0].number // empty
+                  '
             )"
             if [[ -n "$previous_number" ]]; then
               echo "pr_action=none" >> "$GITHUB_OUTPUT"
