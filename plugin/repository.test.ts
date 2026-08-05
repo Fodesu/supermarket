@@ -28,6 +28,14 @@ async function repository() {
 }
 
 describe('Committed Plugin repository', () => {
+  test('treats a missing Plugin directory as an empty repository', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'plugin-repository-empty-'))
+    roots.push(root)
+    await mkdir(path.join(root, 'registries/memoh'), { recursive: true })
+
+    await expect(loadCommittedPlugins(root)).resolves.toEqual([])
+  })
+
   test('rejects symbolic links before build assets are collected', async () => {
     const { root, pluginRoot } = await repository()
     const outside = path.join(root, 'secret.txt')

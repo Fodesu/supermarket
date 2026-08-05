@@ -51,7 +51,14 @@ async function committedPluginRepository(projectRoot: string) {
   let root = projectRoot
   for (const segment of ['registries', 'memoh', 'plugins']) {
     root = path.join(root, segment)
-    if ((await lstat(root)).isSymbolicLink()) {
+    let metadata
+    try {
+      metadata = await lstat(root)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT' && segment === 'plugins') return undefined
+      throw error
+    }
+    if (metadata.isSymbolicLink()) {
       throw new Error(`Plugin repository path must not contain symbolic links: ${path.relative(projectRoot, root)}`)
     }
     if (!isWithin(canonicalProjectRoot, await realpath(root))) {
@@ -73,6 +80,7 @@ async function committedPluginRepository(projectRoot: string) {
 
 export async function loadCommittedPlugins(projectRoot: string): Promise<CommittedPlugin[]> {
   const repository = await committedPluginRepository(projectRoot)
+  if (!repository) return []
   const failures: Error[] = []
   const plugins: CommittedPlugin[] = []
   for (const pluginID of repository.pluginIDs) {

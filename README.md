@@ -30,7 +30,7 @@ supermarket/
 
 Registry Skills and Plugins are published into `.data/registries` locally or R2 when deployed; neither Registry Snapshots nor installable content is bundled into the API Worker. A Registry Snapshot stores the complete immutable Package set for one Registry, with each Package containing its Skill descriptors. The API exposes Packages directly and expands their members into the searchable Skill Catalog view. Each Plugin has an immutable release descriptor that binds its Bundle digest and the exact revision of every referenced Package. Each immutable Package release in turn binds its member Skill Artifact descriptors. Git commits `release.lock.json` files as approval records. Runtime `state.json` objects are the only mutable pointers and select the current approved Snapshot or Plugin release after every referenced immutable object has been stored.
 
-The Codex Marketplace adapter imports the Skills declared by each Package. Other Package components, including Apps, MCP servers, hooks, commands, agents, and LSP servers, are ignored.
+The Codex Marketplace adapter imports only pure Skill Packages. A Package that also declares Apps, MCP servers, hooks, commands, agents, or LSP servers is excluded because its Skills may depend on runtime components that Supermarket and Memoh do not provide.
 
 ```mermaid
 flowchart LR
@@ -108,61 +108,7 @@ The installation identity is supplied by the client rather than embedded as an a
 
 ### Adding a Plugin
 
-1. Create a directory under `registries/memoh/plugins/` named after your plugin (for example, `registries/memoh/plugins/notion/`).
-2. Add a `plugin.yaml` manifest:
-
-```yaml
-schema_version: "1"
-id: notion
-name: Notion
-version: "0.1.0"
-description: Use Notion pages, databases, and search from Memoh.
-author:
-  name: Memoh
-  email: support@memoh.ai
-icon:
-  kind: builtin
-  name: notion
-homepage: https://example.com
-tags:
-  - productivity
-capabilities:
-  - search_pages
-install:
-  - sh scripts/install.sh
-auth_requirements:
-  - key: notion_oauth
-    type: managed_oauth
-    client_ref: notion
-    scopes: []
-mcps:
-  - key: notion
-    name: Notion
-    transport: stdio
-    command: npx
-    args: ["-y", "@notionhq/notion-mcp-server"]
-    auth_ref: notion_oauth
-    visibility: hidden
-packages: []
-```
-
-Plugin Skill dependencies are Registry Package references, not embedded files:
-
-```yaml
-packages:
-  - registry_id: memoh
-    package_id: notion
-```
-
-3. Optionally add `hooks.json` and `scripts/**`. Plugin download archives include those allowed files and `plugin.yaml`. Skill content must be published as a Registry Package; `registry:validate` rejects bundled `registries/memoh/plugins/<id>/skills/**` content and missing Package references.
-4. Generate and review the Plugin release lock:
-
-```bash
-bun run registry:lock -- --plugin notion
-bun run registry:validate
-```
-
-Commit `release.lock.json` with the Plugin source. It locks the canonical release descriptor, including the Plugin Bundle digest and each resolved Package revision. A Package Release independently locks all member Skill Artifacts. Changing Plugin files or a referenced Package without updating this lock makes CI fail; changes to unrelated Packages do not affect the Plugin release.
+Plugin publication infrastructure is retained, but the repository does not currently publish curated Plugins. New Plugin definitions must combine Memoh-compatible Skill Packages with explicit runtime requirements; they must not attach Memoh integrations to upstream Packages whose Skills assume unsupported Apps, MCP servers, or hooks. The Connector-backed Plugin manifest and contribution workflow will be documented with that protocol.
 
 ### Adding a Skill
 
@@ -195,7 +141,7 @@ bun run registry:publish -- --registry memoh
 bun run dev
 ```
 
-On a new checkout, run the full `bun run registry:publish` once before using partial publication. Commit the Registry `release.lock.json` and any changed `registries/memoh/plugins/*/release.lock.json` files with the Skill source. `registry:lock -- --registry <id>` rebuilds Plugin locks because a changed Skill may produce a new Plugin release.
+On a new checkout, run the full `bun run registry:publish` once before using partial publication. Commit the Registry `release.lock.json` with the Skill source. When curated Plugins are present, `registry:lock -- --registry <id>` also rebuilds affected Plugin locks because a changed Package may produce a new Plugin release.
 
 Skill archives include regular files under the Skill root, including binary assets; `.git` and `node_modules` directories are ignored. An archive is limited to 1,000 files, 5 MiB of regular-file content, 5 MiB of serialized TAR data, and 6 MiB compressed. Every Artifact descriptor includes the immutable digest, compressed `size`, regular-file `uncompressed_size`, serialized `archive_size`, and `file_count`; clients must reject descriptors that omit those extraction fields. A Plugin release may reference at most 128 Packages. Across their member Skills, the aggregate limits are 128 MiB each for compressed bytes, regular-file body bytes, and serialized TAR bytes, plus 10,000 files.
 
@@ -229,7 +175,7 @@ bun run registry:validate
 
 Supported sources are `local` and HTTPS `git`; adapters are `skill_directory`, `skill_package_directory`, and `codex_marketplace_skills`. `skill_package_directory` reads `<package-id>/skills/<skill-id>` from its source root. A local source path is relative to the directory containing its `registry.yaml`. A Git source must pin an exact commit in `revision`; optional `tracking_ref` opts it into upstream update checks.
 
-`codex_marketplace_skills` reads `catalog_path` from its source root and supports only Marketplace Packages whose source is a local path in that same checkout. Each Package must contain `.codex-plugin/plugin.json` and declare one or more Skill paths. Only those Skill paths are imported; Apps, MCP servers, hooks, commands, agents, and LSP servers declared by the same Package are ignored. Packages with no Skills or another source type are skipped. Invalid Skill content produces an explicit Registry diagnostic, isolated so other valid Packages in the same Registry can still be published.
+`codex_marketplace_skills` reads `catalog_path` from its source root and supports only Marketplace Packages whose source is a local path in that same checkout. Each Package must contain `.codex-plugin/plugin.json`, declare one or more Skill paths, and contain no Apps, MCP servers, hooks, commands, agents, or LSP servers. Mixed Packages are excluded with an explicit diagnostic rather than publishing Skills that may depend on omitted runtime components. Packages with no Skills or another source type are skipped. Invalid Skill content produces an explicit Registry diagnostic, isolated so other valid Packages in the same Registry can still be published.
 
 Git sources use a filtered shallow fetch and root-anchored sparse checkout for the Adapter paths. Adapter reads enforce Registry-wide limits of 10,000 Skills, 100,000 source files, 512 MiB of source file bodies, 64 MiB of retained review text, and an 8 MiB Snapshot. Registry-producing commands build Registries sequentially, so those per-build bounds do not multiply with Registry count. Every enabled Registry must commit `release.lock.json`, whose `snapshot_revision` must equal the canonical Snapshot rebuilt from the approved source.
 

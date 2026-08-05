@@ -26,6 +26,19 @@ interface MarketplaceEntry {
   source: unknown
 }
 
+const unsupportedPackageComponents = [
+  'apps',
+  'mcpServers',
+  'hooks',
+  'commands',
+  'agents',
+  'lspServers',
+] as const
+
+function declaredUnsupportedComponents(manifest: Record<string, unknown>) {
+  return unsupportedPackageComponents.filter(component => hasComponent(manifest[component]))
+}
+
 function packageDiagnosticMessage(error: unknown, sourceRoot: string) {
   const message = error instanceof Error ? error.message : String(error)
   const roots = new Set([
@@ -251,6 +264,10 @@ export async function readCodexMarketplace(input: SkillAdapterInput): Promise<Sk
       }
       if (!hasComponent(manifest.skills)) {
         continue
+      }
+      const unsupported = declaredUnsupportedComponents(manifest)
+      if (unsupported.length) {
+        throw new Error(`declares unsupported components alongside Skills: ${unsupported.join(', ')}`)
       }
       const skillPaths = codexSkillPaths(manifest.skills)
       const ui = manifest.interface && typeof manifest.interface === 'object'
