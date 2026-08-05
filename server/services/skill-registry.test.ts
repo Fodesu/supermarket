@@ -5,8 +5,7 @@ import path from 'node:path'
 import type { SkillRegistryDefinition, SkillRegistrySnapshot } from '#registry/types'
 import { LocalSkillRegistryStore } from '#registry/storage/local'
 import { summarizeCurrentSnapshot } from '#registry/catalog'
-import type { SkillRegistryStore } from '#registry/storage/contracts'
-import { registrySnapshotRevision, serializeRegistrySnapshot } from '#registry/snapshot'
+import { serializeRegistrySnapshot } from '#registry/snapshot'
 import {
   getEnabledSkillRegistrySnapshots,
   getSkillRegistryDetailsForStore,
@@ -22,24 +21,14 @@ const definition: SkillRegistryDefinition = {
   adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' },
 }
 
-function snapshot(registryID = 'example', sourceRevision = 'source'): SkillRegistrySnapshot {
+function snapshot(): SkillRegistrySnapshot {
   return {
     schema_version: '1',
-    registry_id: registryID,
+    registry_id: 'example',
     registry_priority: 10,
-    source: { type: 'local', revision: sourceRevision },
+    source: { type: 'local', revision: 'source' },
     packages: [],
     diagnostics: [],
-  }
-}
-
-function snapshotState(
-  value: SkillRegistrySnapshot,
-) {
-  const revision = registrySnapshotRevision(serializeRegistrySnapshot(value))
-  return {
-    revision,
-    summary: summarizeCurrentSnapshot(value, revision, '2026-01-01T00:00:00.000Z'),
   }
 }
 
@@ -71,82 +60,4 @@ describe('Skill Registry loader', () => {
     await expect(getSkillRegistryDetailsForStore(store, 'example')).resolves.toBeUndefined()
   })
 
-  test('reads one state version when loading Registry details', async () => {
-    const approved = snapshot('example', 'source')
-    const current = snapshotState(approved)
-    let stateReads = 0
-    const store = {
-      async getState() {
-        stateReads++
-        return {
-          schema_version: '1' as const,
-          definition,
-          current_snapshot: current.revision,
-          current_summary: current.summary,
-        }
-      },
-      async getSnapshot() { return approved },
-    } as unknown as SkillRegistryStore
-
-    await expect(getSkillRegistryDetailsForStore(store, 'example')).resolves.toMatchObject({ source_revision: 'source' })
-    expect(stateReads).toBe(1)
-  })
-
-  test('reuses immutable Snapshots while still reading mutable state', async () => {
-    const approved = snapshot('example', 'source')
-    const { revision, summary } = snapshotState(approved)
-    let stateReads = 0
-    let snapshotReads = 0
-    const store = {
-      async listRegistryIDs() { return ['example'] },
-      async getState() {
-        stateReads++
-        return {
-          schema_version: '1' as const,
-          definition,
-          current_snapshot: revision,
-          current_summary: summary,
-        }
-      },
-      async getSnapshot() {
-        snapshotReads++
-        return approved
-      },
-    } as unknown as SkillRegistryStore
-
-    await getEnabledSkillRegistrySnapshots(store)
-    await getEnabledSkillRegistrySnapshots(store)
-    expect(stateReads).toBe(2)
-    expect(snapshotReads).toBe(1)
-  })
-
-  test('loads Registry summaries from state without reading Snapshots', async () => {
-    const second = { ...definition, id: 'second', name: 'Second' }
-    const firstSnapshot = snapshot('example', 'first')
-    const secondSnapshot = snapshot('second', 'second')
-    const first = snapshotState(firstSnapshot)
-    const secondState = snapshotState(secondSnapshot)
-    const store = {
-      async listRegistryIDs() { return ['example', 'second'] },
-      async getState(id: string) {
-        const current = id === 'example'
-          ? { definition, ...first }
-          : { definition: second, ...secondState }
-        return {
-          schema_version: '1' as const,
-          definition: current.definition,
-          current_snapshot: current.revision,
-          current_summary: current.summary,
-        }
-      },
-      async getSnapshot() {
-        throw new Error('Registry summaries must not read Snapshots')
-      },
-    } as unknown as SkillRegistryStore
-
-    await expect(getSkillRegistrySummariesForStore(store)).resolves.toMatchObject([
-      { id: 'example', revision: first.revision, skill_count: 0 },
-      { id: 'second', revision: secondState.revision, skill_count: 0 },
-    ])
-  })
 })

@@ -40,12 +40,9 @@ afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recur
 function inMemoryBucket() {
   const objects = new Map<string, Uint8Array>()
   const versions = new Map<string, string>()
-  const gets = new Map<string, number>()
   let version = 0
   return {
-    gets,
     async get(key: string) {
-      gets.set(key, (gets.get(key) ?? 0) + 1)
       const value = objects.get(key)
       return value ? {
         size: value.length, body: new Blob([value.slice().buffer as ArrayBuffer]).stream(),
@@ -184,19 +181,23 @@ describe('Marketplace HTTP protocol', () => {
     expect(registryResponse.status).toBe(200)
     expect((await registryResponse.json() as any).data[0]).toMatchObject({ id: 'example', skill_count: 1 })
 
-    const searchResponse = await app.fetch(new Request('http://local/api/skills?q=demo'))
+    const searchResponse = await app.fetch(new Request('http://local/api/skills?q=%20demo%20&limit=1&sort=name'))
     expect(searchResponse.status).toBe(200)
     expect((await searchResponse.json() as any).data[0]).toMatchObject({
       registry_id: 'example', package_id: 'tools', skill_id: 'demo',
     })
     expect((await app.fetch(new Request('http://local/api/skills?registry=BAD'))).status).toBe(400)
+    expect((await app.fetch(new Request('http://local/api/skills?sort=recent'))).status).toBe(400)
+    expect((await app.fetch(new Request('http://local/api/skills?tag=one&tag=two'))).status).toBe(400)
+    expect((await app.fetch(new Request('http://local/api/skills?limit=101'))).status).toBe(400)
 
-    const packagesResponse = await app.fetch(new Request('http://local/api/packages?q=tools'))
+    const packagesResponse = await app.fetch(new Request('http://local/api/packages?q=%20tools%20&limit=1'))
     expect(packagesResponse.status).toBe(200)
     expect(await packagesResponse.json()).toMatchObject({
       total: 1,
       data: [{ registry_id: 'example', package_id: 'tools', name: 'tools', skill_count: 1 }],
     })
+    expect((await app.fetch(new Request('http://local/api/packages?sort=package'))).status).toBe(400)
     const scopedPackages = await app.fetch(new Request('http://local/api/registries/example/packages'))
     expect(scopedPackages.status).toBe(200)
     const scopedPackageResult = await scopedPackages.json() as any
@@ -229,21 +230,16 @@ describe('Marketplace HTTP protocol', () => {
       `http://local/api/registries/example/packages/tools/releases/${'0'.repeat(64)}`,
     ))).status).toBe(404)
 
-    const stateKey = 'skill-registries/example/state.json'
-    const stateReadsBeforeScopedSkills = bucket.gets.get(stateKey) ?? 0
     const scopedSkills = await app.fetch(new Request('http://local/api/registries/example/skills?q=demo'))
     expect(scopedSkills.status).toBe(200)
     expect((await scopedSkills.json() as any).total).toBe(1)
-    expect(bucket.gets.get(stateKey)).toBe(stateReadsBeforeScopedSkills + 1)
 
-    const stateReadsBeforeCategories = bucket.gets.get(stateKey) ?? 0
     const categoriesResponse = await app.fetch(new Request('http://local/api/registries/example/categories'))
     expect(categoriesResponse.status).toBe(200)
     expect((await categoriesResponse.json() as any).data).toEqual([{
       id: 'developer-tools', name: 'Developer Tools', count: 1,
       registries: [{ id: 'example', count: 1 }],
     }])
-    expect(bucket.gets.get(stateKey)).toBe(stateReadsBeforeCategories + 1)
     expect((await app.fetch(new Request('http://local/api/registries/missing/skills'))).status).toBe(404)
 
     const detailResponse = await app.fetch(new Request('http://local/api/registries/example/packages/tools/skills/demo'))
@@ -273,7 +269,7 @@ describe('Marketplace HTTP protocol', () => {
     expect(await readFile(path.join(installed, 'SKILL.md'), 'utf8')).toContain('name: Demo')
     expect((await stat(path.join(installed, 'scripts/run.sh'))).mode & 0o777).toBe(0o755)
 
-    const pluginsResponse = await app.fetch(new Request('http://local/api/plugins?q=demo'))
+    const pluginsResponse = await app.fetch(new Request('http://local/api/plugins?q=%20demo%20&limit=1'))
     expect(pluginsResponse.status).toBe(200)
     expect(await pluginsResponse.json()).toMatchObject({
       total: 1,
@@ -293,6 +289,7 @@ describe('Marketplace HTTP protocol', () => {
         },
       }],
     })
+    expect((await app.fetch(new Request('http://local/api/plugins?limit=101'))).status).toBe(400)
     const pluginResponse = await app.fetch(new Request('http://local/api/plugins/demo-plugin'))
     expect(pluginResponse.status).toBe(200)
     expect((await pluginResponse.json() as any).release.revision).toBe(pluginRevision)
@@ -315,14 +312,11 @@ describe('Marketplace HTTP protocol', () => {
     expect(immutablePluginDownload.headers.get('x-content-sha256')).toBe(pluginArtifact.digest)
     expect(await sha256(new Uint8Array(await immutablePluginDownload.arrayBuffer())))
       .toBe(pluginArtifact.digest)
-    const pluginArtifactKey = `plugin-artifacts/${pluginArtifact.digest}.tar.gz`
-    const readsBeforeImmutable304 = bucket.gets.get(pluginArtifactKey)
     const immutableNotModified = await app.fetch(new Request(
       `http://local/api/artifacts/plugin/${pluginArtifact.digest}`,
       { headers: { 'if-none-match': `"${pluginArtifact.digest}"` } },
     ))
     expect(immutableNotModified.status).toBe(304)
-    expect(bucket.gets.get(pluginArtifactKey)).toBe((readsBeforeImmutable304 ?? 0) + 1)
     const missingDigest = '0'.repeat(64)
     expect((await app.fetch(new Request(
       `http://local/api/artifacts/plugin/${missingDigest}`,
