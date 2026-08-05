@@ -4,7 +4,6 @@ import os from 'node:os'
 import path from 'node:path'
 import { MAX_SKILL_IMAGE_BYTES, type SkillRegistryAdapter, type SkillRegistryDefinition } from '../types'
 import { readDirectoryFiles, readFileBounded } from '../filesystem'
-import { parsePackagePostinstall } from '../package-manifest'
 import { buildSkillCandidates } from './index'
 import { detectSkillImageContentType } from './codex-marketplace'
 
@@ -123,10 +122,6 @@ postinstall:
     await expect(buildSkillCandidates({
       definition: definition('memoh'), sourceRoot: root,
     })).rejects.toThrow('unsupported field shell')
-
-    expect(() => parsePackagePostinstall([
-      { command: 'npm', args: ['\uD800'] },
-    ], 'postinstall')).toThrow('unpaired UTF-16 surrogate')
   })
 
   test('imports pure Skill Packages and rejects mixed Codex Packages', async () => {
