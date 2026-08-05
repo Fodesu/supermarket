@@ -4,6 +4,7 @@ import type {
   CatalogSkill,
   SkillPackageRelease,
   SkillPackageReleaseSkill,
+  SkillPackageMetadata,
   SnapshotPackage,
   SkillRegistrySnapshot,
   SnapshotSkill,
@@ -57,7 +58,14 @@ export function compactCatalogSkill(skill: CatalogSkill): SnapshotSkill {
   }
 }
 
-export function compactCatalogPackages(skills: CatalogSkill[]): SnapshotPackage[] {
+function copyPostinstall(metadata?: SkillPackageMetadata) {
+  return metadata?.postinstall?.map(({ command, args }) => ({ command, args: [...args] }))
+}
+
+export function compactCatalogPackages(
+  skills: CatalogSkill[],
+  packageMetadata: ReadonlyMap<string, SkillPackageMetadata> = new Map(),
+): SnapshotPackage[] {
   const groups = new Map<string, CatalogSkill[]>()
   for (const skill of skills) {
     const group = groups.get(skill.package_id) ?? []
@@ -68,6 +76,7 @@ export function compactCatalogPackages(skills: CatalogSkill[]): SnapshotPackage[
     .map(([packageID, packageSkills]) => {
       const ordered = [...packageSkills].sort((a, b) => compareCanonicalText(a.skill_id, b.skill_id))
       const representative = ordered.find((skill) => skill.skill_id === packageID) ?? ordered[0]!
+      const postinstall = copyPostinstall(packageMetadata.get(packageID))
       const release: SkillPackageRelease = {
         schema_version: '1',
         registry_id: representative.registry_id,
@@ -76,6 +85,7 @@ export function compactCatalogPackages(skills: CatalogSkill[]): SnapshotPackage[
         description: representative.description,
         tags: [...new Set(ordered.flatMap((skill) => skill.tags))].sort(compareCanonicalText),
         ...(representative.icon ? { icon: representative.icon } : {}),
+        ...(postinstall ? { postinstall } : {}),
         skills: ordered.map(packageReleaseSkill),
       }
       return {
@@ -85,6 +95,7 @@ export function compactCatalogPackages(skills: CatalogSkill[]): SnapshotPackage[
         description: release.description,
         tags: release.tags,
         ...(release.icon ? { icon: release.icon } : {}),
+        ...(release.postinstall ? { postinstall: release.postinstall } : {}),
         skills: ordered.map(compactCatalogSkill),
       }
     })
@@ -107,6 +118,7 @@ export function skillPackageReleaseFromSnapshotPackage(
     description: pkg.description,
     tags: pkg.tags,
     ...(pkg.icon ? { icon: pkg.icon } : {}),
+    ...(pkg.postinstall ? { postinstall: copyPostinstall(pkg) } : {}),
     skills: catalogSkillsFromSnapshotPackage(snapshot, pkg).map(packageReleaseSkill),
   }
 }

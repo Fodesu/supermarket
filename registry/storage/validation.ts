@@ -25,6 +25,7 @@ import {
 import { assertSafeArchivePaths } from '#lib/archive'
 import { assertDigest } from '#lib/digest'
 import { skillPackageReleaseFromSnapshotPackage, skillPackageRevision } from '../snapshot'
+import { parsePackagePostinstall } from '../package-manifest'
 
 export { assertDigest } from '#lib/digest'
 
@@ -83,6 +84,9 @@ export function validateStoredSnapshot(
         throw new Error('Snapshot contains an invalid Package')
       }
       packageIDs.add(packageID)
+      if (pkg.postinstall !== undefined) {
+        parsePackagePostinstall(pkg.postinstall, 'Snapshot Package postinstall')
+      }
       let packageCompressedBytes = 0
       let packageUncompressedBytes = 0
       let packageArchiveBytes = 0

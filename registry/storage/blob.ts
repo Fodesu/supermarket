@@ -34,6 +34,7 @@ import {
 import { putImmutableObject } from './immutable'
 import { VersionedJSONState } from './versioned-state'
 import { MAX_REGISTRY_PACKAGE_RELEASE_BYTES, MAX_REGISTRY_SNAPSHOT_BYTES } from '../budget'
+import { parsePackagePostinstall } from '../package-manifest'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -138,6 +139,9 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
   async putPackageRelease(release: SkillPackageRelease) {
     const id = assertRegistryID(release.registry_id, 'registry ID')
     const packageID = assertRegistryComponentID(release.package_id, 'package ID')
+    if (release.postinstall !== undefined) {
+      parsePackagePostinstall(release.postinstall, `Package release ${id}/${packageID}`)
+    }
     const bytes = serializeSkillPackageRelease(release)
     if (bytes.length > MAX_REGISTRY_PACKAGE_RELEASE_BYTES) {
       throw new Error(`Package release exceeds ${MAX_REGISTRY_PACKAGE_RELEASE_BYTES} bytes: ${id}/${packageID}`)
@@ -161,6 +165,9 @@ export class BlobSkillRegistryStore implements SkillRegistryStore {
     if (release.schema_version !== '1' || release.registry_id !== id || release.package_id !== normalizedPackageID
       || skillPackageRevision(release) !== digest || !sameBytes(bytes, serializeSkillPackageRelease(release))) {
       throw new Error(`Invalid stored Package release: ${key}`)
+    }
+    if (release.postinstall !== undefined) {
+      parsePackagePostinstall(release.postinstall, `Stored Package release ${id}/${normalizedPackageID}`)
     }
     return release
   }

@@ -102,6 +102,15 @@ metadata:
 Instructions and documentation go here.
 ```
 
+A Package that needs a system dependency may add `registries/memoh/packages/<package-id>/package.yaml`:
+
+```yaml
+schema_version: "1"
+postinstall:
+  - command: npm
+    args: [install, --global, opencli]
+```
+
 2. Regenerate the approved Snapshot lock, then validate and publish it locally:
 
 ```bash
