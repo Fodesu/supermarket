@@ -69,6 +69,15 @@ export interface SkillIcon {
   brand_color?: string
 }
 
+export interface PackagePostinstallCommand {
+  command: string
+  args: string[]
+}
+
+export interface SkillPackageMetadata {
+  postinstall?: PackagePostinstallCommand[]
+}
+
 export interface CatalogSkill {
   schema_version: '1'
   registry_id: string
@@ -119,7 +128,7 @@ export interface SnapshotSkill {
   >
 }
 
-export interface SnapshotPackage {
+export interface SnapshotPackage extends SkillPackageMetadata {
   revision: string
   package_id: string
   name: string
@@ -131,7 +140,7 @@ export interface SnapshotPackage {
 
 export type SkillPackageReleaseSkill = Omit<CatalogSkill, 'registry_priority' | 'source'>
 
-export interface SkillPackageRelease {
+export interface SkillPackageRelease extends SkillPackageMetadata {
   schema_version: '1'
   registry_id: string
   package_id: string

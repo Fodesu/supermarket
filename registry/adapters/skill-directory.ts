@@ -28,5 +28,5 @@ export async function readSkillDirectory(input: SkillAdapterInput): Promise<Skil
       budget,
     }))
   }
-  return { skills, diagnostics: [] }
+  return { skills, diagnostics: [], packageMetadata: new Map() }
 }

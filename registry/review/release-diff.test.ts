@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { CatalogSkill, SkillRegistryDefinition } from '../types'
+import type { CatalogSkill, PackagePostinstallCommand, SkillRegistryDefinition } from '../types'
 import type { SkillRegistryCandidate } from '../publish/candidate'
 import { compactCatalogPackages } from '../snapshot'
 import {
@@ -51,6 +51,7 @@ function candidate(
   digest: string,
   description: string,
   markdown: string,
+  postinstall?: PackagePostinstallCommand[],
 ): SkillRegistryCandidate {
   const skills = [skill(digest, description)]
   const snapshot = {
@@ -58,7 +59,9 @@ function candidate(
     registry_id: definition.id,
     registry_priority: definition.priority,
     source: { type: 'local' as const, revision: sourceRevision },
-    packages: compactCatalogPackages(skills),
+    packages: compactCatalogPackages(skills, postinstall
+      ? new Map([['tools', { postinstall }]])
+      : new Map()),
     diagnostics: [],
   }
   return {
@@ -135,6 +138,29 @@ describe('Registry release review', () => {
         patch: expect.stringContaining('+# Added'),
       }],
     })
+  })
+
+  test('shows Package postinstall changes even when its Skills are unchanged', () => {
+    const previous = candidate('1'.repeat(40), 'a'.repeat(64), 'Same', '# Same\n')
+    const next = candidate('2'.repeat(40), 'a'.repeat(64), 'Same', '# Same\n', [
+      { command: 'npm', args: ['install', '--global', 'opencli'] },
+    ])
+    next.revision = 'b'.repeat(64)
+
+    const diff = diffRegistryCandidates(previous, next)
+    const report = renderRegistryReleaseDiff(diff)
+
+    expect(diff.summary).toMatchObject({ packages_changed: 1, skills_changed: 0 })
+    expect(diff.packages[0]).toMatchObject({
+      package_id: 'tools',
+      status: 'changed',
+      postinstall: {
+        after: [{ command: 'npm', args: ['install', '--global', 'opencli'] }],
+      },
+      skills: [],
+    })
+    expect(report).toContain('Package postinstall')
+    expect(report).toContain('"opencli"')
   })
 
   test('includes the concrete error for every skipped Package', () => {

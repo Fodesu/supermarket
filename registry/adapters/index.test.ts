@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { MAX_SKILL_IMAGE_BYTES, type SkillRegistryAdapter, type SkillRegistryDefinition } from '../types'
 import { readDirectoryFiles, readFileBounded } from '../filesystem'
+import { parsePackagePostinstall } from '../package-manifest'
 import { buildSkillCandidates } from './index'
 import { detectSkillImageContentType } from './codex-marketplace'
 
@@ -52,12 +53,21 @@ describe('Skill Registry adapters', () => {
     await writeSkill(root, 'notion/skills/search', 'Search')
     await writeSkill(root, 'notion/skills/write', 'Write')
     await writeSkill(root, 'github/skills/review', 'Review')
+    await writeFile(path.join(root, 'notion/package.yaml'), `schema_version: "1"
+postinstall:
+  - command: npm
+    args: [install, --global, opencli]
+`)
 
     const result = await buildSkillCandidates({
       definition: definition('memoh'), sourceRoot: root,
     })
 
     expect(result.diagnostics).toEqual([])
+    expect(result.packageMetadata.get('notion')).toEqual({
+      postinstall: [{ command: 'npm', args: ['install', '--global', 'opencli'] }],
+    })
+    expect(result.packageMetadata.has('github')).toBe(false)
     expect(result.skills.map((skill) => ({
       package_id: skill.package_id,
       skill_id: skill.skill_id,
@@ -87,6 +97,36 @@ describe('Skill Registry adapters', () => {
     await expect(buildSkillCandidates({
       definition: definition('memoh'), sourceRoot: root,
     })).rejects.toThrow('package contains no skills')
+  })
+
+  test('rejects unsafe or unsupported Memoh Package manifests', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'invalid-package-manifest-'))
+    roots.push(root)
+    await writeSkill(root, 'tools/skills/tools', 'Tools')
+    const manifest = path.join(root, 'tools/package.yaml')
+
+    await writeFile(manifest, `schema_version: "1"
+postinstall:
+  - command: sh
+    args: [-c, echo unsafe]
+`)
+    await expect(buildSkillCandidates({
+      definition: definition('memoh'), sourceRoot: root,
+    })).rejects.toThrow('supported executable name')
+
+    await writeFile(manifest, `schema_version: "1"
+postinstall:
+  - command: npm
+    args: [install, opencli]
+    shell: true
+`)
+    await expect(buildSkillCandidates({
+      definition: definition('memoh'), sourceRoot: root,
+    })).rejects.toThrow('unsupported field shell')
+
+    expect(() => parsePackagePostinstall([
+      { command: 'npm', args: ['\uD800'] },
+    ], 'postinstall')).toThrow('unpaired UTF-16 surrogate')
   })
 
   test('imports pure Skill Packages and rejects mixed Codex Packages', async () => {
@@ -311,7 +351,7 @@ describe('Skill Registry adapters', () => {
     await writeSkill(outside, '.', 'Outside')
     await symlink(outside, path.join(root, 'escaped'))
     await expect(buildSkillCandidates({ definition: definition('skill_directory'), sourceRoot: root }))
-      .resolves.toEqual({ skills: [], diagnostics: [] })
+      .resolves.toEqual({ skills: [], diagnostics: [], packageMetadata: new Map() })
 
     await mkdir(path.join(root, 'package'), { recursive: true })
     await symlink(outside, path.join(root, 'package/escaped'))
