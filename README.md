@@ -1,6 +1,6 @@
 # Supermarket
 
-Official Plugin & Skill Registry for [Memoh](https://github.com/memohai/Memoh).
+Official Skill Registry for [Memoh](https://github.com/memohai/Memoh).
 
 ## Project Structure
 
@@ -10,19 +10,17 @@ supermarket/
 │   ├── memoh/
 │   │   ├── registry.yaml
 │   │   ├── release.lock.json
-│   │   ├── plugins/<plugin-id>/
 │   │   └── packages/<package-id>/skills/<skill-id>/
 │   └── openai/
 │       ├── registry.yaml
 │       └── release.lock.json
-├── plugin/                          # Plugin model and publication
 ├── registry/                        # Registry model and publication
 ├── server/                          # API routes
 ├── workers/api/                     # Cloudflare Worker
 └── client/                          # Reference client
 ```
 
-Supermarket stores published Registry and Plugin releases in a local data directory during development and in R2 for hosted environments. Its API provides Registry, Package, Skill, Plugin, and Artifact access for Memoh clients.
+Supermarket stores published Registry releases in a local data directory during development and in R2 for hosted environments. Its API provides Registry, Package, Skill, and Artifact access for Memoh clients.
 
 ## Development
 
@@ -41,8 +39,7 @@ The development server listens on `http://127.0.0.1:5173` by default.
 | `bun test` | Run the Bun test suite |
 | `bun run typecheck` | Generate Worker types and check server and Vue projects |
 | `bun run build` | Validate approved releases and build the Cloudflare Worker |
-| `bun run registry:lock -- --registry <id>` | Rebuild one Registry lock and refresh Plugin locks |
-| `bun run registry:lock -- --plugin <id>` | Rebuild one Plugin lock |
+| `bun run registry:lock -- --registry <id>` | Rebuild one Registry lock |
 | `bun run registry:validate` | Rebuild every enabled source and verify committed locks |
 | `bun run registry:publish` | Publish approved releases to the local Store |
 | `bun run registry:updates` | Check configured upstream tracking refs |
@@ -66,10 +63,6 @@ Base URL: `https://supermarket.memoh.ai`
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/plugins` | List Plugins. Query: `q`, `tag`, `page`, `limit` |
-| GET | `/api/plugins/:id` | Get Plugin details |
-| GET | `/api/plugins/:id/releases/:revision` | Get an immutable Plugin release descriptor |
-| GET | `/api/artifacts/plugin/:digest` | Download an immutable Plugin package |
 | GET | `/api/packages` | Search Skill Packages. Query: `q`, `registry`, `category`, `tag`, `page`, `limit`, `sort` |
 | GET | `/api/skills` | Search enabled Registry Skills. Query: `q`, `registry`, `package`, `category`, `tag`, `page`, `limit`, `sort` |
 | GET | `/api/registries` | List Registries and current counts |
@@ -83,37 +76,9 @@ Base URL: `https://supermarket.memoh.ai`
 | GET | `/api/artifacts/skill/:digest` | Download a Skill archive |
 | GET | `/api/artifacts/icon/:digest` | Download a Skill icon |
 
-Skills use `(registry_id, package_id, skill_id)` identities. Plugins reference Packages by `(registry_id, package_id)`.
+Skills use `(registry_id, package_id, skill_id)` identities.
 
 ## Contributing
-
-### Adding a Plugin
-
-Create `registries/memoh/plugins/<plugin-id>/plugin.yaml`:
-
-```yaml
-schema_version: "1"
-id: example
-name: Example
-version: 0.1.0
-description: Example Plugin
-author:
-  name: Memoh
-packages:
-  - registry_id: memoh
-    package_id: example
-```
-
-`packages` lists Skill Package references. A Plugin may also include `hooks.json` and `scripts/**`; `install` lists commands run from the installed Plugin directory.
-
-Generate and validate the approved Plugin release lock:
-
-```bash
-bun run registry:lock -- --plugin example
-bun run registry:validate
-```
-
-Commit `release.lock.json` with the Plugin source. The filename is exactly `plugin.yaml`; `plugin.yml` is not recognized.
 
 ### Adding a Skill
 
