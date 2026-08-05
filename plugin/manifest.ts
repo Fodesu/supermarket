@@ -34,50 +34,10 @@ const iconSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('external_url'), url: httpsURL('icon.url must use HTTPS') }),
 ])
 
-const variableSchema = z.object({
-  key: nonEmpty,
-  description: nonEmpty,
-  defaultValue: optionalNonEmpty,
-})
-
-const authRequirementSchema = z.object({
-  key: nonEmpty,
-  type: z.enum(['none', 'managed_oauth', 'user_secret']),
-  client_ref: optionalNonEmpty,
-  scopes: stringList,
-  variables: stringList,
-})
-
-const mcpBaseShape = {
-  key: nonEmpty.check(z.refine(isIdentifier, 'Invalid MCP key')),
-  name: optionalNonEmpty,
-  display_name: optionalNonEmpty,
-  description: optionalNonEmpty,
-  auth_ref: optionalNonEmpty,
-  visibility: z.optional(z.enum(['hidden', 'visible'])),
-  capabilities: stringList,
-}
-
-const mcpSchema = z.discriminatedUnion('transport', [
-  z.object({ ...mcpBaseShape, transport: z.literal('stdio'), command: nonEmpty, args: stringList }),
-  z.object({ ...mcpBaseShape, transport: z.literal('http'), url: httpsURL('mcp.url must use HTTPS') }),
-  z.object({ ...mcpBaseShape, transport: z.literal('sse'), url: httpsURL('mcp.url must use HTTPS') }),
-])
-
 const packageSchema = z.object({
   registry_id: nonEmpty.check(z.refine(isRegistryID, 'Invalid Registry ID')),
   package_id: nonEmpty.check(z.refine(isRegistryComponentID, 'Invalid package ID')),
 })
-
-function uniqueKeys(label: string) {
-  return (items: Array<{ key: string }>, ctx: z.core.$RefinementCtx<Array<{ key: string }>>) => {
-    const seen = new Set<string>()
-    for (const item of items) {
-      if (seen.has(item.key)) ctx.addIssue({ code: 'custom', message: `${label} contains duplicate key: ${item.key}` })
-      seen.add(item.key)
-    }
-  }
-}
 
 function uniquePackageReferences(items: PluginPackageReference[], ctx: z.core.$RefinementCtx<PluginPackageReference[]>) {
   if (items.length > MAX_PLUGIN_RELEASE_PACKAGES) {
@@ -103,18 +63,8 @@ const pluginManifestSchema = z.object({
   tags: stringList,
   capabilities: stringList,
   install: z.optional(z.union([nonEmpty, z.array(nonEmpty)])),
-  variables: z.optional(z.array(variableSchema)),
-  auth_requirements: z.optional(z.array(authRequirementSchema).check(z.superRefine(uniqueKeys('auth_requirements')))),
-  mcps: z.optional(z.array(mcpSchema).check(z.superRefine(uniqueKeys('mcps')))),
   packages: z.optional(z.array(packageSchema).check(z.superRefine(uniquePackageReferences))),
-}).check(z.superRefine((manifest, ctx) => {
-  const authKeys = new Set((manifest.auth_requirements ?? []).map((item) => item.key))
-  manifest.mcps?.forEach((mcp, index) => {
-    if (mcp.auth_ref && !authKeys.has(mcp.auth_ref)) {
-      ctx.addIssue({ code: 'custom', path: ['mcps', index, 'auth_ref'], message: 'references unknown auth requirement' })
-    }
-  })
-}))
+})
 
 function object(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`)
@@ -130,8 +80,7 @@ function decode<T>(schema: z.ZodMiniType<T>, value: unknown): T {
 
 const pluginFields = new Set([
   'schema_version', 'id', 'name', 'version', 'description', 'author', 'icon',
-  'homepage', 'tags', 'capabilities', 'install', 'variables',
-  'auth_requirements', 'mcps', 'packages',
+  'homepage', 'tags', 'capabilities', 'install', 'packages',
 ])
 
 export function parsePluginManifest(raw: unknown, expectedID?: string): PluginManifest {

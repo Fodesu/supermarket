@@ -3,7 +3,7 @@ import { parsePluginManifest, pluginPackageReferenceIdentity } from './manifest'
 import { MAX_PLUGIN_RELEASE_PACKAGES } from './types'
 
 describe('Plugin manifests', () => {
-  test('parses a complete remote MCP Plugin', () => {
+  test('parses a Package-based Plugin', () => {
     expect(parsePluginManifest({
       schema_version: '1',
       id: 'example',
@@ -12,24 +12,15 @@ describe('Plugin manifests', () => {
       description: 'Example Plugin',
       author: { name: 'Memoh', email: 'support@example.com' },
       icon: { kind: 'external_url', url: 'https://example.com/icon.svg' },
-      auth_requirements: [{ key: 'oauth', type: 'managed_oauth' }],
-      mcps: [{
-        key: 'example',
-        transport: 'http',
-        url: 'https://example.com/mcp',
-        auth_ref: 'oauth',
-        visibility: 'hidden',
-      }],
       packages: [{ registry_id: 'memoh', package_id: 'example' }],
     }, 'example')).toMatchObject({
       id: 'example',
       author: { name: 'Memoh', email: 'support@example.com' },
-      mcps: [{ key: 'example', transport: 'http', auth_ref: 'oauth' }],
       packages: [{ registry_id: 'memoh', package_id: 'example' }],
     })
   })
 
-  test('rejects mismatched identities, unknown auth references and insecure remote URLs', () => {
+  test('rejects mismatched identities and obsolete MCP fields', () => {
     const base = {
       schema_version: '1',
       id: 'example',
@@ -39,19 +30,11 @@ describe('Plugin manifests', () => {
       author: { name: 'Memoh' },
     }
     expect(() => parsePluginManifest(base, 'different')).toThrow('does not match directory')
-    expect(() => parsePluginManifest({
-      ...base,
-      mcps: [{ key: 'example', transport: 'http', url: 'https://example.com/mcp', auth_ref: 'missing' }],
-    })).toThrow('unknown auth requirement')
-    expect(() => parsePluginManifest({
-      ...base,
-      mcps: [{ key: 'example', transport: 'http', url: 'http://example.com/mcp' }],
-    })).toThrow('must use HTTPS')
     expect(() => parsePluginManifest({ ...base, id: 'example.plugin' })).toThrow('Invalid Plugin ID')
-    expect(() => parsePluginManifest({
-      ...base,
-      mcps: [{ key: 'example.mcp', transport: 'http', url: 'https://example.com/mcp' }],
-    })).toThrow('Invalid MCP key')
+    for (const field of ['mcps', 'auth_requirements', 'variables']) {
+      expect(() => parsePluginManifest({ ...base, [field]: [] }))
+        .toThrow(`unsupported field: ${field}`)
+    }
   })
 
   test('requires unique namespaced Registry Package references', () => {

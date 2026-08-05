@@ -72,9 +72,9 @@ The client defaults to `http://127.0.0.1:5173`. Override it with `--base` or `SU
 
 ```bash
 bun run registry:client -- list
-bun run registry:client -- search gmail --registry memoh
-bun run registry:client -- inspect memoh gmail gmail
-bun run registry:client -- install memoh gmail gmail \
+bun run registry:client -- search pdf --registry memoh
+bun run registry:client -- inspect memoh pdf pdf
+bun run registry:client -- install memoh pdf pdf \
   --destination /tmp/supermarket-skills
 ```
 
@@ -108,7 +108,33 @@ The installation identity is supplied by the client rather than embedded as an a
 
 ### Adding a Plugin
 
-Plugin publication infrastructure is retained, but the repository does not currently publish curated Plugins. New Plugin definitions must combine Memoh-compatible Skill Packages with explicit runtime requirements; they must not attach Memoh integrations to upstream Packages whose Skills assume unsupported Apps, MCP servers, or hooks. The Connector-backed Plugin manifest and contribution workflow will be documented with that protocol.
+Plugin publication remains supported, although the repository currently publishes no curated Plugins. Create `registries/memoh/plugins/<plugin-id>/plugin.yaml`:
+
+```yaml
+schema_version: "1"
+id: example
+name: Example
+version: 0.1.0
+description: Example Plugin
+author:
+  name: Memoh
+packages:
+  - registry_id: memoh
+    package_id: example
+```
+
+`packages` references Memoh-compatible Skill Packages. A Plugin may also include `hooks.json` and `scripts/**`; the optional `install` manifest field lists commands that Memoh runs from the installed Plugin directory. Skill content must remain in the Registry Package and must not be copied into the Plugin directory.
+
+Plugin manifests do not define MCP servers, credentials, or OAuth requirements. Those integrations belong to Connectors. Do not combine a Memoh integration with an upstream Package whose Skills require unsupported Apps, MCP servers, or hooks.
+
+Generate and validate the approved Plugin release lock:
+
+```bash
+bun run registry:lock -- --plugin example
+bun run registry:validate
+```
+
+Commit `release.lock.json` with the Plugin source. The filename is exactly `plugin.yaml`; `plugin.yml` is not recognized.
 
 ### Adding a Skill
 
