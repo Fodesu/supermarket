@@ -28,7 +28,7 @@ describe('Skill Registry candidates', () => {
 
     const definition: SkillRegistryDefinition = {
       schema_version: '1', id: 'example', name: 'Example', enabled: true, priority: 10,
-      adapter: { type: 'skill_package_directory' },
+      adapter: { type: 'memoh' },
       source: { type: 'local', path: 'packages' },
     }
     const candidate = await buildSkillRegistryCandidate(definition, projectRoot, { includeReview: true })

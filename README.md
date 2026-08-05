@@ -176,7 +176,7 @@ bun run registry:validate
 
 #### Sources and Adapters
 
-Supported sources are `local` and HTTPS `git`. Supported adapters are `skill_directory`, `skill_package_directory`, and `codex_marketplace_skills`. Git sources pin an exact commit in `revision`; `tracking_ref` enables update checks.
+Supported sources are `local` and HTTPS `git`. Supported adapters are `memoh`, `skill_directory`, and `codex_marketplace_skills`. Git sources pin an exact commit in `revision`; `tracking_ref` enables update checks.
 
 ## Registry Updates
 

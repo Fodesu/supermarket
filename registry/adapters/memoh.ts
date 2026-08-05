@@ -6,7 +6,7 @@ import { buildSkillCandidate } from './common'
 import { compareCanonicalText } from '#lib/order'
 import type { SkillAdapterInput, SkillAdapterResult, SkillCandidate } from './types'
 
-export async function readSkillPackageDirectory(input: SkillAdapterInput): Promise<SkillAdapterResult> {
+export async function readMemohRegistry(input: SkillAdapterInput): Promise<SkillAdapterResult> {
   const { definition, sourceRoot, budget } = input
   const skills: SkillCandidate[] = []
   const packages = (await readdir(sourceRoot, { withFileTypes: true }))

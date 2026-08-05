@@ -13,7 +13,7 @@ export const MAX_SKILL_IMAGE_BYTES = 512 * 1024
 
 export type SkillRegistryAdapter =
   | { type: 'skill_directory' }
-  | { type: 'skill_package_directory' }
+  | { type: 'memoh' }
   | { type: 'codex_marketplace_skills'; catalog_path: string }
 
 export type SkillRegistrySource =

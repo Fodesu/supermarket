@@ -54,7 +54,7 @@ describe('Skill Registry adapters', () => {
     await writeSkill(root, 'github/skills/review', 'Review')
 
     const result = await buildSkillCandidates({
-      definition: definition('skill_package_directory'), sourceRoot: root,
+      definition: definition('memoh'), sourceRoot: root,
     })
 
     expect(result.diagnostics).toEqual([])
@@ -85,7 +85,7 @@ describe('Skill Registry adapters', () => {
     await mkdir(path.join(root, 'empty/skills'), { recursive: true })
 
     await expect(buildSkillCandidates({
-      definition: definition('skill_package_directory'), sourceRoot: root,
+      definition: definition('memoh'), sourceRoot: root,
     })).rejects.toThrow('package contains no skills')
   })
 
