@@ -242,14 +242,15 @@ describe('Marketplace HTTP protocol', () => {
     expect(await readFile(path.join(installed, 'SKILL.md'), 'utf8')).toContain('name: Demo')
     expect((await stat(path.join(installed, 'scripts/run.sh'))).mode & 0o777).toBe(0o755)
 
+    const updatedPostinstall: PackagePostinstallCommand[] = [
+      { command: 'npm', args: ['install', '--global', 'opencli@2'] },
+    ]
     const updatedSnapshot: SkillRegistrySnapshot = {
       ...snapshot,
       source: { ...snapshot.source, revision: 'f'.repeat(64) },
-      packages: compactCatalogPackages(
-        [{ ...skill, description: 'Updated Demo Skill' }],
-        packageMetadata,
-      ),
+      packages: compactCatalogPackages([skill], new Map([['tools', { postinstall: updatedPostinstall }]])),
     }
+    expect(updatedSnapshot.packages[0]!.revision).not.toBe(snapshot.packages[0]!.revision)
     await store.putPackageRelease(
       skillPackageReleaseFromSnapshotPackage(updatedSnapshot, updatedSnapshot.packages[0]!),
     )
@@ -260,7 +261,8 @@ describe('Marketplace HTTP protocol', () => {
     const updatedPackage = await app.fetch(new Request('http://local/api/registries/example/packages/tools'))
     expect(await updatedPackage.json()).toMatchObject({
       revision: updatedSnapshot.packages[0]!.revision,
-      description: 'Updated Demo Skill',
+      description: 'Demo Skill',
+      postinstall: updatedPostinstall,
     })
     const historicalPackage = await app.fetch(new Request(packageReleaseURL))
     expect(await historicalPackage.json()).toMatchObject({
