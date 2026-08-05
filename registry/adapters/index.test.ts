@@ -52,21 +52,12 @@ describe('Skill Registry adapters', () => {
     await writeSkill(root, 'notion/skills/search', 'Search')
     await writeSkill(root, 'notion/skills/write', 'Write')
     await writeSkill(root, 'github/skills/review', 'Review')
-    await writeFile(path.join(root, 'notion/package.yaml'), `schema_version: "1"
-postinstall:
-  - command: npm
-    args: [install, --global, opencli]
-`)
 
     const result = await buildSkillCandidates({
       definition: definition('memoh'), sourceRoot: root,
     })
 
     expect(result.diagnostics).toEqual([])
-    expect(result.packageMetadata.get('notion')).toEqual({
-      postinstall: [{ command: 'npm', args: ['install', '--global', 'opencli'] }],
-    })
-    expect(result.packageMetadata.has('github')).toBe(false)
     expect(result.skills.map((skill) => ({
       package_id: skill.package_id,
       skill_id: skill.skill_id,
@@ -96,32 +87,6 @@ postinstall:
     await expect(buildSkillCandidates({
       definition: definition('memoh'), sourceRoot: root,
     })).rejects.toThrow('package contains no skills')
-  })
-
-  test('rejects unsafe or unsupported Memoh Package manifests', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'invalid-package-manifest-'))
-    roots.push(root)
-    await writeSkill(root, 'tools/skills/tools', 'Tools')
-    const manifest = path.join(root, 'tools/package.yaml')
-
-    await writeFile(manifest, `schema_version: "1"
-postinstall:
-  - command: sh
-    args: [-c, echo unsafe]
-`)
-    await expect(buildSkillCandidates({
-      definition: definition('memoh'), sourceRoot: root,
-    })).rejects.toThrow('supported executable name')
-
-    await writeFile(manifest, `schema_version: "1"
-postinstall:
-  - command: npm
-    args: [install, opencli]
-    shell: true
-`)
-    await expect(buildSkillCandidates({
-      definition: definition('memoh'), sourceRoot: root,
-    })).rejects.toThrow('unsupported field shell')
   })
 
   test('imports pure Skill Packages and rejects mixed Codex Packages', async () => {
@@ -346,7 +311,7 @@ postinstall:
     await writeSkill(outside, '.', 'Outside')
     await symlink(outside, path.join(root, 'escaped'))
     await expect(buildSkillCandidates({ definition: definition('skill_directory'), sourceRoot: root }))
-      .resolves.toEqual({ skills: [], diagnostics: [], packageMetadata: new Map() })
+      .resolves.toEqual({ skills: [], diagnostics: [] })
 
     await mkdir(path.join(root, 'package'), { recursive: true })
     await symlink(outside, path.join(root, 'package/escaped'))

@@ -1,38 +1,14 @@
 import { readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
-import { parse as parseYaml } from 'yaml'
 import { assertRegistryComponentID } from '../definition'
-import { readFileBounded, resolveRealInside } from '../filesystem'
+import { resolveRealInside } from '../filesystem'
 import { buildSkillCandidate } from './common'
 import { compareCanonicalText } from '#lib/order'
 import type { SkillAdapterInput, SkillAdapterResult, SkillCandidate } from './types'
-import type { SkillPackageMetadata } from '../types'
-import { MAX_PACKAGE_MANIFEST_BYTES, parseSkillPackageManifest } from '../package-manifest'
-
-async function readPackageMetadata(
-  packageRoot: string,
-  registryID: string,
-  packageID: string,
-  budget: SkillAdapterInput['budget'],
-): Promise<SkillPackageMetadata> {
-  const manifestPath = path.join(packageRoot, 'package.yaml')
-  try {
-    if (!(await stat(manifestPath)).isFile()) throw new Error(`${registryID}/${packageID}: package.yaml must be a regular file`)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
-    throw error
-  }
-  const bytes = await readFileBounded(manifestPath, MAX_PACKAGE_MANIFEST_BYTES, budget)
-  return parseSkillPackageManifest(
-    parseYaml(new TextDecoder().decode(bytes)),
-    `${registryID}/${packageID}: package.yaml`,
-  )
-}
 
 export async function readMemohRegistry(input: SkillAdapterInput): Promise<SkillAdapterResult> {
   const { definition, sourceRoot, budget } = input
   const skills: SkillCandidate[] = []
-  const packageMetadata = new Map<string, SkillPackageMetadata>()
   const packages = (await readdir(sourceRoot, { withFileTypes: true }))
     .filter((entry) => entry.isDirectory())
     .sort((a, b) => compareCanonicalText(a.name, b.name))
@@ -40,8 +16,6 @@ export async function readMemohRegistry(input: SkillAdapterInput): Promise<Skill
   for (const packageEntry of packages) {
     const packageID = assertRegistryComponentID(packageEntry.name, 'package ID')
     const packageRoot = await resolveRealInside(sourceRoot, packageID)
-    const metadata = await readPackageMetadata(packageRoot, definition.id, packageID, budget)
-    if (metadata.postinstall) packageMetadata.set(packageID, metadata)
     const skillsRoot = await resolveRealInside(packageRoot, 'skills')
     const entries = (await readdir(skillsRoot, { withFileTypes: true }))
       .filter((entry) => entry.isDirectory())
@@ -72,5 +46,5 @@ export async function readMemohRegistry(input: SkillAdapterInput): Promise<Skill
       }))
     }
   }
-  return { skills, diagnostics: [], packageMetadata }
+  return { skills, diagnostics: [] }
 }

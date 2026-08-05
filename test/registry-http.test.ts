@@ -15,13 +15,7 @@ import registryCategories from '../server/api/registries/[id]/categories.get'
 import registrySkills from '../server/api/registries/[id]/skills/index.get'
 import registries from '../server/api/registries/index.get'
 import skills from '../server/api/skills/index.get'
-import type {
-  CatalogSkill,
-  PackagePostinstallCommand,
-  SkillArtifactDescriptor,
-  SkillRegistryDefinition,
-  SkillRegistrySnapshot,
-} from '#registry/types'
+import type { CatalogSkill, SkillArtifactDescriptor, SkillRegistryDefinition, SkillRegistrySnapshot } from '#registry/types'
 import {
   compactCatalogPackages,
   serializeRegistrySnapshot,
@@ -116,15 +110,9 @@ describe('Marketplace HTTP protocol', () => {
       source: { type: 'local', revision: sourceRevision, path: 'skills/demo' },
       files: ['SKILL.md', 'scripts/run.sh'], icon: { card: image, detail: image, brand_color: '#0B7285' }, artifact,
     }
-    const postinstall: PackagePostinstallCommand[] = [
-      { command: 'npm', args: ['install', '--global', 'opencli'] },
-    ]
-    const packageMetadata = new Map([['tools', { postinstall }]])
     const snapshot: SkillRegistrySnapshot = {
       schema_version: '1', registry_id: 'example', registry_priority: 10,
-      source: { type: 'local', revision: sourceRevision },
-      packages: compactCatalogPackages([skill], packageMetadata),
-      diagnostics: [],
+      source: { type: 'local', revision: sourceRevision }, packages: compactCatalogPackages([skill]), diagnostics: [],
     }
     await store.putArtifact(artifact, archive)
     await store.putImage(image, imageBytes)
@@ -182,7 +170,6 @@ describe('Marketplace HTTP protocol', () => {
       registry_id: 'example', package_id: 'tools', revision: snapshot.packages[0]!.revision,
       skill_count: 1,
       release_url: `/api/registries/example/packages/tools/releases/${snapshot.packages[0]!.revision}`,
-      postinstall,
       skills: [{ skill_id: 'demo', artifact: { digest } }],
     })
     const packageReleaseURL = `http://local${packageDescriptor.release_url}`
@@ -193,7 +180,6 @@ describe('Marketplace HTTP protocol', () => {
     const packageReleaseBytes = new Uint8Array(await packageRelease.arrayBuffer())
     expect(await sha256(packageReleaseBytes)).toBe(snapshot.packages[0]!.revision)
     expect(JSON.parse(new TextDecoder().decode(packageReleaseBytes))).toMatchObject({
-      postinstall,
       skills: [{ skill_id: 'demo', artifact: { digest } }],
     })
     expect((await app.fetch(new Request(packageReleaseURL, {
@@ -245,10 +231,7 @@ describe('Marketplace HTTP protocol', () => {
     const updatedSnapshot: SkillRegistrySnapshot = {
       ...snapshot,
       source: { ...snapshot.source, revision: 'f'.repeat(64) },
-      packages: compactCatalogPackages(
-        [{ ...skill, description: 'Updated Demo Skill' }],
-        packageMetadata,
-      ),
+      packages: compactCatalogPackages([{ ...skill, description: 'Updated Demo Skill' }]),
     }
     await store.putPackageRelease(
       skillPackageReleaseFromSnapshotPackage(updatedSnapshot, updatedSnapshot.packages[0]!),
@@ -265,7 +248,6 @@ describe('Marketplace HTTP protocol', () => {
     const historicalPackage = await app.fetch(new Request(packageReleaseURL))
     expect(await historicalPackage.json()).toMatchObject({
       description: 'Demo Skill',
-      postinstall,
       skills: [{ artifact: { digest } }],
     })
 

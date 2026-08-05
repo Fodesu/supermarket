@@ -3,7 +3,6 @@ import type {
   SkillAuthor,
   SkillIcon,
   SkillImageAsset,
-  SkillPackageMetadata,
   SkillRegistryDefinition,
 } from '../types'
 import type { SkillSourceFile } from '../filesystem'
@@ -30,7 +29,6 @@ export interface SkillCandidate {
 export interface SkillAdapterResult {
   skills: SkillCandidate[]
   diagnostics: RegistryDiagnostic[]
-  packageMetadata: Map<string, SkillPackageMetadata>
 }
 
 export interface SkillAdapterInput {

@@ -95,7 +95,6 @@ function reviewCandidate(candidate: SkillRegistryCandidate): RegistryReviewCandi
     definition: candidate.definition,
     source_revision: candidate.source_revision,
     revision: candidate.revision,
-    snapshot: candidate.snapshot,
     skills: candidate.skills,
     diagnostics: candidate.diagnostics,
     review: candidate.review,

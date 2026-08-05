@@ -332,5 +332,5 @@ export async function readCodexMarketplace(input: SkillAdapterInput): Promise<Sk
       })
     }
   }
-  return { skills, diagnostics, packageMetadata: new Map() }
+  return { skills, diagnostics }
 }

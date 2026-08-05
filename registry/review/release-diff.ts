@@ -5,7 +5,7 @@ import {
   markdownLines,
   renderMarkdownLines,
 } from '#lib/markdown-lines'
-import type { CatalogSkill, PackagePostinstallCommand } from '../types'
+import type { CatalogSkill } from '../types'
 import type {
   CandidateFile,
   CandidateSkillReview,
@@ -14,7 +14,7 @@ import type {
 
 export type RegistryReviewCandidate = Pick<
   SkillRegistryCandidate,
-  'definition' | 'source_revision' | 'revision' | 'snapshot' | 'skills' | 'diagnostics' | 'review'
+  'definition' | 'source_revision' | 'revision' | 'skills' | 'diagnostics' | 'review'
 >
 
 type ChangeStatus = 'added' | 'removed' | 'changed'
@@ -50,10 +50,6 @@ export interface SkillReleaseDiff {
 export interface PackageReleaseDiff {
   package_id: string
   status: ChangeStatus
-  postinstall?: {
-    before?: PackagePostinstallCommand[]
-    after?: PackagePostinstallCommand[]
-  }
   skills: SkillReleaseDiff[]
 }
 
@@ -172,10 +168,6 @@ export function diffRegistryCandidates(
   ])
   const packages: PackageReleaseDiff[] = []
   for (const packageID of [...packageIDs].sort()) {
-    const previousPackage = previous.snapshot.packages.find((pkg) => pkg.package_id === packageID)
-    const candidatePackage = candidate.snapshot.packages.find((pkg) => pkg.package_id === packageID)
-    const postinstallChanged = JSON.stringify(previousPackage?.postinstall)
-      !== JSON.stringify(candidatePackage?.postinstall)
     const skillIDs = new Set([
       ...previous.skills.filter((skill) => skill.package_id === packageID).map((skill) => skill.skill_id),
       ...candidate.skills.filter((skill) => skill.package_id === packageID).map((skill) => skill.skill_id),
@@ -221,18 +213,12 @@ export function diffRegistryCandidates(
         text_patches: textFilePatches(previous.review.get(key), candidate.review.get(key)),
       })
     }
-    if (!skills.length && !postinstallChanged) continue
+    if (!skills.length) continue
     const existed = previous.skills.some((skill) => skill.package_id === packageID)
     const exists = candidate.skills.some((skill) => skill.package_id === packageID)
     packages.push({
       package_id: packageID,
       status: !existed ? 'added' : !exists ? 'removed' : 'changed',
-      ...(postinstallChanged ? {
-        postinstall: {
-          ...(previousPackage?.postinstall ? { before: previousPackage.postinstall } : {}),
-          ...(candidatePackage?.postinstall ? { after: candidatePackage.postinstall } : {}),
-        },
-      } : {}),
       skills,
     })
   }
@@ -312,19 +298,6 @@ function renderSkill(skill: SkillReleaseDiff) {
   return lines
 }
 
-function renderPostinstall(change: NonNullable<PackageReleaseDiff['postinstall']>) {
-  return [
-    '#### Package postinstall',
-    '',
-    'Before:',
-    ...fencedCode(JSON.stringify(change.before ?? [], null, 2), 'json'),
-    '',
-    'After:',
-    ...fencedCode(JSON.stringify(change.after ?? [], null, 2), 'json'),
-    '',
-  ]
-}
-
 export function renderRegistryReleaseDiff(
   diff: RegistryReleaseDiff,
   compareURL?: string,
@@ -389,16 +362,6 @@ export function renderRegistryReleaseDiff(
       '',
     ])
     let included = 0
-    if (packageDiff.postinstall) {
-      const postinstallBlock = markdownLines(renderPostinstall(packageDiff.postinstall))
-      const ending = markdownLines(['</details>', '', reservedFooter, ''])
-      if (combinedMarkdownLength(output, packageBlock, postinstallBlock, ending) > maximum) {
-        truncated = true
-        break
-      }
-      appendMarkdownLines(packageBlock, postinstallBlock)
-      included++
-    }
     for (const skill of packageDiff.skills) {
       const skillBlock = markdownLines(renderSkill(skill))
       const ending = markdownLines(['</details>', '', reservedFooter, ''])

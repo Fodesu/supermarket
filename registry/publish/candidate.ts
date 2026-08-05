@@ -228,7 +228,7 @@ export async function buildSkillRegistryCandidate(
         revision: source.revision,
         ...(definition.source.type === 'git' ? { repository: definition.source.url } : {}),
       },
-      packages: compactCatalogPackages(skills, result.packageMetadata),
+      packages: compactCatalogPackages(skills),
       diagnostics,
     }
     const snapshotBytes = serializeRegistrySnapshot(snapshot)
