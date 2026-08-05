@@ -89,10 +89,6 @@ jobs:
           git add \
             "registries/$REGISTRY/registry.yaml" \
             "registries/$REGISTRY/release.lock.json"
-          if [[ -d registries/memoh/plugins ]]; then
-            find registries/memoh/plugins -mindepth 2 -maxdepth 2 -name release.lock.json -print0 |
-              xargs -0 -r git add --
-          fi
           if ! git diff --quiet; then
             echo "Registry update generated unexpected unstaged changes" >&2
             git status --short

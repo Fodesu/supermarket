@@ -10,11 +10,6 @@ export interface TarFileInput {
   mode: 0o644 | 0o755
 }
 
-export interface ArchivePathOptions {
-  maxContentBytes?: number
-  maxArchiveBytes?: number
-}
-
 export function canonicalArchivePath(name: string) {
   return name.toLowerCase().normalize('NFC')
 }
@@ -56,15 +51,8 @@ export function assertSafeArchivePaths(
 export async function createTar(
   files: Record<string, Uint8Array | TarFileInput>,
   prefix: string,
-  options: ArchivePathOptions = {},
 ): Promise<Uint8Array> {
   if (prefix) assertSafeArchivePath(prefix)
-  const maxContentBytes = options.maxContentBytes ?? MAX_TAR_UNCOMPRESSED_BYTES
-  const maxArchiveBytes = options.maxArchiveBytes ?? MAX_TAR_UNCOMPRESSED_BYTES
-  if (!Number.isSafeInteger(maxContentBytes) || maxContentBytes < 0
-    || !Number.isSafeInteger(maxArchiveBytes) || maxArchiveBytes < 0) {
-    throw new Error('Invalid tar archive size limit')
-  }
   const fileEntries = Object.entries(files)
   assertSafeArchivePaths(fileEntries.map(([name]) => name), 'tar')
   if (prefix) assertSafeArchivePaths(fileEntries.map(([name]) => `${prefix}/${name}`))
@@ -76,8 +64,8 @@ export async function createTar(
       const body = input instanceof Uint8Array ? input : input.bytes
       const mode = input instanceof Uint8Array ? 0o644 : input.mode
       contentBytes += body.length
-      if (contentBytes > maxContentBytes) {
-        throw new Error(`Tar archive exceeds ${maxContentBytes} content bytes`)
+      if (contentBytes > MAX_TAR_UNCOMPRESSED_BYTES) {
+        throw new Error(`Tar archive exceeds ${MAX_TAR_UNCOMPRESSED_BYTES} content bytes`)
       }
       return {
         header: {
@@ -96,8 +84,8 @@ export async function createTar(
     })
 
   const archive = await packTar(entries)
-  if (archive.length > maxArchiveBytes) {
-    throw new Error(`Tar archive exceeds ${maxArchiveBytes} serialized bytes`)
+  if (archive.length > MAX_TAR_UNCOMPRESSED_BYTES) {
+    throw new Error(`Tar archive exceeds ${MAX_TAR_UNCOMPRESSED_BYTES} serialized bytes`)
   }
   return archive
 }

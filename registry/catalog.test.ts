@@ -9,7 +9,7 @@ function skill(overrides: Partial<CatalogSkill> = {}): CatalogSkill {
     package_id: 'documents', skill_id: 'pdf', install_id: 'openai--documents--pdf',
     name: 'PDF Tools', description: 'Create and inspect PDF documents.', author: { name: 'OpenAI', email: '' },
     tags: ['documents'], category: 'productivity', category_name: 'Productivity',
-    source: { type: 'git', revision: 'abc', path: 'plugins/documents/skills/pdf', repository: 'https://example.test/repo.git' },
+    source: { type: 'git', revision: 'abc', path: 'packages/documents/skills/pdf', repository: 'https://example.test/repo.git' },
     files: ['SKILL.md'],
     artifact: {
       format: 'memoh_skill_v1', digest: 'a'.repeat(64), size: 100,

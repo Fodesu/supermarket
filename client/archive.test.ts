@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { packTar } from 'modern-tar'
-import { createTar, gzip, MAX_TAR_UNCOMPRESSED_BYTES } from '#lib/archive'
+import { createTar, gzip } from '#lib/archive'
 import { packageSkill } from '#registry/artifacts/build'
 import {
   extractSkillArchive,
@@ -125,15 +125,6 @@ describe('Skill Registry client archives', () => {
     await expect(parseTarArchive(caseConflict)).rejects.toThrow('Duplicate archive path')
     const compressed = await gzip(new Uint8Array(1024))
     await expect(parseGzipTarArchive(compressed, 100)).rejects.toThrow('decompression limit')
-  })
-
-  test('supports a larger explicit content budget for Plugin archives', async () => {
-    const content = new Uint8Array(MAX_TAR_UNCOMPRESSED_BYTES + 1)
-    await expect(createTar({ 'scripts/large.bin': content }, 'plugin')).rejects.toThrow('content bytes')
-    await expect(createTar({ 'scripts/large.bin': content }, 'plugin', {
-      maxContentBytes: 10 * 1024 * 1024,
-      maxArchiveBytes: 16 * 1024 * 1024,
-    })).resolves.toBeInstanceOf(Uint8Array)
   })
 
   test('serializes concurrent installs for the same identity', async () => {

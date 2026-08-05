@@ -7,7 +7,6 @@
     ".wrangler/types/api.d.ts",
     "client/**/*.ts",
     "lib/**/*.ts",
-    "plugin/**/*.ts",
     "registry/**/*.ts",
     "scripts/**/*.ts",
     "server/**/*.ts",

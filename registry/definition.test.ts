@@ -53,7 +53,7 @@ describe('Skill Registry definitions', () => {
     expect(safeRelativePath('./skills/')).toBe('skills')
     expect(() => safeRelativePath('../private')).toThrow('escapes its source')
     expect(() => parseSkillRegistryDefinition({
-      schema_version: '1', id: 'bad', name: 'Bad', adapter: { type: 'plugin_yaml' }, source: { type: 'local', path: 'skills' },
+      schema_version: '1', id: 'bad', name: 'Bad', adapter: { type: 'unknown' }, source: { type: 'local', path: 'skills' },
     })).toThrow('unsupported adapter')
     expect(() => parseSkillRegistryDefinition({
       schema_version: '1', id: 'bad', name: 'Bad', adapter: 'skill_directory',

@@ -16,16 +16,6 @@ import {
   type RegistryReviewCandidate,
 } from '#registry/review/release-diff'
 import type { SkillRegistryDefinition } from '#registry/types'
-import { buildPluginReleaseCandidates } from '#plugin/release'
-import {
-  assertPluginReleaseCandidate,
-  loadPluginReleaseLock,
-  writePluginReleaseLock,
-} from '#plugin/release-lock'
-import {
-  diffPluginReleaseCandidates,
-  renderPluginReleaseDiffs,
-} from '#plugin/review/release-diff'
 
 export interface RegistryUpdate {
   registry: string
@@ -37,27 +27,18 @@ export interface RegistryUpdate {
 }
 
 export const MAX_REGISTRY_UPDATE_REPORT_LENGTH = 60_000
-const MAX_PLUGIN_RELEASE_REPORT_LENGTH = 20_000
 
 export function renderRegistryUpdateReport(
   diff: Parameters<typeof renderRegistryReleaseDiff>[0],
   compareURL: string | undefined,
-  pluginDiffs: Parameters<typeof renderPluginReleaseDiffs>[0],
   fullReportURL?: string,
 ) {
-  const pluginReport = renderPluginReleaseDiffs(
-    pluginDiffs,
-    MAX_PLUGIN_RELEASE_REPORT_LENGTH,
-    fullReportURL,
-  )
-  const separatorLength = pluginReport ? 1 : 0
-  const registryReport = renderRegistryReleaseDiff(
+  const report = renderRegistryReleaseDiff(
     diff,
     compareURL,
-    MAX_REGISTRY_UPDATE_REPORT_LENGTH - pluginReport.length - separatorLength,
+    MAX_REGISTRY_UPDATE_REPORT_LENGTH,
     fullReportURL,
   )
-  const report = [registryReport, pluginReport].filter(Boolean).join('\n')
   if (report.length > MAX_REGISTRY_UPDATE_REPORT_LENGTH) {
     throw new Error('Registry update report exceeds the GitHub PR body limit')
   }
@@ -67,12 +48,8 @@ export function renderRegistryUpdateReport(
 export function renderFullRegistryUpdateReport(
   diff: Parameters<typeof renderRegistryReleaseDiff>[0],
   compareURL: string | undefined,
-  pluginDiffs: Parameters<typeof renderPluginReleaseDiffs>[0],
 ) {
-  return [
-    renderRegistryReleaseDiff(diff, compareURL, Number.POSITIVE_INFINITY),
-    renderPluginReleaseDiffs(pluginDiffs, Number.POSITIVE_INFINITY),
-  ].filter(Boolean).join('\n')
+  return renderRegistryReleaseDiff(diff, compareURL, Number.POSITIVE_INFINITY)
 }
 
 function option(name: string) {
@@ -191,26 +168,13 @@ async function prepareRegistryUpdate(input: {
     ...definition,
     source: { ...definition.source, revision: input.candidateRevision },
   }
-  const approvedCandidates: Array<Pick<
-    SkillRegistryCandidate,
-    'definition' | 'revision' | 'snapshot'
-  >> = []
-  let approved: RegistryReviewCandidate | undefined
-  for (const item of definitions.filter((candidate) => candidate.enabled)) {
-    const built = await buildSkillRegistryCandidate(item, input.projectRoot, {
-      includeReview: item.id === definition.id,
-    })
-    approvedCandidates.push({
-      definition: built.definition,
-      revision: built.revision,
-      snapshot: built.snapshot,
-    })
-    if (built.definition.id === definition.id) approved = reviewCandidate(built)
-    else built.review.clear()
-    built.artifacts.clear()
-    built.images.clear()
-  }
-  if (!approved) throw new Error(`${input.registry}: Registry is disabled`)
+  if (!definition.enabled) throw new Error(`${input.registry}: Registry is disabled`)
+  const builtApproved = await buildSkillRegistryCandidate(definition, input.projectRoot, {
+    includeReview: true,
+  })
+  const approved = reviewCandidate(builtApproved)
+  builtApproved.artifacts.clear()
+  builtApproved.images.clear()
   const lock = await loadRegistryReleaseLock(input.projectRoot, definition)
   const builtCandidate = await buildSkillRegistryCandidate(candidateDefinition, input.projectRoot, {
     includeReview: true,
@@ -225,21 +189,6 @@ async function prepareRegistryUpdate(input: {
   builtCandidate.images.clear()
   assertReleaseCandidate(definition, lock, approved.revision)
   const diff = diffRegistryCandidates(approved, candidateReview)
-  const approvedPlugins = await buildPluginReleaseCandidates(
-    input.projectRoot,
-    approvedCandidates.map((item) => ({ revision: item.revision, snapshot: item.snapshot })),
-  )
-  for (const plugin of approvedPlugins) {
-    const pluginLock = await loadPluginReleaseLock(input.projectRoot, plugin.plugin_id)
-    assertPluginReleaseCandidate(plugin.plugin_id, pluginLock, plugin.revision)
-  }
-  const candidatePlugins = await buildPluginReleaseCandidates(
-    input.projectRoot,
-    approvedCandidates.map((item) => item.definition.id === definition.id
-      ? { revision: candidate.revision, snapshot: candidate.snapshot }
-      : { revision: item.revision, snapshot: item.snapshot }),
-  )
-  const pluginDiffs = diffPluginReleaseCandidates(approvedPlugins, candidatePlugins)
   const url = compareURL(
     definition.source.url,
     definition.source.revision,
@@ -250,26 +199,19 @@ async function prepareRegistryUpdate(input: {
     renderRegistryUpdateReport(
       diff,
       url,
-      pluginDiffs,
       input.fullReportURL,
     ),
   )
   if (input.fullReportPath) {
     await writeFile(
       input.fullReportPath,
-      renderFullRegistryUpdateReport(diff, url, pluginDiffs),
+      renderFullRegistryUpdateReport(diff, url),
     )
   }
   await applyRevision(input.projectRoot, definition, input.candidateRevision)
   await writeRegistryReleaseLock(input.projectRoot, candidateDefinition, {
     snapshot_revision: candidate.revision,
   })
-  for (const pluginDiff of pluginDiffs) {
-    const plugin = candidatePlugins.find((item) => item.plugin_id === pluginDiff.plugin)!
-    await writePluginReleaseLock(input.projectRoot, plugin.plugin_id, {
-      release_revision: plugin.revision,
-    })
-  }
   return diff
 }
 
