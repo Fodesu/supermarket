@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { SkillRegistryDefinition } from '#registry/types'
+import type { SkillRegistryDefinition, SkillRegistrySnapshot } from '#registry/types'
 import { SkillRegistryPublisher, type SkillRegistryPublishProgress } from '#registry/publish/publisher'
 import { buildSkillRegistryCandidate, type SkillRegistryCandidate } from '#registry/publish/candidate'
 import { assertReleaseCandidate, loadRegistryReleaseLock } from '#registry/publish/release-lock'
@@ -186,6 +186,7 @@ export async function assertPartialRegistrySnapshotsPublished(input: {
   candidates: Array<Pick<SkillRegistryCandidate, 'definition' | 'revision'>>
   store: SkillRegistryStore
 }) {
+  const snapshots: Array<{ revision: string; snapshot: SkillRegistrySnapshot }> = []
   for (const candidate of input.candidates) {
     if (candidate.definition.id === input.selectedRegistry) continue
     const state = await input.store.getState(candidate.definition.id)
@@ -202,7 +203,9 @@ export async function assertPartialRegistrySnapshotsPublished(input: {
         + `${candidate.definition.id}/${candidate.revision}; repair immutable storage before partial publication`,
       )
     }
+    snapshots.push({ revision: candidate.revision, snapshot })
   }
+  return snapshots
 }
 
 async function preflightPartialPublication(input: {
@@ -211,30 +214,32 @@ async function preflightPartialPublication(input: {
   definitions: SkillRegistryDefinition[]
   store: SkillRegistryStore
 }) {
-  const candidates: Array<Pick<SkillRegistryCandidate, 'definition' | 'revision' | 'snapshot'>> = []
+  const approved: Array<Pick<SkillRegistryCandidate, 'definition' | 'revision'>> = []
   let selectedCandidate: SkillRegistryCandidate | undefined
-  for (const definition of input.definitions.filter((item) => item.enabled)) {
+  const selectedDefinition = input.definitions.find((item) => item.id === input.selectedRegistry)
+  if (selectedDefinition?.enabled) {
     const [candidate, lock] = await Promise.all([
-      buildSkillRegistryCandidate(definition, input.projectRoot),
-      loadRegistryReleaseLock(input.projectRoot, definition),
+      buildSkillRegistryCandidate(selectedDefinition, input.projectRoot),
+      loadRegistryReleaseLock(input.projectRoot, selectedDefinition),
     ])
-    assertReleaseCandidate(definition, lock, candidate.revision)
-    if (definition.id === input.selectedRegistry) selectedCandidate = candidate
-    candidates.push({
-      definition: candidate.definition,
-      revision: candidate.revision,
-      snapshot: candidate.snapshot,
-    })
+    assertReleaseCandidate(selectedDefinition, lock, candidate.revision)
+    selectedCandidate = candidate
   }
-  await assertPartialRegistrySnapshotsPublished({
+  for (const definition of input.definitions.filter(
+    (item) => item.enabled && item.id !== input.selectedRegistry,
+  )) {
+    const lock = await loadRegistryReleaseLock(input.projectRoot, definition)
+    approved.push({ definition, revision: lock.snapshot_revision })
+  }
+  const published = await assertPartialRegistrySnapshotsPublished({
     selectedRegistry: input.selectedRegistry,
-    candidates,
+    candidates: approved,
     store: input.store,
   })
-  const plugins = await buildPluginReleaseCandidates(input.projectRoot, candidates.map((candidate) => ({
-    revision: candidate.revision,
-    snapshot: candidate.snapshot,
-  })))
+  const snapshots = selectedCandidate
+    ? [{ revision: selectedCandidate.revision, snapshot: selectedCandidate.snapshot }, ...published]
+    : published
+  const plugins = await buildPluginReleaseCandidates(input.projectRoot, snapshots)
   await Promise.all(plugins.map(async (plugin) => {
     const lock = await loadPluginReleaseLock(input.projectRoot, plugin.plugin_id)
     assertPluginReleaseCandidate(plugin.plugin_id, lock, plugin.revision)

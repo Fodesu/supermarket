@@ -72,7 +72,10 @@ describe('partial Registry publication', () => {
     const dependency = await publishedDependency()
     await expect(assertPartialRegistrySnapshotsPublished({
       selectedRegistry: 'selected', candidates: [dependency.candidate], store: dependency.store,
-    })).resolves.toBeUndefined()
+    })).resolves.toEqual([{
+      revision: dependency.candidate.revision,
+      snapshot: expect.objectContaining({ registry_id: 'other' }),
+    }])
 
     await rm(path.join(
       dependency.dataRoot,

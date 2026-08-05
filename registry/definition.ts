@@ -146,8 +146,8 @@ export function parseSkillRegistryDefinition(raw: unknown): SkillRegistryDefinit
     schema_version: z.unknown(),
     id: z.unknown(),
     name: z.pipe(z.string(), z.transform((value) => value.trim())).check(z.minLength(1)),
-    enabled: z.optional(z.unknown()),
-    priority: z.optional(z.unknown()),
+    enabled: z.optional(z.boolean()),
+    priority: z.optional(z.number().check(z.int(), z.refine(Number.isSafeInteger))),
     adapter: z.unknown(),
     source: z.unknown(),
   }, {
@@ -164,8 +164,8 @@ export function parseSkillRegistryDefinition(raw: unknown): SkillRegistryDefinit
   if (data.schema_version !== '1') throw new Error(`${id}: unsupported schema_version ${String(data.schema_version)}`)
   return {
     schema_version: '1', id, name: parsed.data.name,
-    enabled: data.enabled !== false,
-    priority: Number.isFinite(Number(data.priority)) ? Number(data.priority) : 0,
+    enabled: parsed.data.enabled ?? true,
+    priority: parsed.data.priority ?? 0,
     adapter: parseAdapter(data.adapter, id),
     source: parseSource(data.source, id),
   }

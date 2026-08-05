@@ -37,6 +37,16 @@ describe('Skill Registry definitions', () => {
       },
     })
     expect(definition.source).toMatchObject({ revision: 'a'.repeat(40), tracking_ref: 'main' })
+    for (const invalid of [
+      { enabled: 'false' },
+      { priority: '100' },
+      { priority: 1.5 },
+    ]) {
+      expect(() => parseSkillRegistryDefinition({
+        schema_version: '1', id: 'example', name: 'Example', ...invalid,
+        adapter: { type: 'skill_directory' }, source: { type: 'local', path: 'skills' },
+      })).toThrow()
+    }
   })
 
   test('rejects old adapter syntax, unknown adapters and unsafe paths', () => {
