@@ -129,6 +129,19 @@ postinstall:
     ], 'postinstall')).toThrow('unpaired UTF-16 surrogate')
   })
 
+  test('rejects Memoh Package manifests that escape through symlinks', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'package-manifest-symlink-source-'))
+    const outside = await mkdtemp(path.join(os.tmpdir(), 'package-manifest-symlink-outside-'))
+    roots.push(root, outside)
+    await writeSkill(root, 'tools/skills/tools', 'Tools')
+    await writeFile(path.join(outside, 'package.yaml'), 'schema_version: "1"\n')
+    await symlink(path.join(outside, 'package.yaml'), path.join(root, 'tools/package.yaml'))
+
+    await expect(buildSkillCandidates({
+      definition: definition('memoh'), sourceRoot: root,
+    })).rejects.toThrow('escapes source through a symlink')
+  })
+
   test('imports pure Skill Packages and rejects mixed Codex Packages', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'codex-skills-'))
     roots.push(root)

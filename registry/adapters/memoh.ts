@@ -15,9 +15,9 @@ async function readPackageMetadata(
   packageID: string,
   budget: SkillAdapterInput['budget'],
 ): Promise<SkillPackageMetadata> {
-  const manifestPath = path.join(packageRoot, 'package.yaml')
+  let manifestPath: string
   try {
-    if (!(await stat(manifestPath)).isFile()) throw new Error(`${registryID}/${packageID}: package.yaml must be a regular file`)
+    manifestPath = await resolveRealInside(packageRoot, 'package.yaml')
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
     throw error
